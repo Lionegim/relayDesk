@@ -5,7 +5,13 @@ import { randomUUID } from 'node:crypto';
 import QRCode from 'qrcode';
 import { HttpError, badRequest, notFound } from '../../http/errors.js';
 import { createAuthState, hasSession } from './auth.js';
-import { chatToRecord, contactId, contactName, dayLabel, directJid, parseMessage, phoneOf } from './parse.js';
+import { chatJid, chatToRecord, contactId, contactName, dayLabel, directJid, groupJid, parseMessage, phoneOf } from './parse.js';
+
+// Discussion importable : directe ou groupe (chatJid). directJid reste réservé à l'identité du téléphone et aux
+// personnes ; un groupe n'est jamais un contact.
+const isGroup = jid => groupJid(jid) !== null;
+// Titre d'un groupe : nom du groupe lui-même, jamais le nom public d'un participant.
+const groupTitle = g => [g?.subject, g?.name, g?.displayName].find(v => typeof v === 'string' && v.trim())?.trim().slice(0, 120) || null;
 
 const LOGGED_OUT = 401;
 const RESTART_REQUIRED = 515;
@@ -166,8 +172,15 @@ export function createWhatsAppSync({ store, vault, lib, makeSocket, log = consol
     sock.ev.on('contacts.update', batch('contacts', false));
     sock.ev.on('chats.update', batch('chats', false));
     sock.ev.on('chats.upsert', batch('chats', false));
+    sock.ev.on('groups.upsert', batch('groups', false));
+    sock.ev.on('groups.update', batch('groups', false));
     // Jalons d'historique signalés par Baileys : fin explicite (progression 100) ou pause (aucun lot depuis 2 min).
-    sock.ev.on('messaging-history.status', st => { if (current(accountId, s) && s.verified) historyMilestone(accountId, st); });
+    // Le jalon suit les lots déjà reçus : jamais « terminé » avant la fin de leur import par tranches.
+    sock.ev.on('messaging-history.status', st => {
+      if (!current(accountId, s) || !s.verified) return;
+      if (s.ingest) s.ingest.then(() => { if (current(accountId, s)) historyMilestone(accountId, st); });
+      else historyMilestone(accountId, st);
+    });
   }
 
   function onConnection(accountId, s, { connection, lastDisconnect, qr }) {
@@ -273,7 +286,7 @@ export function createWhatsAppSync({ store, vault, lib, makeSocket, log = consol
     if (link && !link.done) beginHistory(accountId, 'link');
     pruneAndRebuild(accountId);
     for (const [kind, data, notify] of s.pending.splice(0)) enqueue(accountId, s, kind, data, notify);
-    if (s.droppedPending) noteHistory(accountId, 'Une partie des lots reçus avant la vérification a été ignorée.');
+    if (s.droppedPending) lostHistory(accountId, 'Une partie des lots reçus avant la vérification a été ignorée.');
     if (requestOnOpen.delete(accountId)) requestHistory(accountId, s).catch(() => {});
   }
 
@@ -300,6 +313,7 @@ export function createWhatsAppSync({ store, vault, lib, makeSocket, log = consol
     const name = store.waChatName(accountId, chatJid);
     const rec = chatToRecord(chatJid, msgs, { name, state: store.threadState(accountId, chatJid), incoming });
     store.upsertThread(accountId, rec, { syncFolder: true });
+    if (isGroup(chatJid)) return; // un groupe n'est pas une personne : aucun contact créé
     const who = name || phoneOf(chatJid) || 'Contact WhatsApp';
     store.upsertAccountContact(accountId, chatJid, { id: contactId(accountId, chatJid), name: who, title: phoneOf(chatJid) || '', channel: 'whatsapp', last: dayLabel(msgs.at(-1).ts) });
   }
@@ -318,9 +332,22 @@ export function createWhatsAppSync({ store, vault, lib, makeSocket, log = consol
     return touched;
   }
 
+  // Titres des groupes (métadonnées de groupe ou de discussion). Renvoie les groupes renommés.
+  function groupTitles(accountId, list) {
+    const touched = new Set();
+    for (const g of Array.isArray(list) ? list : []) {
+      const jid = chatJid(g?.id);
+      const title = isGroup(jid) ? groupTitle(g) : null;
+      if (!title) continue;
+      store.waSetChatName(accountId, jid, title);
+      touched.add(jid);
+    }
+    return touched;
+  }
+
   function policies(accountId, s, chats) {
     for (const ch of Array.isArray(chats) ? chats : []) {
-      const jid = directJid(ch?.id);
+      const jid = chatJid(ch?.id);
       if (!jid || !Object.hasOwn(ch, 'ephemeralExpiration')) continue;
       const value = Number(ch.ephemeralExpiration);
       if (!Number.isFinite(value) || value < 0) continue;
@@ -349,14 +376,25 @@ export function createWhatsAppSync({ store, vault, lib, makeSocket, log = consol
         step(job);
       }
       finish(job);
-    }).catch(() => warn(`lot ignoré pour le compte ${accountId}`));
+    }).catch(() => {
+      warn(`lot non importé pour le compte ${accountId}`);
+      if (!current(accountId, s)) return;
+      lostHistory(accountId, 'Un lot d’historique n’a pas pu être importé : actualise l’historique.');
+      const h = histories.get(accountId);
+      if (h) finishHistory(accountId, h, 'partial');
+    });
     const tail = s.ingest;
     tail.then(() => { if (s.ingest === tail) s.ingest = null; });
   }
 
   function prepare(accountId, s, kind, data, notify) {
     if (!current(accountId, s)) return null;
-    if (kind === 'chats') { policies(accountId, s, data); return null; }
+    if (kind === 'chats' || kind === 'groups') {
+      if (kind === 'chats') policies(accountId, s, data);
+      const known = new Set(store.waChats(accountId));
+      for (const jid of groupTitles(accountId, data)) if (known.has(jid)) rebuild(accountId, jid);
+      return null;
+    }
     if (kind === 'contacts') {
       const known = new Set(store.waChats(accountId));
       for (const jid of names(accountId, data)) if (known.has(jid)) rebuild(accountId, jid);
@@ -367,10 +405,11 @@ export function createWhatsAppSync({ store, vault, lib, makeSocket, log = consol
     if (kind === 'history') {
       policies(accountId, s, data?.chats);
       names(accountId, data?.contacts);
+      groupTitles(accountId, data?.chats);
       for (const ch of Array.isArray(data?.chats) ? data.chats : []) {
-        const jid = directJid(ch?.id);
+        const jid = chatJid(ch?.id);
         if (!jid) continue;
-        if (typeof ch.name === 'string' && ch.name.trim()) store.waSetChatName(accountId, jid, ch.name.trim().slice(0, 80));
+        if (!isGroup(jid) && typeof ch.name === 'string' && ch.name.trim()) store.waSetChatName(accountId, jid, ch.name.trim().slice(0, 80));
         if (Number(ch.unreadCount) > 0) unread.add(jid);
       }
     }
@@ -385,8 +424,8 @@ export function createWhatsAppSync({ store, vault, lib, makeSocket, log = consol
     const list = job.raw.slice(job.i, job.i + CHUNK).map(m => parseMessage(m, { since: job.since })).filter(m => m && !s.ephemeral.has(m.chatJid));
     job.i += CHUNK;
     for (const m of list) {
-      // Nom public de l'expéditeur seulement si aucun nom n'est connu pour la discussion.
-      if (m.pushName && !store.waChatName(accountId, m.chatJid)) store.waSetChatName(accountId, m.chatJid, m.pushName);
+      // Nom public de l'expéditeur seulement pour une discussion directe sans nom connu ; jamais comme titre de groupe.
+      if (m.pushName && !isGroup(m.chatJid) && !store.waChatName(accountId, m.chatJid)) store.waSetChatName(accountId, m.chatJid, m.pushName);
       const c = job.perChat.get(m.chatJid) || { n: 0, oldest: m };
       c.n++;
       if (m.ts < c.oldest.ts) c.oldest = m;
@@ -447,6 +486,7 @@ export function createWhatsAppSync({ store, vault, lib, makeSocket, log = consol
 
   function finishHistory(accountId, h, state, reason = null) {
     if (histories.get(accountId) !== h || terminal(h.state)) return;
+    if (state === 'complete' && h.lost) state = 'partial';
     clearTimeout(h.idle);
     h.state = state;
     if (reason) h.reason = reason;
@@ -456,9 +496,12 @@ export function createWhatsAppSync({ store, vault, lib, makeSocket, log = consol
       error: state === 'complete' ? null : h.reason });
   }
 
-  function noteHistory(accountId, reason) {
+  // Perte constatée (lot ignoré ou en échec) : le suivi ne pourra plus se déclarer complet.
+  function lostHistory(accountId, reason) {
     const h = histories.get(accountId);
-    if (h) h.reason = reason;
+    if (!h) return;
+    h.lost = true;
+    h.reason = reason;
   }
 
   function historyBatch(accountId, s, data, { added, chats }) {
@@ -472,19 +515,23 @@ export function createWhatsAppSync({ store, vault, lib, makeSocket, log = consol
     if (Number.isFinite(data?.progress)) h.progress = Math.max(0, Math.min(100, Number(data.progress)));
     store.setSync(accountId, { status: 'syncing' });
     armIdle(accountId, h);
-    // Seule une progression explicite à 100 % d'un historique récent ou complet vaut fin ; isLatest ne suffit pas
-    // (Baileys le pose sur le premier lot reçu).
-    const type = Number(data?.syncType);
-    if (h.progress === 100 && (type === HISTORY_RECENT || type === HISTORY_FULL)) finishHistory(accountId, h, 'complete');
+    // Seule une progression explicite à 100 % du type attendu vaut fin ; isLatest ne suffit pas (Baileys le pose sur
+    // le premier lot reçu).
+    if (Number(data?.progress) === 100 && endsHistory(h, Number(data?.syncType))) finishHistory(accountId, h, 'complete');
   }
+
+  // Type d'historique dont la fin explicite termine le suivi : RECENT pour une liaison, FULL pour la demande bornée.
+  // L'historique discussion par discussion n'a pas de signal de fin : il s'achève au délai, donc « partiel ».
+  const endsHistory = (h, type) => (h.mode === 'initial' && type === HISTORY_RECENT) || (h.mode === 'full' && type === HISTORY_FULL);
 
   function historyMilestone(accountId, st) {
     const h = histories.get(accountId);
     if (!h || terminal(h.state)) return;
     const type = Number(st?.syncType);
     if (type !== HISTORY_RECENT && type !== HISTORY_FULL) return; // l'amorçage initial seul ne couvre pas 7 jours
-    if (st.status === 'complete' && st.explicit) finishHistory(accountId, h, 'complete');
-    else if (st.status === 'paused') finishHistory(accountId, h, 'partial', 'Le téléphone a interrompu l’envoi : l’historique peut être incomplet.');
+    // Un jalon « complete » peut précéder le téléchargement et l'import du lot final : il ne termine jamais le suivi.
+    // Seul l'import d'un lot à 100 % du type attendu le fait (historyBatch).
+    if (st.status === 'paused') finishHistory(accountId, h, 'partial', 'Le téléphone a interrompu l’envoi : l’historique peut être incomplet.');
   }
 
   // Réponse du téléphone à la demande d'historique complet (Baileys ne la remonte pas : message de protocole de soi à soi).
@@ -519,12 +566,14 @@ export function createWhatsAppSync({ store, vault, lib, makeSocket, log = consol
         peerDataOperationRequestType: proto?.Message?.PeerDataOperationRequestType?.FULL_HISTORY_SYNC_ON_DEMAND ?? PDO_FULL_HISTORY_ON_DEMAND,
         fullHistorySyncOnDemandRequest: {
           requestMetadata: { requestId: h.requestId },
-          historySyncConfig: { fullSyncDaysLimit: days, inlineInitialPayloadInE2EeMsg: true, supportGroupHistory: false, onDemandReady: true },
+          historySyncConfig: { fullSyncDaysLimit: days, inlineInitialPayloadInE2EeMsg: true, supportGroupHistory: true, onDemandReady: true },
         },
       });
     } catch {
-      return onDemandFallback(accountId, s, h);
+      if (current(accountId, s) && histories.get(accountId) === h) onDemandFallback(accountId, s, h);
+      return;
     }
+    if (!current(accountId, s) || histories.get(accountId) !== h) return;
     clearTimeout(s.fullTimer);
     s.fullTimer = setTimeout(() => {
       if (current(accountId, s) && histories.get(accountId) === h && !h.fullAccepted && !h.batches) {
