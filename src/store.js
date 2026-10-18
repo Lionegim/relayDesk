@@ -89,7 +89,8 @@ export function createStore(db) {
 
     // `synced` : le contenu enregistré est aussi celui du brouillon Gmail. Un enregistrement local garde le lien
     // vers le brouillon Gmail existant (pour le mettre à jour ensuite) mais le marque comme non synchronisé.
-    saveDraft(id, text, { mode = null, to = null, cc = null, subject, externalId, synced = false } = {}) {
+    // `threadKey` : empreinte du rattachement au fil du brouillon distant ; undefined la conserve, null l'efface.
+    saveDraft(id, text, { mode = null, to = null, cc = null, subject, externalId, synced = false, threadKey } = {}) {
       const r = row(id);
       if (typeof text !== 'string' || text.length > MAX_DRAFT) throw badRequest('Brouillon invalide');
       if (r.compose_kind === 'new') {
@@ -100,6 +101,7 @@ export function createStore(db) {
       const ext = externalId === undefined ? r.draft_external_id : externalId;
       q('UPDATE messages SET draft_text = ?, draft_saved_at = ?, draft_mode = ?, draft_to = ?, draft_external_id = ?, draft_synced = ? WHERE id = ?')
         .run(text, savedAt, mode, to, ext, +(synced && !!ext), id);
+      if (threadKey !== undefined) q('UPDATE messages SET draft_thread_key = ? WHERE id = ?').run(threadKey, id);
       if (r.compose_kind === 'new') q('UPDATE messages SET subject = ?, draft_cc = ?, preview = ?, sort_at = ? WHERE id = ?').run(subject, cc, text.slice(0, 200), Date.now(), id);
       return { text, savedAt, mode, to, cc, subject: subject ?? r.subject, gmail: synced && !!ext, synced: synced && !!ext };
     },
@@ -117,14 +119,14 @@ export function createStore(db) {
     },
     clearDraft(id) {
       if (row(id).compose_kind === 'new') { q('DELETE FROM messages WHERE id = ?').run(id); return; }
-      q('UPDATE messages SET draft_text = NULL, draft_saved_at = NULL, draft_mode = NULL, draft_to = NULL, draft_external_id = NULL, draft_synced = 0 WHERE id = ?').run(id);
+      q('UPDATE messages SET draft_text = NULL, draft_saved_at = NULL, draft_mode = NULL, draft_to = NULL, draft_external_id = NULL, draft_synced = 0, draft_thread_key = NULL WHERE id = ?').run(id);
     },
     // Lots C et D : de quoi construire une réponse dans le fil.
     composeContext(id) {
       const r = row(id);
       return {
         kind: r.compose_kind, cc: r.draft_cc, to: r.draft_to, accountId: r.account_id, threadId: r.external_id, subject: r.subject, body: r.body, sortAt: r.sort_at,
-        reply: r.reply_meta ? JSON.parse(r.reply_meta) : null, draftExternalId: r.draft_external_id,
+        reply: r.reply_meta ? JSON.parse(r.reply_meta) : null, draftExternalId: r.draft_external_id, draftThreadKey: r.draft_thread_key,
       };
     },
 
