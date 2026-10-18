@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { setupOutlook, connectedOutlook, G } from './outlook-helpers.js';
+import { setupOutlook, connectedOutlook, withThreadKey, G } from './outlook-helpers.js';
 import { createOutlookOutbox } from '../src/providers/outlook/outbox.js';
 import { createOutlookDisconnect } from '../src/providers/outlook/disconnect.js';
 import { decodeWords } from '../src/providers/gmail/parse.js';
@@ -11,10 +11,11 @@ const header = (mime, name) => decodeWords(mime.split('\r\n\r\n')[0].replace(/\r
 const bodyOf = mime => Buffer.from(mime.split('\r\n\r\n').slice(1).join('').replace(/\r\n/g, ''), 'base64').toString('utf8');
 const sha = (mime, thread = '') => createHash('sha256').update(`thread:${thread}\n`).update(mime).digest('hex');
 
-async function ready(scopes = ALL) {
+async function ready(scopes = ALL, { threadKeyColumn = true } = {}) {
   const ctx = setupOutlook();
   ctx.ms.add({ conversationId: 'C1', ccRecipients: [{ emailAddress: { name: 'Hugo', address: 'hugo@atlas.fr' } }], receivedDateTime: new Date(Date.now() - 3600000).toISOString() });
   const account = await connectedOutlook(ctx, scopes);
+  if (threadKeyColumn) ctx.store = withThreadKey(ctx.store);
   const outbox = createOutlookOutbox({ store: ctx.store, sync: ctx.sync, ownerName: 'Jean-Hugues' });
   const msg = ctx.store.snapshot().messages.find(m => m.accountId === account.id);
   ctx.ms.calls.length = 0;
@@ -104,4 +105,51 @@ test('déconnexion : compte et messages supprimés, aucune prétention de révoc
   assert.match(r.consentUrls.personal, /account\.live\.com/);
   assert.equal(store.hasAccount(account.id), false);
   assert.equal(store.snapshot().messages.filter(m => m.accountId === account.id).length, 0);
+});
+
+const drafts = ms => ms.messages.filter(m => m.isDraft);
+
+test('revue P2 : répondre enregistré puis transférer → brouillon recréé sans en-têtes de fil, ancien conservé', async () => {
+  const { outbox, msg, ms, store } = await ready();
+  await outbox.saveDraft(msg.id, { text: 'Réponse', mode: 'reply' });
+  const first = store.composeContext(msg.id).draftExternalId;
+  // Même rattachement (répondre → répondre à tous) : simple mise à jour.
+  await outbox.saveDraft(msg.id, { text: 'À tous', mode: 'replyAll' });
+  assert.equal(store.composeContext(msg.id).draftExternalId, first);
+  assert.equal(drafts(ms).length, 1);
+  // Enregistrement local intermédiaire (transfert sans adresse) : la clé du brouillon distant ne change pas.
+  await outbox.saveDraft(msg.id, { text: 'Transfert', mode: 'forward', to: '' });
+  ms.calls.length = 0;
+  const r = await outbox.saveDraft(msg.id, { text: 'Transfert', mode: 'forward', to: 'paul@x.fr' });
+  assert.equal(r.previousDraftKept, true);
+  assert.ok(!ms.calls.some(c => c.method === 'PATCH'), 'jamais de PATCH sur un brouillon au mauvais fil');
+  const created = ms.calls.find(c => c.method === 'POST' && c.path === 'me/messages').raw;
+  assert.ok(!/^In-Reply-To:|^References:/m.test(created.split('\r\n\r\n')[0]), 'aucun en-tête de fil');
+  assert.equal(header(created, 'Subject'), 'Fwd: Atelier');
+  assert.notEqual(store.composeContext(msg.id).draftExternalId, first);
+  assert.equal(drafts(ms).length, 2, 'ancien brouillon distant conservé');
+  // Retour à répondre : nouveau rattachement, nouveau brouillon.
+  await outbox.saveDraft(msg.id, { text: 'Finalement, réponse', mode: 'reply' });
+  assert.equal(drafts(ms).length, 3);
+});
+
+test('revue P2 : nouveau message dans le fil → brouillon de réponse recréé avec le nouveau In-Reply-To', async () => {
+  const { outbox, msg, ms, store } = await ready();
+  await outbox.saveDraft(msg.id, { text: 'Réponse', mode: 'reply' });
+  const reply = store.composeContext(msg.id).reply;
+  store.setReplyMeta(msg.id, { ...reply, messageId: '<nouveau@atlas.fr>', references: `${reply.messageId}` });
+  ms.calls.length = 0;
+  const r = await outbox.saveDraft(msg.id, { text: 'Réponse', mode: 'reply' });
+  assert.equal(r.previousDraftKept, true);
+  const created = ms.calls.find(c => c.method === 'POST' && c.path === 'me/messages').raw;
+  assert.equal(header(created, 'In-Reply-To'), '<nouveau@atlas.fr>');
+  assert.equal(header(created, 'References'), `${reply.messageId} <nouveau@atlas.fr>`);
+});
+
+test('revue P2 : sans colonne draft_thread_key, chaque enregistrement recrée depuis le MIME exact (jamais de PATCH)', async () => {
+  const { outbox, msg, ms } = await ready(ALL, { threadKeyColumn: false });
+  await outbox.saveDraft(msg.id, { text: 'v1', mode: 'reply' });
+  await outbox.saveDraft(msg.id, { text: 'v2', mode: 'reply' });
+  assert.ok(!ms.calls.some(c => c.method === 'PATCH'));
+  assert.equal(drafts(ms).length, 2);
 });

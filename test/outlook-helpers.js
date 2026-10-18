@@ -160,3 +160,18 @@ export async function connectedOutlook(ctx, scopes = [`${G}Mail.Read`]) {
   await job;
   return account;
 }
+
+// Simule la migration 005 (draft_thread_key) demandée au socle : la clé n'est écrite que si threadKey est fourni,
+// effacée par clearDraft, et renvoyée par composeContext.
+export function withThreadKey(store) {
+  const keys = new Map();
+  return Object.assign(Object.create(store), {
+    composeContext: id => ({ ...store.composeContext(id), draftThreadKey: keys.get(id) ?? null }),
+    saveDraft(id, text, opts = {}) {
+      const r = store.saveDraft(id, text, opts);
+      if (opts.threadKey !== undefined) keys.set(id, opts.threadKey);
+      return r;
+    },
+    clearDraft(id) { keys.delete(id); return store.clearDraft(id); },
+  });
+}
