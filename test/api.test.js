@@ -64,7 +64,7 @@ test('brouillon enregistré', async () => {
 });
 
 test('connexion simulée d’un compte', async () => {
-  const { body } = await req('POST', '/api/profiles/anove/accounts', { name: 'WhatsApp pro', svc: 'whatsapp' });
+  const { body } = await req('POST', '/api/profiles/anove/accounts', { name: 'Instagram démo', svc: 'instagram' });
   assert.equal(body.status, 'Connecté');
   assert.equal((await req('POST', '/api/profiles/anove/accounts', { name: 'LinkedIn', svc: 'linkedin' })).status, 400);
 });

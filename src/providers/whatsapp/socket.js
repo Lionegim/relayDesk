@@ -2,9 +2,11 @@
 // quand une liaison ou une session enregistrée le demande. Journal Baileys muet : ni QR, ni clé, ni contenu.
 // Les groupes, statuts et chaînes sont reçus normalement par Baileys (pas de refus côté protocole) et ignorés à l'import.
 import pino from 'pino';
+import { redactSignalLogs } from './redact-signal-logs.js';
 
 let baileys = null;
 export async function loadBaileys() {
+  redactSignalLogs();
   baileys ||= await import('@whiskeysockets/baileys');
   return baileys;
 }
@@ -18,6 +20,8 @@ export async function makeBaileysSocket({ auth }) {
     browser: lib.Browsers.macOS('Relay Desk'),
     markOnlineOnConnect: false,
     syncFullHistory: false,
+    enableRecentMessageCache: false,
+    enableAutoSessionRecreation: false,
     generateHighQualityLinkPreview: false,
     getMessage: async () => undefined,
   });

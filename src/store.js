@@ -340,6 +340,18 @@ export function createStore(db) {
     waChatName(accountId, chatJid) {
       return q('SELECT name FROM whatsapp_chats WHERE account_id = ? AND chat_jid = ?').get(accountId, chatJid)?.name ?? null;
     },
+    waEphemeralChats(accountId) {
+      return q('SELECT chat_jid FROM whatsapp_chats WHERE account_id = ? AND ephemeral = 1').all(accountId).map(r => r.chat_jid);
+    },
+    waSetEphemeral(accountId, chatJid, ephemeral) {
+      q(`INSERT INTO whatsapp_chats (account_id, chat_jid, ephemeral) VALUES (?, ?, ?)
+        ON CONFLICT (account_id, chat_jid) DO UPDATE SET ephemeral = excluded.ephemeral`).run(accountId, chatJid, +ephemeral);
+      if (ephemeral) transaction(db, () => {
+        q('DELETE FROM whatsapp_messages WHERE account_id = ? AND chat_jid = ?').run(accountId, chatJid);
+        q('DELETE FROM messages WHERE account_id = ? AND external_id = ?').run(accountId, chatJid);
+        q('DELETE FROM contacts WHERE account_id = ? AND external_id = ?').run(accountId, chatJid);
+      });
+    },
     // Un nom vide ne remplace jamais un nom connu.
     waSetChatName(accountId, chatJid, name) {
       q(`INSERT INTO whatsapp_chats (account_id, chat_jid, name) VALUES (?, ?, ?)

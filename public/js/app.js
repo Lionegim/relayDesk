@@ -59,7 +59,7 @@ function loadDetails(id) {
 // Rafraîchit la liste quand un compte réel est synchronisé en arrière-plan.
 const REFRESH_MS = 30000;
 setInterval(async () => {
-  if (!state.data || state.c || !state.data.profiles.some(p => p.accounts.some(a => ['gmail', 'outlook'].includes(a.svc)))) return;
+  if (!state.data || state.c || !state.data.profiles.some(p => p.accounts.some(a => ['gmail', 'outlook', 'whatsapp'].includes(a.svc)))) return;
   try { applyData(await api.state()); } catch { /* nouvel essai au prochain passage */ }
 }, REFRESH_MS);
 
@@ -195,20 +195,60 @@ function aiOpen(mode) {
 
 // ---------- Assistant de connexion ----------
 
-let syncTimer;
+let syncTimer, wizardVersion = 0, linkRequest = 0;
 function svcInit(key, name) {
   const def = state.data.services[key], fields = {};
   (def.fields || []).forEach(f => { fields[f[0]] = f[2]; });
-  return { step: 'config', svc: key, name: name || def.name, fields, perms: { read: true } };
+  return { step: 'config', svc: key, name: name || def.name, fields, perms: def.auth === 'qr' ? { read: true, drafts: true, send: true } : { read: true }, ...(def.auth === 'qr' ? { win: 7 } : {}) };
 }
 function openWizard(svc, name, account = null) {
-  const c = { step: 'pick', svc: null, profile: state.profileId, name: '', perms: { read: true }, win: 30, fields: {}, progress: 0, fromAccount: !!name };
+  const c = { wizardId: ++wizardVersion, step: 'pick', svc: null, profile: state.profileId, name: '', perms: { read: true }, win: 30, fields: {}, progress: 0, fromAccount: !!name };
   if (svc) Object.assign(c, svcInit(svc, name));
-  if (account) Object.assign(c, { accountId: account.id, win: account.windowDays || 30, perms: Object.fromEntries(['read', ...(account.perms || [])].map(p => [p, true])) });
+  if (account) Object.assign(c, { accountId: account.id, win: svc === 'whatsapp' ? 7 : account.windowDays || 30, perms: Object.fromEntries((svc === 'whatsapp' ? ['read','drafts','send'] : ['read', ...(account.perms || [])]).map(p => [p, true])) });
   set({ c, menu: false, accountMenu: null });
 }
 const setC = f => set(s => ({ c: { ...s.c, ...(typeof f === 'function' ? f(s.c) : f) } }));
-function closeWizard() { clearInterval(syncTimer); set({ c: null }); }
+function closeWizard() {
+  clearInterval(syncTimer);
+  linkRequest++;
+  const c = state.c;
+  if (c?.svc === 'whatsapp' && c.linkId && c.step !== 'done') api.cancelWhatsAppLink(c.linkId).catch(() => {});
+  set({ c: null });
+}
+
+async function startWhatsAppLink() {
+  const c = state.c;
+  if (!c || c.busy || c.linkId) return;
+  const request = ++linkRequest;
+  const current = () => state.c?.wizardId === c.wizardId && state.c?.svc === 'whatsapp' && request === linkRequest;
+  setC({ busy: true, error: null, link: null });
+  try {
+    const { linkId } = await api.startWhatsAppLink({ profileId: c.profile, name: c.name.trim(), windowDays: 7, ...(c.accountId ? { accountId: c.accountId } : {}) });
+    if (!current()) {
+      await api.cancelWhatsAppLink(linkId); return;
+    }
+    setC({ busy: false, linkId });
+    let polling = false;
+    const poll = async () => {
+      if (polling || state.c?.linkId !== linkId) return;
+      polling = true;
+      try {
+        const link = await api.whatsAppLink(linkId);
+        if (state.c?.linkId !== linkId) return;
+        setC({ link, error: link.status === 'error' ? link.error || 'Liaison interrompue. Réessaie avec un nouveau QR code.' : null });
+        if (link.status === 'connected') {
+          applyData(await api.state());
+          if (current() && state.c?.linkId === linkId) {
+            clearInterval(syncTimer);
+            setC({ step: 'done', accountId: link.accountId, progress: 100, real: { messages: link.messages || 0, threads: link.threads || 0, todo: 0 } });
+          }
+        } else if (link.status === 'error') clearInterval(syncTimer);
+      } catch (e) { if (state.c?.linkId === linkId) setC({ error: e.message }); }
+      finally { polling = false; }
+    };
+    clearInterval(syncTimer); syncTimer = setInterval(poll, 1500); poll();
+  } catch (e) { if (current()) setC({ busy: false, error: e.message }); }
+}
 
 // Gmail : autorisation réelle dans Google (pleine page), puis suivi de l'import côté serveur.
 function startProviderAuth() {
@@ -433,7 +473,7 @@ const actions = {
   resetWidth: () => { storage.set(LIST_W_KEY, 380); set({ listW: 380 }); },
 
   // Lecture
-  compose: ({ mode }) => set({ composing: mode }),
+  compose: ({ mode }) => { if (derive(state).sel?.channel === 'whatsapp' && mode !== 'reply') return; set({ composing: mode }); },
   closeComposer: () => set({ composing: null }),
   composeTo: (_, e) => { const id = state.selectedId, v = e.target.value; set(s => ({ composeTo: { ...s.composeTo, [id]: v } })); },
   draft: (_, e) => { const id = state.selectedId, v = e.target.value; set(s => ({ drafts: { ...s.drafts, [id]: v } })); },
@@ -595,12 +635,24 @@ const actions = {
   },
   cWindow: ({ win }) => { const w = Number(win); if (WINDOWS.includes(w)) setC({ win: w }); },
   cField: ({ field }, e) => { const v = e.target.value; setC(c => ({ fields: { ...c.fields, [field]: v } })); },
-  cBack: () => setC(c => ({ step: c.step === 'auth' ? 'config' : 'pick', error: null })),
+  cBack: () => {
+    const c = state.c;
+    if (c.busy || c.linkId) return;
+    setC({ step: c.step === 'auth' ? 'config' : 'pick', error: null });
+  },
+  refreshWhatsAppQR: async () => {
+    const c = state.c;
+    if (!c || c.busy) return;
+    clearInterval(syncTimer);
+    if (c.linkId) await api.cancelWhatsAppLink(c.linkId).catch(() => {});
+    if (state.c?.wizardId !== c.wizardId || state.c?.linkId !== c.linkId) return;
+    setC({ linkId: null, link: null, error: null }); startWhatsAppLink();
+  },
   cNext: () => {
     const c = state.c;
     if (c.step === 'config') setC({ step: 'auth', error: null });
-    else if (c.step === 'auth') state.data.services[c.svc].real ? startProviderAuth() : startSync();
-    else if (c.step === 'done') { clearInterval(syncTimer); set({ c: null, app: 'mail', profileId: c.profile, selectedId: c.profile === state.profileId ? state.selectedId : firstOf(c.profile), folder: null }); }
+    else if (c.step === 'auth') c.svc === 'whatsapp' ? startWhatsAppLink() : state.data.services[c.svc].real ? startProviderAuth() : startSync();
+    else if (c.step === 'done') { clearInterval(syncTimer); set({ c: null, app: 'mail', profileId: c.profile, selectedId: c.svc === 'whatsapp' ? state.data.messages.find(m => m.accountId === c.accountId && !m.archived)?.id ?? firstOf(c.profile) : c.profile === state.profileId ? state.selectedId : firstOf(c.profile), folder: null }); }
   },
 };
 

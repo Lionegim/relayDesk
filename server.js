@@ -14,6 +14,7 @@ import { createMicrosoftOAuth } from './src/providers/outlook/oauth.js';
 import { createOutlookSync } from './src/providers/outlook/sync.js';
 import { createOutlookOutbox } from './src/providers/outlook/outbox.js';
 import { createOutlookDisconnect } from './src/providers/outlook/disconnect.js';
+import { createWhatsAppProvider } from './src/providers/whatsapp/index.js';
 
 const port = Number(process.env.PORT) || 4310;
 const host = process.env.HOST || '127.0.0.1';
@@ -34,6 +35,8 @@ const outlookSync = createOutlookSync({ store, vault, oauth: microsoftOAuth });
 const outlookOutbox = createOutlookOutbox({ store, sync: outlookSync, ownerName: process.env.OWNER_NAME || 'Jean-Hugues' });
 const outlookDisconnect = createOutlookDisconnect({ store, vault, sync: outlookSync });
 const providers = { outlook: { oauth: microsoftOAuth, sync: outlookSync, outbox: outlookOutbox, disconnect: outlookDisconnect, redirectUri: `http://localhost:${port}/oauth/microsoft/callback` } };
+const whatsapp = await createWhatsAppProvider({ store, vault });
+providers.whatsapp = whatsapp;
 
 const ai = createMistralClient({ apiKey: process.env.MISTRAL_API_KEY || '', model: process.env.MISTRAL_MODEL || 'mistral-small-latest' });
 const server = createApp({
@@ -49,8 +52,9 @@ server.listen(port, host, () => {
   if (!oauth.configured) console.warn('GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET absents : la connexion Gmail est désactivée.');
   sync.start(Number(process.env.SYNC_INTERVAL_MS) || 60000);
   outlookSync.start(Number(process.env.SYNC_INTERVAL_MS) || 60000);
+  Promise.resolve(whatsapp.sync.start()).catch(() => console.error('WhatsApp : reprise différée des sessions locales.'));
 });
 
-const stop = () => { sync.stop(); outlookSync.stop(); server.close(() => { db.close(); process.exit(0); }); };
+const stop = async () => { sync.stop(); outlookSync.stop(); await whatsapp.sync.stop(); server.close(() => { db.close(); process.exit(0); }); };
 process.on('SIGINT', stop);
 process.on('SIGTERM', stop);

@@ -102,9 +102,9 @@ function sidebar(s, v) {
             <span class="acct-dot" style="background:${ACCOUNT_COLORS[a.c] || ACCOUNT_COLORS.muted}"></span>
           </button>
           ${when(s.data.services[a.svc]?.real && s.accountMenu === a.id, () => html`
-            <div class="menu" role="menu" aria-label="Compte Gmail" style="left:0;right:0;top:100%">
+            <div class="menu" role="menu" aria-label="Compte de messagerie" style="left:0;right:0;top:100%">
               <button class="side-item hov" role="menuitem" data-on-click="accountSync" data-id="${a.id}">Synchroniser maintenant</button>
-              <button class="side-item hov" role="menuitem" data-on-click="accountPermissions" data-id="${a.id}">Modifier les permissions</button>
+              <button class="side-item hov" role="menuitem" data-on-click="accountPermissions" data-id="${a.id}">${a.svc === 'whatsapp' ? 'Relier l’appareil' : 'Modifier les permissions'}</button>
               <button class="side-item hov" role="menuitem" data-on-click="disconnectAccount" data-id="${a.id}" style="color:var(--destructive)">Déconnecter</button>
             </div>`)}
           </div>`)}
@@ -183,8 +183,8 @@ function reader(s, v) {
         <div class="grow"></div>
         <div class="icon-group">
           <button class="icon-btn" data-on-click="compose" data-mode="reply" title="Répondre">${icon('reply')}</button>
-          <button class="icon-btn" data-on-click="compose" data-mode="replyAll" title="Répondre à tous">${icon('replyAll')}</button>
-          <button class="icon-btn" data-on-click="compose" data-mode="forward" title="Transférer">${icon('forward')}</button>
+          <button class="icon-btn" data-on-click="compose" data-mode="replyAll" title="Répondre à tous" ${raw(sel?.channel === 'whatsapp' ? 'disabled' : '')}>${icon('replyAll')}</button>
+          <button class="icon-btn" data-on-click="compose" data-mode="forward" title="Transférer" ${raw(sel?.channel === 'whatsapp' ? 'disabled' : '')}>${icon('forward')}</button>
         </div>
         <div class="icon-group">
           <button class="icon-btn" data-on-click="archive" title="Archiver">${icon('archive')}</button>
@@ -284,6 +284,7 @@ function aiPanel(s, sel) {
   const priorities = { low: 'Basse', normal: 'Normale', high: 'Haute' };
   const folders = s.data.folders.filter(f => f.p === sel.p);
   const configured = s.data.ai?.configured;
+  const localLabels = sel.channel === 'whatsapp';
   const result = ai.forId === sel.id ? ai.result : null;
   const n = sel.count || 1;
   return html`
@@ -326,7 +327,7 @@ function aiPanel(s, sel) {
               ${folders.map(f => html`<option value="${f.id}" ${raw(ai.folderId === f.id ? 'selected' : '')}>${f.name}</option>`)}
             </select>
           </label>
-          <p class="muted" style="font-size:12px;margin:0">${result.appliedAt ? 'Classement déjà appliqué.' : 'La catégorie et la priorité restent dans Relay Desk. Le dossier choisi sera synchronisé avec ton compte.'}</p>` : html`<div class="ai-result">${result.text}</div>`)}
+          <p class="muted" style="font-size:12px;margin:0">${result.appliedAt ? 'Classement déjà appliqué.' : localLabels ? 'Catégorie, priorité et dossier restent dans Relay Desk, sur ce Mac.' : 'La catégorie et la priorité restent dans Relay Desk. Le dossier choisi sera synchronisé avec ton compte.'}</p>` : html`<div class="ai-result">${result.text}</div>`)}
         ${when(result?.createdAt, () => html`<span class="muted" style="font-size:11px">Analyse enregistrée à ${timeOf(result.createdAt)}${result.cached ? ' · réutilisée' : ''}</span>`)}
       </div>
       <div class="ai-foot">
@@ -422,8 +423,8 @@ function connectWizard(s) {
   const missing = d?.auth === 'fields' && d.fields.some(f => !f[5] && !String(c.fields[f[0]] || '').trim());
   const msgs = Math.round(c.win * 6.4);
   const profileName = id => s.data.profiles.find(p => p.id === id).name;
-  const next = { config: 'Continuer', auth: d?.btn, done: 'Ouvrir la boîte' }[c.step];
-  const nextDisabled = c.step === 'auth' ? missing : c.step === 'config' ? !c.name.trim() : false;
+  const next = c.svc === 'whatsapp' && c.step === 'auth' && c.linkId ? null : { config: 'Continuer', auth: d?.btn, done: 'Ouvrir la boîte' }[c.step];
+  const nextDisabled = c.busy || (c.step === 'auth' ? missing : c.step === 'config' ? !c.name.trim() : false);
   const importMeta = c.real ? `${c.real.done} / ${c.real.total} conversations` : `${Math.round(msgs * c.progress / 100)} / ${msgs}`;
   const checks = [['Autorisation reçue', 1, ''], ['Capacités vérifiées', c.real ? 2 : 20, `${permsOn.length} accès`], [`Import des ${c.win} derniers jours`, 100, importMeta], ['Triage local', 100, '']];
   const stats = c.real ? [[c.real.messages, 'messages importés'], [c.real.threads, 'conversations'], [c.real.todo, 'à traiter']]
@@ -487,18 +488,18 @@ function connectWizard(s) {
                   <div class="perm">
                     <span style="display:flex;flex-direction:column;gap:2px;flex:1">
                       <span style="font-size:13px;font-weight:600">${PERM[k][0]}</span>
-                      <span class="muted" style="font-size:12px">${soon ? 'Disponible dans une prochaine version' : d.real && d.scopes[k] ? d.scopes[k][0] : PERM[k][1]}</span>
+                      <span class="muted" style="font-size:12px">${soon ? 'Disponible dans une prochaine version' : d.real && d.scopes?.[k] ? d.scopes[k][0] : PERM[k][1]}</span>
                     </span>
-                    <button class="switch" role="switch" aria-checked="${!soon && !!c.perms[k]}" aria-label="${PERM[k][0]}" data-on-click="cPerm" data-perm="${k}" ${raw(k === 'read' || soon ? 'disabled' : '')}></button>
+                    <button class="switch" role="switch" aria-checked="${!soon && !!c.perms[k]}" aria-label="${PERM[k][0]}" data-on-click="cPerm" data-perm="${k}" ${raw(k === 'read' || soon || d.auth === 'qr' ? 'disabled' : '')}></button>
                   </div>`;
                 })}
               </div>
             </div>
-            ${when(c.accountId && d.real, () => html`<p class="muted" style="font-size:12px">Une permission supplémentaire demande une nouvelle autorisation Google. Décocher un accès déjà accordé ne le révoque pas dans Google.</p>`)}
+            ${when(c.accountId && d.auth === 'oauth', () => html`<p class="muted" style="font-size:12px">Une permission supplémentaire demande une nouvelle autorisation du fournisseur. Décocher un accès déjà accordé ne le révoque pas chez le fournisseur.</p>`)}
             <div class="field" style="gap:8px">
               <span class="field-label">Historique à importer</span>
               <div style="display:flex;gap:6px">
-                ${WINDOWS.map(w => html`<button class="${cls('pill', w === c.win && 'is-on')}" data-on-click="cWindow" data-win="${w}">${w} jours</button>`)}
+                ${(d.auth === 'qr' ? [7] : WINDOWS).map(w => html`<button class="${cls('pill', w === c.win && 'is-on')}" data-on-click="cWindow" data-win="${w}">${w} jours</button>`)}
               </div>
             </div>`)}
 
@@ -509,6 +510,15 @@ function connectWizard(s) {
               <span class="muted">Accès</span><span style="font-weight:600">${permsOn.map(k => PERM[k][0]).join(', ')}</span>
               <span class="muted">Historique</span><span style="font-weight:600">${c.win} derniers jours</span>
             </div>
+            ${when(d.auth === 'qr', () => html`
+              ${when(!c.linkId, () => html`<p class="muted" style="margin:0">${d.scopesNote}</p>`)}
+              ${when(!c.linkId, () => html`<p class="muted" style="margin:0">Discussions individuelles en texte, sur les 7 derniers jours disponibles. Groupes, médias, messages éphémères et vue unique exclus. L’historique disponible dépend de WhatsApp.</p>`)}
+              <p class="muted" style="font-size:12px;margin:0">Connecteur communautaire non officiel : la liaison peut être interrompue ou limitée par WhatsApp.</p>
+              <div class="whatsapp-link">
+                ${when(c.busy || (c.linkId && !c.link?.qrDataUrl && !c.error && c.link?.status !== 'connected'), () => html`<span class="spinner"></span><span>${c.link?.status === 'syncing' ? 'Liaison reçue, synchronisation en cours…' : 'Préparation de la liaison…'}</span>`)}
+                ${when(c.link?.qrDataUrl && !c.error, () => html`<img class="whatsapp-qr" src="${c.link.qrDataUrl}" alt="QR code pour lier WhatsApp à Relay Desk"><p>Dans WhatsApp sur ton téléphone : <strong>Réglages → Appareils connectés → Connecter un appareil</strong>, puis scanne ce QR code.</p><span class="muted" style="font-size:12px">Ce QR code donne à ce Mac accès à la lecture et à l’envoi. Relay Desk demande ta validation avant chaque envoi.</span>`)}
+                ${when(c.linkId && c.error, () => html`<button class="btn btn-ghost" data-on-click="refreshWhatsAppQR">Obtenir un nouveau QR code</button>`)}
+              </div>`)}
             ${when(d.auth === 'oauth', () => html`
               <div class="field" style="gap:8px">
                 <span class="field-label">Autorisations demandées à ${d.provider}</span>
@@ -550,7 +560,7 @@ function connectWizard(s) {
         </div>
 
         <div class="dialog-foot">
-          ${when((c.step === 'config' && !c.fromAccount) || c.step === 'auth', () => html`<button class="btn btn-ghost" data-on-click="cBack">Retour</button>`)}
+          ${when(!c.busy && !c.linkId && ((c.step === 'config' && !c.fromAccount) || c.step === 'auth'), () => html`<button class="btn btn-ghost" data-on-click="cBack">Retour</button>`)}
           <div class="grow"></div>
           ${when(next, () => html`<button class="btn btn-brand" data-on-click="cNext" ${raw(nextDisabled ? 'disabled' : '')}>${next}</button>`)}
         </div>
@@ -588,12 +598,12 @@ function sendDialog(c) {
     <div class="overlay" data-on-click="confirmCancel">
       <div class="dialog" role="alertdialog" aria-modal="true" aria-label="Vérifier le message avant l’envoi" data-on-click="noop">
         <div class="dialog-body">
-          <h3>Vérifier avant d’envoyer</h3>
+          <h3>Vérifier avant d’envoyer${p.channel === 'whatsapp' ? ' sur WhatsApp' : ''}</h3>
           <div class="recap">
             <span class="muted">De</span><span>${p.from}</span>
             <span class="muted">À</span><span>${p.to.join(', ')}</span>
             ${when(p.cc.length, () => html`<span class="muted">Cc</span><span>${p.cc.join(', ')}</span>`)}
-            <span class="muted">Objet</span><span style="font-weight:600">${p.subject}</span>
+            ${when(p.channel !== 'whatsapp', () => html`<span class="muted">Objet</span><span style="font-weight:600">${p.subject}</span>`)}
           </div>
           <div class="send-body">${p.body}</div>
           <p class="muted" style="margin:0;font-size:12px">Ce texte est exactement celui qui sera envoyé. Toute modification demande une nouvelle vérification.</p>

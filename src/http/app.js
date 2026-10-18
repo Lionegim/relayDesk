@@ -120,9 +120,30 @@ export function createApp({ store, ai, ownerName, gmail = null, providers = {}, 
       const snapshot = store.snapshot();
       for (const profile of snapshot.profiles) for (const account of profile.accounts) {
         account.perms = mail.permissions(account);
-        if (providers[account.svc]) account.windowDays = store.getSync(account.id)?.window_days || 30;
+        if (providers[account.svc]) account.windowDays = account.svc === 'whatsapp' ? 7 : store.getSync(account.id)?.window_days || 30;
       }
-      return { ...snapshot, services: SERVICES, permissions: PERMISSIONS, ai: { configured: ai.configured }, integrations: Object.fromEntries(Object.entries(providers).map(([k,p]) => [k, { configured: !!p.oauth.configured }])) };
+      return { ...snapshot, services: SERVICES, permissions: PERMISSIONS, ai: { configured: ai.configured }, integrations: Object.fromEntries(Object.entries(providers).map(([k,p]) => [k, { configured: !!(p.configured ?? p.oauth?.configured) }])) };
+    }],
+    ['POST', /^\/api\/whatsapp\/links$/, (_, body) => {
+      const wa = providers.whatsapp;
+      if (!wa?.configured) throw new HttpError(503, 'La liaison WhatsApp est indisponible.', 'whatsapp_unavailable');
+      const { profileId, name, accountId } = body;
+      if (!store.hasProfile(profileId) || typeof name !== 'string' || !name.trim() || name.trim().length > 80 || (body.windowDays !== undefined && body.windowDays !== 7)) throw badRequest('Paramètres de liaison invalides');
+      if (accountId !== undefined) {
+        if (!Number.isInteger(accountId)) throw badRequest('Compte invalide');
+        const a = store.getAccount(accountId);
+        if (a.svc !== 'whatsapp' || a.profileId !== profileId || a.name !== name.trim()) throw badRequest('Compte WhatsApp invalide');
+      }
+      return wa.startLink({ profileId, name: name.trim(), windowDays: 7, ...(accountId !== undefined ? { accountId } : {}) });
+    }],
+    ['GET', /^\/api\/whatsapp\/links\/([a-zA-Z0-9-]+)$/, ([id]) => {
+      if (!providers.whatsapp) throw notFound();
+      return providers.whatsapp.linkStatus(id);
+    }],
+    ['DELETE', /^\/api\/whatsapp\/links\/([a-zA-Z0-9-]+)$/, async ([id]) => {
+      if (!providers.whatsapp) throw notFound();
+      await providers.whatsapp.cancelLink(id);
+      return { cancelled: true };
     }],
     ['GET', /^\/api\/accounts\/([^/]+)\/sync$/, ([id]) => mail.providerFor(accountId(id)).sync.progress(accountId(id)) || (() => { throw notFound('Aucune synchronisation pour ce compte'); })()],
     ['POST', /^\/api\/accounts\/([^/]+)\/sync$/, ([id]) => {

@@ -17,18 +17,16 @@ export const isDirectJid = jid => directJid(jid) !== null && directJid(jid) === 
 export const phoneOf = jid => (/^(\d{5,20})@s\.whatsapp\.net$/.exec(jid || '') || [])[1] ? `+${jid.split('@')[0]}` : null;
 
 const WRAPPERS_REFUSED = ['ephemeralMessage', 'viewOnceMessage', 'viewOnceMessageV2', 'viewOnceMessageV2Extension'];
-const CAPTIONED = ['imageMessage', 'videoMessage', 'documentMessage'];
 
 // Texte d'un message, ou null s'il n'est pas importable.
 export function textOf(message) {
   if (!message || typeof message !== 'object') return null;
   if (WRAPPERS_REFUSED.some(k => message[k])) return null;
-  const ctx = message.extendedTextMessage?.contextInfo || CAPTIONED.map(k => message[k]?.contextInfo).find(Boolean);
+  const ctx = message.extendedTextMessage?.contextInfo;
   if (ctx && Number(ctx.expiration) > 0) return null; // discussion en mode messages éphémères
   let text = null;
   if (typeof message.conversation === 'string') text = message.conversation;
   else if (typeof message.extendedTextMessage?.text === 'string') text = message.extendedTextMessage.text;
-  else for (const k of CAPTIONED) if (typeof message[k]?.caption === 'string') { text = message[k].caption; break; }
   text = text?.replace(/\r\n?/g, '\n').replace(/[\u0000-\u0008\u000b-\u001f\u007f]/g, ' ').trim();
   return text ? text.slice(0, MAX_TEXT) : null;
 }

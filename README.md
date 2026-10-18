@@ -2,7 +2,7 @@
 
 Boîte de réception locale multi-profils (email, WhatsApp, Instagram, LinkedIn), interface « Relay Inbox v2 » inspirée d’Apple Mail, dans le design system Anove AIMS.
 
-Node.js (ESM, sans dépendance), serveur HTTP natif, SQLite (`node:sqlite`), interface en JavaScript vanilla.
+Node.js (ESM), serveur HTTP natif, SQLite (`node:sqlite`), interface en JavaScript vanilla. Le connecteur WhatsApp utilise Baileys et ses dépendances ; les adaptateurs email restent natifs.
 
 ## Démarrer
 
@@ -39,14 +39,15 @@ Pour connecter tes comptes : [Gmail](docs/gmail.md), [Outlook / Microsoft 365](d
 - **Gmail (lecture et classement facultatif)** : autorisation OAuth réelle (PKCE, `gmail.readonly`), jeton chiffré, import des conversations de la période choisie avec progression réelle, libellés en dossiers, mise à jour toutes les 60 secondes par `history.list`, reprise après erreur et passage à « À reconnecter » si l’accès est révoqué. Avec **Libellés** (`gmail.modify`), lu/non lu, drapeau, archivage et dossiers sont renvoyés à Gmail avant la mise à jour locale. Le menu du compte permet de synchroniser et de modifier les permissions ; chaque nouvel accès exige une nouvelle autorisation Google et sa déclaration dans Google Auth Platform → Accès aux données.
 - **Nouveau message** : compositeur commun avec choix du compte connecté au profil, À, Cc, Objet et texte ; brouillon fournisseur, réouverture, aperçu exact puis validation d'envoi à usage unique. Sans permission Brouillons, enregistrement local ; sans Envoi, pas d'envoi. L'assistant peut améliorer le nouveau texte après configuration IA.
 - **Outlook / Microsoft 365** : adaptateur Microsoft Graph réel avec OAuth PKCE pour comptes personnels et professionnels, jetons chiffrés avec rotation, import et synchronisation delta par dossier, classement, brouillons et envoi MIME validé. L'activation exige un client Microsoft Entra et le consentement du titulaire ; aucune connexion Microsoft réelle n'a encore été vérifiée sur cette installation.
+- WhatsApp : liaison réelle par QR code comme appareil associé, discussions individuelles en texte sur les 7 derniers jours disponibles, sessions chiffrées sur le Mac, brouillons et classement locaux. Réponses après aperçu exact uniquement ; groupes, médias et messages éphémères/vue unique exclus. Connecteur communautaire non officiel : compatibilité et accès soumis aux évolutions de WhatsApp. Voir [la configuration WhatsApp](docs/whatsapp.md).
 - **Persistance** : SQLite (`data/relay.db`), migrations SQL, WAL.
 
 ## Ce qui reste simulé
 
 - Les comptes d’exemple (`src/demo-data.js`) restent présents si `DEMO_DATA` vaut `1`.
-- Proton, WhatsApp et Instagram : la connexion ne contacte aucun fournisseur ; la progression est simulée.
+- Proton reste à venir ; Instagram est une démonstration.
 - Gmail sans la permission **Libellés** reste en lecture seule ; seuls ces comptes conservent les changements de classement localement. Sans la permission **Brouillons**, les brouillons restent dans Relay.
-- « Envoyer » n’est actif que pour un compte Gmail ou Outlook connecté ayant la permission **Envoi**. Les comptes d’exemple et les services sans adaptateur ne peuvent pas envoyer.
+- « Envoyer » n’est actif que pour un compte Gmail, Outlook ou WhatsApp connecté ayant la permission **Envoi**. Les comptes d’exemple et les services sans adaptateur ne peuvent pas envoyer.
 - Pas encore pris en charge : pièces jointes, rendu HTML, réponse citant le message d’origine (seul le transfert le cite).
 
 ## Structure
@@ -60,6 +61,7 @@ src/secrets.js         chiffrement des jetons
 src/mail/              registre multi-fournisseurs et contrat de rédaction
 src/providers/gmail/   adaptateur Google
 src/providers/outlook/ adaptateur Microsoft Graph
+src/providers/whatsapp/ liaison locale par QR et discussions texte
 src/triage.js          règles locales de triage
 src/ai/                client Mistral et prompts
 src/connectors.js      catalogue des services et permissions

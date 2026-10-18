@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { summaryPrompt, draftPrompt, classifyPrompt, parseClassification } from '../ai/assistant.js';
 import { HttpError, badRequest } from '../http/errors.js';
+import { SERVICES } from '../connectors.js';
 
 const digest = value => createHash('sha256').update(JSON.stringify(value)).digest('hex');
 const stale = () => new HttpError(409, 'Le fil ou les dossiers ont changé. Relance l’analyse avant de continuer.', 'ai_stale');
@@ -56,14 +57,15 @@ export function createAssistantService({ store, ai, mail, ownerName }) {
       const target = folderId === undefined ? result.folderId : folderId;
       if (target !== null && (typeof target !== 'string' || !store.aiFolders(store.getMessage(id).p).some(f => f.id === target))) throw badRequest('Dossier invalide pour ce profil');
       const accountId = store.getMessageSource(id).accountId;
-      if (target !== null && accountId && !mail.permissions(store.getAccount(accountId)).includes('labels')) {
+      const localLabels = accountId && SERVICES[store.getAccount(accountId).svc]?.localLabels;
+      if (target !== null && accountId && !localLabels && !mail.permissions(store.getAccount(accountId)).includes('labels')) {
         throw new HttpError(403, 'Le classement dans un dossier demande la permission de classement du compte. Reconnecte-le avec cet accès.', 'labels_forbidden');
       }
       applying.add(id);
       try {
         if (target !== null) await mail.updateMessage(id, { folderId: target });
         store.markAIClassified(id, proposalId, target);
-        return { message: store.getMessage(id), folderId: target, applied: true, synced: target !== null && !!accountId };
+        return { message: store.getMessage(id), folderId: target, applied: true, synced: target !== null && !!accountId && !localLabels };
       } finally { applying.delete(id); }
     },
   };

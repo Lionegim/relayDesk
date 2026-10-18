@@ -10,6 +10,9 @@ async function call(method, url, body) {
 }
 
 export const api = {
+  startWhatsAppLink: input => call('POST', '/api/whatsapp/links', input),
+  whatsAppLink: id => call('GET', `/api/whatsapp/links/${encodeURIComponent(id)}`),
+  cancelWhatsAppLink: id => call('DELETE', `/api/whatsapp/links/${encodeURIComponent(id)}`, {}),
   createComposition: accountId => call('POST', '/api/drafts', { accountId }),
   state: () => call('GET', '/api/state'),
   message: id => call('GET', `/api/messages/${id}`),

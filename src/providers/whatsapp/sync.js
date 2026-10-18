@@ -32,7 +32,11 @@ export function createWhatsAppSync({ store, vault, lib, makeSocket, log = consol
   const epochs = new Map();
   const forgetHooks = [];
   const epoch = id => epochs.get(id) || 0;
-  let stopped = false;
+  let stopped = false, generationCounter = 0;
+  const advance = accountId => {
+    epochs.set(accountId, ++generationCounter);
+    for (const fn of forgetHooks) fn(accountId);
+  };
   const warn = msg => log.warn?.(`WhatsApp : ${msg}`); // jamais de QR, de clé ni de contenu
 
   function serial(accountId, fn) {
@@ -53,11 +57,11 @@ export function createWhatsAppSync({ store, vault, lib, makeSocket, log = consol
     clearTimeout(s.settle);
     try { Promise.resolve(s.sock.end(undefined)).catch(() => {}); } catch { /* socket déjà fermé */ }
   }
-  function dropSession(accountId) {
+  function dropSession(accountId, { resetRetry = true } = {}) {
     const s = sessions.get(accountId);
     if (s) { sessions.delete(accountId); endSocket(s); }
     clearTimeout(retries.get(accountId)?.timer);
-    retries.delete(accountId);
+    if (resetRetry) retries.delete(accountId);
   }
 
   // ---------- Liaisons ----------
@@ -74,7 +78,8 @@ export function createWhatsAppSync({ store, vault, lib, makeSocket, log = consol
     link.status = 'error';
     link.error = message;
     finishLink(link);
-    if (link.opened) return;
+    if (link.opened || epoch(link.accountId) !== link.at) return;
+    advance(link.accountId);
     const s = sessions.get(link.accountId);
     if (s?.link === link) dropSession(link.accountId);
     if (!store.hasAccount(link.accountId)) return;
@@ -108,9 +113,9 @@ export function createWhatsAppSync({ store, vault, lib, makeSocket, log = consol
     const auth = createAuthState({ store, vault, accountId, lib: await lib() });
     if (epoch(accountId) !== at || !store.hasAccount(accountId) || stopped || (link && link.done)) { auth.close(); return; }
     const sock = await makeSocket({ auth });
-    const s = { sock, auth, at, link, open: false, verified: false, closed: false, pending: [], ephemeral: new Set(), settle: null };
+    const s = { sock, auth, at, link, open: false, verified: false, closed: false, pending: [], ephemeral: new Set(store.waEphemeralChats(accountId)), settle: null };
     if (epoch(accountId) !== at || !store.hasAccount(accountId) || stopped || (link && link.done)) { endSocket(s); return; }
-    dropSession(accountId);
+    dropSession(accountId, { resetRetry: false });
     sessions.set(accountId, s);
 
     sock.ev.on('creds.update', () => {
@@ -121,6 +126,7 @@ export function createWhatsAppSync({ store, vault, lib, makeSocket, log = consol
         link.paired = true;
         link.qrDataUrl = null;
         link.status = 'syncing';
+        clearTimeout(link.timer);
       }
     });
     sock.ev.on('connection.update', u => onConnection(accountId, s, u || {}));
@@ -133,6 +139,8 @@ export function createWhatsAppSync({ store, vault, lib, makeSocket, log = consol
     sock.ev.on('messages.upsert', d => batch('messages', d?.type === 'notify')(d));
     sock.ev.on('contacts.upsert', batch('contacts', false));
     sock.ev.on('contacts.update', batch('contacts', false));
+    sock.ev.on('chats.update', batch('chats', false));
+    sock.ev.on('chats.upsert', batch('chats', false));
   }
 
   function onConnection(accountId, s, { connection, lastDisconnect, qr }) {
@@ -149,10 +157,10 @@ export function createWhatsAppSync({ store, vault, lib, makeSocket, log = consol
       }
       showQr(s.link, qr);
     }
-    if (connection === 'open') verify(accountId, s);
+    if (connection === 'open') verify(accountId, s).catch(() => { if (current(accountId, s)) { dropSession(accountId); scheduleRetry(accountId, s.link); } });
     if (connection === 'close') {
       const code = lastDisconnect?.error?.output?.statusCode;
-      dropSession(accountId);
+      dropSession(accountId, { resetRetry: false });
       if (code === LOGGED_OUT) {
         store.waAuthClear(accountId);
         if (s.link && !s.link.done && !s.link.opened) return failLink(s.link, 'Liaison refusée par WhatsApp.');
@@ -163,25 +171,25 @@ export function createWhatsAppSync({ store, vault, lib, makeSocket, log = consol
       // Après la validation du QR, WhatsApp demande un redémarrage du socket : même liaison, identifiants enregistrés.
       if (code === RESTART_REQUIRED) return reopen(accountId, s.link);
       if (s.link && !s.link.done && !s.link.opened && !s.link.paired) return failLink(s.link, 'QR expiré : relance la liaison.');
-      scheduleRetry(accountId);
+      scheduleRetry(accountId, s.link);
     }
   }
 
   function reopen(accountId, link) {
     openSession(accountId, link).catch(() => {
       if (link && !link.done && !link.opened) failLink(link, 'Impossible de poursuivre la liaison.');
-      else scheduleRetry(accountId);
+      else scheduleRetry(accountId, link);
     });
   }
 
-  function scheduleRetry(accountId) {
+  function scheduleRetry(accountId, link = null) {
     if (stopped || !store.hasAccount(accountId) || !hasSession({ store, vault, accountId })) return;
     const r = retries.get(accountId) || { n: 0 };
     clearTimeout(r.timer);
     const delay = Math.min(T.retryBaseMs * 2 ** r.n, T.retryMaxMs);
     r.n++;
     const at = epoch(accountId);
-    r.timer = setTimeout(() => { if (epoch(accountId) === at && !sessions.has(accountId)) reopen(accountId, null); }, delay);
+    r.timer = setTimeout(() => { if (epoch(accountId) === at && !sessions.has(accountId)) reopen(accountId, link && !link.done ? link : null); }, delay);
     r.timer.unref?.();
     retries.set(accountId, r);
     store.setAccountStatus(accountId, 'Hors ligne', 'warn');
@@ -190,6 +198,8 @@ export function createWhatsAppSync({ store, vault, lib, makeSocket, log = consol
 
   // Le compte est identifié par son numéro dès la connexion ; une autre identité n'est jamais substituée.
   async function verify(accountId, s) {
+    if (!current(accountId, s) || s.verified || s.verifying) return;
+    s.verifying = true;
     const me = directJid(s.sock.user?.id);
     const phone = phoneOf(me);
     const acc = store.getAccount(accountId);
@@ -209,6 +219,7 @@ export function createWhatsAppSync({ store, vault, lib, makeSocket, log = consol
       // L'appareil qui vient d'être lié est retiré du téléphone, au mieux.
       try { await Promise.race([s.sock.logout(), new Promise((_, no) => setTimeout(no, 10000).unref?.())]); } catch { /* sans incidence */ }
       try { s.sock.end(undefined); } catch { /* déjà fermé */ }
+      if (epoch(accountId) !== s.at || !isWhatsApp(accountId)) return;
       if (s.link && !s.link.done) return failLink(s.link, reason);
       store.waAuthClear(accountId);
       store.setAccountStatus(accountId, 'À reconnecter', 'warn');
@@ -273,7 +284,21 @@ export function createWhatsAppSync({ store, vault, lib, makeSocket, log = consol
     return touched;
   }
 
+  function policies(accountId, s, chats) {
+    for (const ch of Array.isArray(chats) ? chats.slice(0, MAX_BATCH) : []) {
+      const jid = directJid(ch?.id);
+      if (!jid || !Object.hasOwn(ch, 'ephemeralExpiration')) continue;
+      const value = Number(ch.ephemeralExpiration);
+      if (!Number.isFinite(value) || value < 0) continue;
+      const ephemeral = value > 0;
+      if (ephemeral) s.ephemeral.add(jid); else s.ephemeral.delete(jid);
+      store.waSetEphemeral(accountId, jid, ephemeral);
+    }
+  }
+
   function handle(accountId, s, kind, data, notify) {
+    if (kind === 'chats') { policies(accountId, s, data); return; }
+    if (kind === 'history') policies(accountId, s, data?.chats);
     if (kind === 'contacts') {
       const known = new Set(store.waChats(accountId));
       for (const jid of names(accountId, data)) if (known.has(jid)) rebuild(accountId, jid);
@@ -285,7 +310,6 @@ export function createWhatsAppSync({ store, vault, lib, makeSocket, log = consol
       for (const ch of Array.isArray(data?.chats) ? data.chats : []) {
         const jid = directJid(ch?.id);
         if (!jid) continue;
-        if (Number(ch.ephemeralExpiration) > 0) s.ephemeral.add(jid);
         if (typeof ch.name === 'string' && ch.name.trim()) store.waSetChatName(accountId, jid, ch.name.trim().slice(0, 80));
         if (Number(ch.unreadCount) > 0) unread.add(jid);
       }
@@ -341,15 +365,16 @@ export function createWhatsAppSync({ store, vault, lib, makeSocket, log = consol
       }
       if (linkOf.has(accountId)) throw new HttpError(409, 'Une liaison est déjà en cours pour ce compte.', 'link_in_progress');
       if (sessions.get(accountId)?.open) throw new HttpError(409, 'Ce compte WhatsApp est déjà connecté.', 'whatsapp_connected');
+      advance(accountId);
       // Nouvel appareil lié : l'ancienne session (expirée ou retirée) est effacée avant le nouveau QR.
       dropSession(accountId);
       store.waAuthClear(accountId);
       store.setAccountStatus(accountId, 'En attente du QR', 'info');
       store.setSync(accountId, { status: 'linking', window_days: windowDays, error: null, total: 0, done: 0 });
-      const link = { id: randomUUID(), accountId, created, status: 'starting', qrDataUrl: null, qrExpires: 0, error: null, paired: false, opened: false, done: false };
+      const link = { id: randomUUID(), accountId, at: epoch(accountId), created, status: 'starting', qrDataUrl: null, qrExpires: 0, error: null, paired: false, opened: false, done: false };
       links.set(link.id, link);
       linkOf.set(accountId, link);
-      link.timer = setTimeout(() => { if (!link.opened) failLink(link, 'Délai de liaison dépassé : relance-la.'); }, T.linkTtlMs);
+      link.timer = setTimeout(() => { if (!link.opened && !link.paired) failLink(link, 'Délai de liaison dépassé : relance-la.'); }, T.linkTtlMs);
       link.timer.unref?.();
       openSession(accountId, link).catch(() => failLink(link, 'Impossible de démarrer la liaison WhatsApp.'));
       return { linkId: link.id, accountId };
@@ -421,8 +446,7 @@ export function createWhatsAppSync({ store, vault, lib, makeSocket, log = consol
     // Déconnexion explicite : retire l'appareil lié (au mieux), efface session, messages importés et compte.
     async disconnect(accountId) {
       if (!isWhatsApp(accountId)) throw badRequest('Ce compte n’est pas un compte WhatsApp.');
-      epochs.set(accountId, epoch(accountId) + 1);
-      for (const fn of forgetHooks) fn(accountId);
+      advance(accountId);
       return serial(accountId, async () => {
         const link = linkOf.get(accountId);
         if (link) { link.done = true; link.status = 'error'; link.error = 'Compte déconnecté.'; finishLink(link); }
