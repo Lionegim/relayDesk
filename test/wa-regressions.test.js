@@ -16,7 +16,7 @@ const message = (id='m1',text='Bonjour') => ({key:{id,remoteJid:jid,fromMe:false
 async function setup(t) {
  const db=openDatabase(':memory:');seedIfEmpty(db,{demo:false});const store=createStore(db),vault=createVault(randomBytes(32)),sockets=[];
  const makeSocket=async({auth})=>{const sock={auth,ev:new EventEmitter(),user:{id:'33600000000:1@s.whatsapp.net'},sent:[],logout:async()=>{},end:()=>{},sendMessage:async(j,body)=>{sock.sent.push({j,body});return {key:{id:'sent1'}}}};sockets.push(sock);return sock};
- const p=await createWhatsAppProvider({store,vault,lib:async()=>lib,makeSocket,log:{},timing:{settleMs:5,retryBaseMs:2,retryMaxMs:10,linkTtlMs:40,retainMs:10000}});
+ const p=await createWhatsAppProvider({store,vault,lib:async()=>lib,makeSocket,log:{},timing:{settleMs:5,retryBaseMs:2,retryMaxMs:10,linkTtlMs:400,retainMs:10000}});
  t.after(()=>{p.sync.stop();db.close()});
  async function link(name='Téléphone',accountId) {const l=await p.startLink({profileId:'perso',name,windowDays:7,...(accountId?{accountId}:{})});await tick();return l}
  async function pair(sock=sockets.at(-1),open=true){sock.auth.state.creds.me={id:sock.user.id};sock.auth.state.creds.registered=true;sock.ev.emit('creds.update',{});if(open)sock.ev.emit('connection.update',{connection:'open'});await tick()}
@@ -29,7 +29,7 @@ test('WhatsApp : légendes de médias et enveloppes éphémères exclues',()=>{
 test('WhatsApp : retry après appairage conserve la liaison et son compte au-delà du timeout initial',async t=>{
  const c=await setup(t),l=await c.link();await c.pair(c.sockets[0],false);
  c.sockets[0].ev.emit('connection.update',{connection:'close',lastDisconnect:{error:{output:{statusCode:408}}}});
- await delay(10);assert.equal(c.sockets.length,2);await c.pair();await delay(50);
+ await delay(10);assert.equal(c.sockets.length,2);await c.pair();await delay(450);
  assert.equal(c.p.linkStatus(l.linkId).status,'connected');assert.equal(c.store.hasAccount(l.accountId),true);
  assert.ok(c.store.waAuthGet(l.accountId,'creds',''));
 });
