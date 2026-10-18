@@ -202,7 +202,7 @@ function reader(s, v) {
         </div>
         <div class="grow"></div>
       </div>
-      ${sel ? messageView(s, v, sel) : html`<div class="no-selection">Aucun message sélectionné</div>`}
+      ${sel ? (sel.channel === 'whatsapp' ? whatsappView(s, v, sel) : messageView(s, v, sel)) : html`<div class="no-selection">Aucun message sélectionné</div>`}
       ${when(s.ai && sel && s.ai.forId === sel.id, () => aiPanel(s, sel))}
     </main>`;
 }
@@ -276,6 +276,96 @@ function messageView(s, v, sel) {
           </div>
         </div>`)}
     </div>`;
+}
+
+// ---------- Discussion WhatsApp ----------
+
+const WA_MAX = 4096; // limite d'envoi côté serveur
+const dayKey = ms => new Date(ms).toDateString();
+function dayLabel(ms) {
+  const d = new Date(ms), today = new Date(); today.setHours(0, 0, 0, 0);
+  if (d >= today) return 'Aujourd’hui';
+  if (d >= today - DAY) return 'Hier';
+  const label = d.toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long', year: d.getFullYear() === today.getFullYear() ? undefined : 'numeric' });
+  return label[0].toUpperCase() + label.slice(1);
+}
+const fullDate = ms => new Date(ms).toLocaleString('fr-FR', { dateStyle: 'full', timeStyle: 'short' });
+// Direction : uniquement le booléen fromMe fourni par le serveur, jamais déduite d'un nom.
+const isMine = m => m.fromMe === true;
+
+// Chronologie ancien → récent : le fil est stocké du plus récent au plus ancien, le dernier message est `full`.
+function waMessages(sel, full) {
+  const older = [...(full.trail || [])].reverse().map(t => ({ mine: isMine(t), at: t.at, body: t.body }));
+  return [...older, { mine: isMine(full), at: full.at ?? sel.sortAt, body: full.failed ? sel.preview : full.body }];
+}
+
+function waTimeline(msgs) {
+  let prev = null;
+  return msgs.map(m => {
+    const at = Number.isFinite(m.at) ? m.at : null;
+    const newDay = at !== null && (!prev || prev.at === null || dayKey(prev.at) !== dayKey(at));
+    // Messages consécutifs du même auteur, à moins de 5 minutes : bulles groupées, sans pointe.
+    const grouped = !newDay && prev && prev.mine === m.mine && at !== null && prev.at !== null && at - prev.at < 5 * 60000;
+    prev = { ...m, at };
+    return html`
+      ${when(newDay, () => html`<div class="wa-day" role="separator"><span>${dayLabel(at)}</span></div>`)}
+      <div class="${cls('wa-msg', m.mine ? 'wa-out' : 'wa-in', grouped && 'wa-cont')}">
+        <div class="wa-bubble">
+          <span class="sr-only">${m.mine ? 'Vous' : 'Reçu'} :</span>
+          <span class="wa-text">${m.body}</span>
+          ${when(at !== null, () => html`<time class="wa-time" datetime="${new Date(at).toISOString()}" title="${fullDate(at)}">${timeOf(at)}</time>`)}
+        </div>
+      </div>`;
+  });
+}
+
+// Nom stable du correspondant, même quand le dernier message est sortant (« WhatsApp · Nom »).
+const waName = (sel, full) => (full?.subject || sel.subject || '').replace(/^WhatsApp · /, '').trim() || sel.from.replace(/^Moi \(à (.*)\)$/, '$1');
+
+function whatsappView(s, v, sel) {
+  const full = s.details[sel.id];
+  const name = waName(sel, full);
+  const acc = v.profile.accounts.find(a => a.id === sel.accountId);
+  const canSend = !!acc?.perms?.includes('send');
+  const draft = s.drafts[sel.id] ?? full?.draft?.text ?? '';
+  const tooLong = draft.length > WA_MAX;
+  const folderName = s.data.folders.find(f => f.id === sel.folderId)?.name;
+  const status = sel.draft ? `Brouillon local enregistré à ${timeOf(sel.draft.savedAt)}` : 'Brouillon local, sur ce Mac';
+  const hint = !canSend ? 'Envoi non autorisé pour ce compte' : s.confirm ? 'Vérification en cours' : 'Envoi seulement après l’aperçu exact';
+  return html`
+    <section class="wa" aria-label="Discussion WhatsApp avec ${name}">
+      <header class="wa-head">
+        <span class="avatar wa-avatar">${sel.initials}</span>
+        <div class="wa-who">
+          <strong class="ellipsis">${name}</strong>
+          <span class="ellipsis"><span class="wa-badge">WhatsApp</span>${sel.account}${sel.handle ? ` · ${sel.handle}` : ''}${folderName ? ` · ${folderName}` : ''}</span>
+        </div>
+        <div class="wa-head-actions">
+          <button class="link-btn" data-on-click="aiClassify">Classer</button>
+          <button class="link-btn" data-on-click="aiSummary">${icon('sparkle')}Résumer</button>
+        </div>
+      </header>
+      <div class="wa-timeline" data-key="wa-timeline-${sel.id}" data-chat-id="${sel.id}" data-ready="${String(!!full && !full.failed)}" role="log" aria-label="Messages, du plus ancien au plus récent">
+        <div class="wa-thread">
+          ${full ? waTimeline(waMessages(sel, full)) : html`
+            <div class="wa-msg wa-in"><div class="wa-bubble wa-loading"><div class="skeleton" style="width:220px"></div><div class="skeleton" style="width:140px"></div></div></div>`}
+          ${when(full?.failed, () => html`<p class="wa-note">Discussion incomplète : seul l’aperçu est disponible.</p>`)}
+        </div>
+      </div>
+      <footer class="wa-composer">
+        <div class="wa-input">
+          <textarea data-key="draft-${sel.id}" data-on-input="draft" rows="2" aria-label="Réponse à ${name}"
+            placeholder="Écrire à ${name.split(' ')[0]} depuis ${sel.account}…">${draft}</textarea>
+        </div>
+        <div class="wa-actions">
+          <button class="btn btn-ghost" data-on-click="aiDraft" title="Proposer une réponse avec l’assistant">✳ Aider à rédiger</button>
+          <span class="${cls('wa-status ellipsis', tooLong && 'is-error')}">${tooLong ? `${draft.length} / ${WA_MAX} caractères : trop long` : `${status} · ${hint}`}</span>
+          <button class="btn btn-ghost" data-on-click="saveDraft">Enregistrer</button>
+          <button class="btn wa-send" data-on-click="sendPreview" title="${canSend ? 'Vérifier le message exact avant l’envoi' : 'L’envoi demande la permission Envoi pour ce compte'}"
+            ${raw(canSend && draft.trim() && !tooLong && !s.confirm ? '' : 'disabled')}>Aperçu</button>
+        </div>
+      </footer>
+    </section>`;
 }
 
 function aiPanel(s, sel) {
