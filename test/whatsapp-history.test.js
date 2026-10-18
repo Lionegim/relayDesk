@@ -224,3 +224,20 @@ test('fin honnête : jalon seul, mauvais type, progression d’un autre lot, tra
   assert.ok(!/disque/.test(h.reason), 'raison publique générique');
   bad.wa.sync.stop();
 });
+
+test('lots avant identité : perte marquée avant un premier lot final et petits lots en échec interceptés',async()=>{
+ const ctx=await setupWhatsApp({timing:{...FAST,historyIdleMs:10000}});
+ const {accountId}=await ctx.wa.startLink({profileId:'perso',name:'Téléphone'});await tick();
+ const sock=ctx.sockets.last();sock.user={id:`${ME}:1@s.whatsapp.net`};sock.auth.state.creds.me=sock.user;sock.auth.state.creds.registered=true;sock.emit('creds.update',{});
+ sock.emit('messaging-history.set',{chats:[],contacts:[],messages:[],syncType:3,progress:100});
+ for(let i=0;i<200;i++)sock.emit('messages.upsert',{type:'append',messages:[]});
+ sock.emit('connection.update',{connection:'open'});await tick();
+ const h=ctx.wa.sync.progress(accountId).history;assert.equal(h.state,'partial');assert.match(h.reason,/ignorée/);
+ ctx.wa.sync.stop();
+
+ const bad=await setupWhatsApp({timing:{...FAST,historyIdleMs:10000}}),b=await linkedAccount(bad);
+ const add=bad.store.waAddMessages.bind(bad.store);bad.store.waAddMessages=()=>{throw new Error('disque')};
+ assert.doesNotThrow(()=>b.sock.emit('messaging-history.set',{chats:[],contacts:[],messages:[msg('fail','Erreur')],syncType:3}));
+ bad.store.waAddMessages=add;b.sock.emit('messaging-history.set',{chats:[],contacts:[],messages:[],syncType:3,progress:100});
+ assert.equal(bad.wa.sync.progress(b.accountId).history.state,'partial');bad.wa.sync.stop();
+});

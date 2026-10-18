@@ -38,11 +38,12 @@ const when = t => t.time || (t.at ? new Date(t.at).toISOString().slice(0, 16).re
 export function threadText(m) {
   const parts = [...(m.trail || [])].reverse().map(t => `${clean(t.from)} (${when(t)}) :\n${clean(t.body)}`);
   parts.push(`${clean(m.from)} (${when(m)}) :\n${clean(m.body)}`);
-  let text = parts.join('\n\n---\n\n');
-  while (text.length > MAX_THREAD && parts.length > 1) {
-    parts.shift();
-    text = ['[messages plus anciens omis]', ...parts].join('\n\n---\n\n');
+  const separator = '\n\n---\n\n', omitted = '[messages plus anciens omis]';
+  let size = parts.reduce((n, p) => n + p.length, 0) + Math.max(0, parts.length - 1) * separator.length, first = 0;
+  while (size + (first ? omitted.length + separator.length : 0) > MAX_THREAD && first < parts.length - 1) {
+    size -= parts[first++].length + separator.length;
   }
+  const text = (first ? omitted + separator : '') + parts.slice(first).join(separator);
   return text.length > MAX_THREAD ? text.slice(-MAX_THREAD) : text;
 }
 

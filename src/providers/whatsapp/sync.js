@@ -285,8 +285,8 @@ export function createWhatsAppSync({ store, vault, lib, makeSocket, log = consol
     // Une nouvelle liaison reçoit l'historique initial du téléphone ; une session reprise ne le reçoit pas d'office.
     if (link && !link.done) beginHistory(accountId, 'link');
     pruneAndRebuild(accountId);
-    for (const [kind, data, notify] of s.pending.splice(0)) enqueue(accountId, s, kind, data, notify);
     if (s.droppedPending) lostHistory(accountId, 'Une partie des lots reçus avant la vérification a été ignorée.');
+    for (const [kind, data, notify] of s.pending.splice(0)) enqueue(accountId, s, kind, data, notify);
     if (requestOnOpen.delete(accountId)) requestHistory(accountId, s).catch(() => {});
   }
 
