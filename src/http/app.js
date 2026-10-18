@@ -129,13 +129,15 @@ export function createApp({ store, ai, ownerName, gmail = null, providers = {}, 
       const wa = providers.whatsapp;
       if (!wa?.configured) throw new HttpError(503, 'La liaison WhatsApp est indisponible.', 'whatsapp_unavailable');
       const { profileId, name, accountId } = body;
+      if (body.reconnect !== undefined && (typeof body.reconnect !== 'boolean' || accountId === undefined)) throw badRequest('Reconnexion invalide');
       if (!store.hasProfile(profileId) || typeof name !== 'string' || !name.trim() || name.trim().length > 80 || (body.windowDays !== undefined && body.windowDays !== 7)) throw badRequest('Paramètres de liaison invalides');
       if (accountId !== undefined) {
         if (!Number.isInteger(accountId)) throw badRequest('Compte invalide');
         const a = store.getAccount(accountId);
         if (a.svc !== 'whatsapp' || a.profileId !== profileId || a.name !== name.trim()) throw badRequest('Compte WhatsApp invalide');
       }
-      return wa.startLink({ profileId, name: name.trim(), windowDays: 7, ...(accountId !== undefined ? { accountId } : {}) });
+      const input = { profileId, name: name.trim(), windowDays: 7, ...(accountId !== undefined ? { accountId } : {}) };
+      return body.reconnect === true ? wa.relink(input) : wa.startLink(input);
     }],
     ['GET', /^\/api\/whatsapp\/links\/([a-zA-Z0-9-]+)$/, ([id]) => {
       if (!providers.whatsapp) throw notFound();

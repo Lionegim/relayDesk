@@ -139,7 +139,10 @@ export function createWhatsAppSync({ store, vault, lib, makeSocket, log = consol
     const at = epoch(accountId);
     const auth = createAuthState({ store, vault, accountId, lib: await lib() });
     if (epoch(accountId) !== at || !store.hasAccount(accountId) || stopped || (link && link.done)) { auth.close(); return; }
-    const sock = await makeSocket({ auth, linking: !!link });
+    // Ce choix est conservé avec les identifiants chiffrés : les reprises gardent le profil de l'appairage.
+    if (link) auth.state.creds.relayHistoryProfile = 'chrome-full';
+    const historyProfile = auth.state.creds.relayHistoryProfile || (auth.state.creds.relayDesktop ? 'desktop-full' : null);
+    const sock = await makeSocket({ auth, historyProfile });
     const s = { sock, auth, at, link, open: false, verified: false, closed: false, pending: [], ephemeral: new Set(store.waEphemeralChats(accountId)), settle: null };
     if (epoch(accountId) !== at || !store.hasAccount(accountId) || stopped || (link && link.done)) { endSocket(s); return; }
     dropSession(accountId, { resetRetry: false });
@@ -200,6 +203,7 @@ export function createWhatsAppSync({ store, vault, lib, makeSocket, log = consol
     if (connection === 'open') verify(accountId, s).catch(() => { if (current(accountId, s)) { dropSession(accountId); scheduleRetry(accountId, s.link); } });
     if (connection === 'close') {
       const code = lastDisconnect?.error?.output?.statusCode;
+      warn(`transport fermé pour le compte ${accountId} (code ${Number.isInteger(code) ? code : 'inconnu'})`);
       dropSession(accountId, { resetRetry: false });
       if (code === LOGGED_OUT) {
         store.waAuthClear(accountId);
@@ -210,7 +214,7 @@ export function createWhatsAppSync({ store, vault, lib, makeSocket, log = consol
       }
       // Après la validation du QR, WhatsApp demande un redémarrage du socket : même liaison, identifiants enregistrés.
       if (code === RESTART_REQUIRED) return reopen(accountId, s.link);
-      if (s.link && !s.link.done && !s.link.opened && !s.link.paired) return failLink(s.link, 'QR expiré : relance la liaison.');
+      if (s.link && !s.link.done && !s.link.opened && !s.link.paired) return failLink(s.link, 'Connexion WhatsApp interrompue pendant la préparation du QR : relance la liaison.');
       scheduleRetry(accountId, s.link);
     }
   }
@@ -283,7 +287,10 @@ export function createWhatsAppSync({ store, vault, lib, makeSocket, log = consol
     s.settle = setTimeout(() => settled(accountId, s), T.settleMs);
     s.settle.unref?.();
     // Une nouvelle liaison reçoit l'historique initial du téléphone ; une session reprise ne le reçoit pas d'office.
-    if (link && !link.done) beginHistory(accountId, 'link');
+    if (link && !link.done) {
+      const h = beginHistory(accountId, 'link');
+      if (s.auth.state.creds.relayHistoryProfile || s.auth.state.creds.relayDesktop) h.mode = 'full';
+    }
     pruneAndRebuild(accountId);
     if (s.droppedPending) lostHistory(accountId, 'Une partie des lots reçus avant la vérification a été ignorée.');
     for (const [kind, data, notify] of s.pending.splice(0)) enqueue(accountId, s, kind, data, notify);
@@ -526,7 +533,7 @@ export function createWhatsAppSync({ store, vault, lib, makeSocket, log = consol
     if (Number(data?.progress) === 100 && endsHistory(h, Number(data?.syncType))) finishHistory(accountId, h, 'complete');
   }
 
-  // Type d'historique dont la fin explicite termine le suivi : RECENT pour une liaison, FULL pour la demande bornée.
+  // Fin explicite attendue : FULL pour les nouvelles liaisons étendues et les demandes bornées ; RECENT pour les anciennes liaisons.
   // L'historique discussion par discussion n'a pas de signal de fin : il s'achève au délai, donc « partiel ».
   const endsHistory = (h, type) => (h.mode === 'initial' && type === HISTORY_RECENT) || (h.mode === 'full' && type === HISTORY_FULL);
 
@@ -537,7 +544,7 @@ export function createWhatsAppSync({ store, vault, lib, makeSocket, log = consol
     if (type !== HISTORY_RECENT && type !== HISTORY_FULL) return; // l'amorçage initial seul ne couvre pas 7 jours
     // Un jalon « complete » peut précéder le téléchargement et l'import du lot final : il ne termine jamais le suivi.
     // Seul l'import d'un lot à 100 % du type attendu le fait (historyBatch).
-    if (st.status === 'paused') finishHistory(accountId, h, 'partial', 'Le téléphone a interrompu l’envoi : l’historique peut être incomplet.');
+    if (st.status === 'paused' && endsHistory(h, type)) finishHistory(accountId, h, 'partial', 'Le téléphone a interrompu l’envoi : l’historique peut être incomplet.');
   }
 
   // Réponse du téléphone à la demande d'historique complet (Baileys ne la remonte pas : message de protocole de soi à soi).
@@ -654,6 +661,34 @@ export function createWhatsAppSync({ store, vault, lib, makeSocket, log = consol
     liveSocket: accountId => { const s = sessions.get(accountId); return s && s.open && current(accountId, s) ? s.sock : null; },
     rebuild,
     onForget: fn => forgetHooks.push(fn),
+
+    async relink(input) {
+      const { accountId, profileId, name } = input;
+      if (!isWhatsApp(accountId)) throw badRequest('Compte WhatsApp invalide.');
+      const account = store.getAccount(accountId);
+      if (account.profileId !== profileId || account.name !== name?.trim()) throw badRequest('Compte WhatsApp invalide.');
+      const submittedAt = epoch(accountId);
+      return serial(accountId, async () => {
+        if (epoch(accountId) !== submittedAt || !isWhatsApp(accountId)) throw new HttpError(409, 'Le compte a changé.', 'account_changed');
+        const latest = store.getAccount(accountId);
+        if (latest.profileId !== profileId || latest.name !== account.name || latest.address !== account.address) throw new HttpError(409, 'Le compte a changé.', 'account_changed');
+        if (linkOf.has(accountId)) throw new HttpError(409, 'Une liaison est déjà en cours.', 'link_in_progress');
+        const s = sessions.get(accountId);
+        advance(accountId);
+        const at = epoch(accountId);
+        sessions.delete(accountId);
+        clearTimeout(retries.get(accountId)?.timer); retries.delete(accountId);
+        if (s) {
+          s.closed = true; s.auth.close(); clearTimeout(s.settle); clearTimeout(s.fullTimer);
+          try { await Promise.race([s.sock.logout(), new Promise((_, reject) => setTimeout(() => reject(new Error('délai')), 10000).unref?.())]); } catch { /* retrait distant non confirmé ; le nouveau QR reste explicite */ }
+          try { s.sock.end(undefined); } catch { /* déjà fermé */ }
+        }
+        if (epoch(accountId) !== at || !isWhatsApp(accountId)) throw new HttpError(409, 'Le compte a changé.', 'account_changed');
+        // Les messages, contacts, dossiers et drapeaux du même compte restent en place.
+        store.waAuthClear(accountId);
+        return this.startLink(input);
+      });
+    },
 
     async startLink({ profileId, name, windowDays = 7, accountId = null } = {}) {
       if (typeof profileId !== 'string' || !store.hasProfile(profileId)) throw notFound('Profil introuvable');

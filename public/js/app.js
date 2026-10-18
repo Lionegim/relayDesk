@@ -245,7 +245,7 @@ async function startWhatsAppLink() {
   const current = () => state.c?.wizardId === c.wizardId && state.c?.svc === 'whatsapp' && request === linkRequest;
   setC({ busy: true, error: null, link: null });
   try {
-    const { linkId } = await api.startWhatsAppLink({ profileId: c.profile, name: c.name.trim(), windowDays: 7, ...(c.accountId ? { accountId: c.accountId } : {}) });
+    const { linkId } = await api.startWhatsAppLink({ profileId: c.profile, name: c.name.trim(), windowDays: 7, ...(c.accountId ? { accountId: c.accountId, reconnect: true } : {}) });
     if (!current()) {
       await api.cancelWhatsAppLink(linkId); return;
     }

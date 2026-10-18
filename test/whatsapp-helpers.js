@@ -25,9 +25,9 @@ export const msg = (id, text, { chat = PEER, fromMe = false, ago = 3600, pushNam
 
 export function fakeSockets() {
   const list = [];
-  const make = async ({ auth }) => {
+  const make = async ({ auth, historyProfile }) => {
     const sock = {
-      ev: new EventEmitter(), auth, user: undefined, sent: [], ended: false, loggedOut: false, failSend: false,
+      ev: new EventEmitter(), auth, historyProfile, user: undefined, sent: [], ended: false, loggedOut: false, failSend: false,
       async sendMessage(jid, content) {
         if (sock.failSend) throw new Error('réseau');
         sock.sent.push({ jid, content });

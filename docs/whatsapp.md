@@ -47,3 +47,9 @@ Les tests utilisent des sockets fictifs : authentification, chiffrement, import 
 Dans la boîte WhatsApp du profil concerné, **Actualiser l’historique** demande au téléphone l’historique des sept derniers jours via la session déjà liée. Cette demande technique ne publie aucun message dans les conversations. Garder WhatsApp ouvert et le téléphone connecté facilite la récupération. Les lots d’historique sont fusionnés et dédupliqués ; les filtres de date et de confidentialité restent appliqués avant stockage.
 
 Les compteurs indiquent uniquement ce qui est reçu sur le Mac. Une attente, une erreur ou une réception partielle ne doit pas être présentée comme une synchronisation complète. Si WhatsApp refuse la récupération avec la session existante, la reconnexion éventuelle se fera explicitement par le parcours QR, avec le même compte, sans effacer les conversations du téléphone.
+
+## Relier à nouveau pour l’historique initial
+
+Si le téléphone ne répond pas aux demandes sur une ancienne session, **Relier l’appareil** renouvelle seulement la liaison et conserve le compte, les messages, les brouillons, les dossiers et les drapeaux. Les anciennes validations d’envoi sont invalidées. Le nouveau QR doit être scanné par le titulaire pour le même numéro.
+
+Les nouvelles liaisons utilisent un profil navigateur avec historique étendu, conservé avec les identifiants chiffrés pour les reprises suivantes. WhatsApp peut transmettre des lots plus anciens ; seuls les textes autorisés des sept derniers jours sont enregistrés par Relay. Le nom de l’appareil visible sur le téléphone peut être « Mac OS / Chrome ». L’ouverture de la boîte indique la connexion, pas la fin de l’historique.

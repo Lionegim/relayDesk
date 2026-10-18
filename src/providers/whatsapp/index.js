@@ -11,6 +11,7 @@ export async function createWhatsAppProvider({ store, vault, makeSocket = makeBa
   return {
     configured: true,
     startLink: input => sync.startLink(input),
+    relink: input => sync.relink(input),
     linkStatus: linkId => sync.linkStatus(linkId),
     cancelLink: linkId => sync.cancelLink(linkId),
     sync: {

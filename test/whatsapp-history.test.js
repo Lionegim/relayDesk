@@ -17,7 +17,7 @@ function spyRequests(sock) {
   return sock;
 }
 // Fin de l'historique de liaison (pause signalée) : une nouvelle demande devient possible.
-const endLinkHistory = async sock => { sock.emit('messaging-history.status', { syncType: 3, status: 'paused', explicit: false }); await tick(); };
+const endLinkHistory = async sock => { sock.emit('messaging-history.status', { syncType: 2, status: 'paused', explicit: false }); await tick(); };
 const fullResponse = (sock, code) => ({
   type: 'notify',
   messages: [{
@@ -57,15 +57,19 @@ test('liaison : isLatest et 8 s ne valent pas fin ; fin explicite, pause ou dél
   assert.equal(p.history.state, 'receiving', 'premier lot marqué isLatest : historique encore en cours');
   assert.equal(p.status, 'syncing');
   assert.equal(p.history.source, 'link');
-  sock.emit('messaging-history.set', { chats: [], contacts: [], messages: [msg('A2', 'Suite', { ago: 30 })], syncType: 3, progress: 100 });
+  sock.emit('messaging-history.set', { chats: [], contacts: [], messages: [], syncType: 3, progress: 100 });
+  sock.emit('messaging-history.status', { syncType: 3, status: 'paused' });
+  await tick();
+  assert.equal(ctx.wa.sync.progress(accountId).history.state, 'receiving', 'RECENT ne termine pas la liaison étendue');
+  sock.emit('messaging-history.set', { chats: [], contacts: [], messages: [msg('A2', 'Suite', { ago: 30 })], syncType: 2, progress: 100 });
   await tick();
   p = ctx.wa.sync.progress(accountId);
-  assert.deepEqual([p.history.state, p.status, p.history.batches, p.history.messages], ['complete', 'idle', 2, 2]);
+  assert.deepEqual([p.history.state, p.status, p.history.batches, p.history.messages], ['complete', 'idle', 3, 2]);
 
   // Pause signalée par Baileys (aucune tranche récente depuis 2 min) : partiel.
   const other = await setupWhatsApp({ timing: FAST });
   const b = await linkedAccount(other);
-  b.sock.emit('messaging-history.status', { syncType: 3, status: 'paused', explicit: false });
+  b.sock.emit('messaging-history.status', { syncType: 2, status: 'paused', explicit: false });
   await tick();
   assert.equal(other.wa.sync.progress(b.accountId).history.state, 'partial');
   // L'amorçage initial seul ne couvre pas la fenêtre : il ne termine rien.
@@ -229,7 +233,7 @@ test('lots avant identité : perte marquée avant un premier lot final et petits
  const ctx=await setupWhatsApp({timing:{...FAST,historyIdleMs:10000}});
  const {accountId}=await ctx.wa.startLink({profileId:'perso',name:'Téléphone'});await tick();
  const sock=ctx.sockets.last();sock.user={id:`${ME}:1@s.whatsapp.net`};sock.auth.state.creds.me=sock.user;sock.auth.state.creds.registered=true;sock.emit('creds.update',{});
- sock.emit('messaging-history.set',{chats:[],contacts:[],messages:[],syncType:3,progress:100});
+ sock.emit('messaging-history.set',{chats:[],contacts:[],messages:[],syncType:2,progress:100});
  for(let i=0;i<200;i++)sock.emit('messages.upsert',{type:'append',messages:[]});
  sock.emit('connection.update',{connection:'open'});await tick();
  const h=ctx.wa.sync.progress(accountId).history;assert.equal(h.state,'partial');assert.match(h.reason,/ignorée/);
@@ -238,6 +242,6 @@ test('lots avant identité : perte marquée avant un premier lot final et petits
  const bad=await setupWhatsApp({timing:{...FAST,historyIdleMs:10000}}),b=await linkedAccount(bad);
  const add=bad.store.waAddMessages.bind(bad.store);bad.store.waAddMessages=()=>{throw new Error('disque')};
  assert.doesNotThrow(()=>b.sock.emit('messaging-history.set',{chats:[],contacts:[],messages:[msg('fail','Erreur')],syncType:3}));
- bad.store.waAddMessages=add;b.sock.emit('messaging-history.set',{chats:[],contacts:[],messages:[],syncType:3,progress:100});
+ bad.store.waAddMessages=add;b.sock.emit('messaging-history.set',{chats:[],contacts:[],messages:[],syncType:2,progress:100});
  assert.equal(bad.wa.sync.progress(b.accountId).history.state,'partial');bad.wa.sync.stop();
 });

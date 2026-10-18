@@ -152,8 +152,9 @@ function messageList(s, v) {
         ${when(s.channel === 'whatsapp', () => html`<div class="wa-sync" role="status">
           ${v.profile.accounts.filter(a => a.svc === 'whatsapp').map(a => html`<div>
             <strong>${a.name} · 7 derniers jours</strong>
-            <span>${a.sync?.status === 'syncing' ? 'Récupération de l’historique depuis le téléphone…' : a.sync?.error || 'Historique reçu de WhatsApp'}</span>
-            <span>${a.sync?.threads ?? 0} conversations · ${a.sync?.messages ?? 0} messages</span>
+            <span>${a.sync?.status === 'syncing' ? a.sync?.history?.mode === 'chats' ? 'Complément des conversations connues depuis le téléphone…' : 'Récupération de l’historique depuis le téléphone…' : a.sync?.error || 'Historique reçu de WhatsApp'}</span>
+            ${when(a.sync?.status === 'syncing' && a.sync?.history?.reason, () => html`<span>${a.sync.history.reason}</span>`)}
+            <span>${plural(a.sync?.threads ?? 0, 'conversation')} · ${plural(a.sync?.messages ?? 0, 'message')}</span>
             <button class="link-btn" data-on-click="accountSync" data-id="${a.id}" ${raw(a.sync?.status === 'syncing' ? 'disabled' : '')}>Actualiser l’historique</button>
           </div>`)}
         </div>`)}
@@ -612,6 +613,7 @@ function connectWizard(s) {
             ${when(d.auth === 'qr', () => html`
               ${when(!c.linkId, () => html`<p class="muted" style="margin:0">${d.scopesNote}</p>`)}
               ${when(!c.linkId, () => html`<p class="muted" style="margin:0">Discussions individuelles et groupes en texte, sur les 7 derniers jours disponibles. Groupes en lecture et analyse ; envoi réservé aux discussions individuelles. Médias, messages éphémères et vue unique exclus. L’historique disponible dépend de WhatsApp.</p>`)}
+              ${when(!c.linkId && c.accountId, () => html`<p class="muted" style="margin:0">La liaison de ce Mac sera renouvelée avec historique étendu. Tes messages, dossiers et drapeaux restent conservés. WhatsApp peut transmettre des lots plus anciens ; seuls les 7 derniers jours sont enregistrés dans Relay Desk.</p>`)}
               <p class="muted" style="font-size:12px;margin:0">Connecteur communautaire non officiel : la liaison peut être interrompue ou limitée par WhatsApp.</p>
               <div class="whatsapp-link">
                 ${when(c.busy || (c.linkId && !c.link?.qrDataUrl && !c.error && c.link?.status !== 'connected'), () => html`<span class="spinner"></span><span>${c.link?.status === 'syncing' ? 'Liaison reçue, synchronisation en cours…' : 'Préparation de la liaison…'}</span>`)}
