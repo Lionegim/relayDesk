@@ -1,26 +1,40 @@
+import { join } from 'node:path';
 import { createApp } from './src/http/app.js';
 import { createStore } from './src/store.js';
+import { openDatabase } from './src/db/index.js';
+import { seedIfEmpty } from './src/db/seed.js';
 import { createMistralClient } from './src/ai/mistral.js';
+import { loadKey, createVault } from './src/secrets.js';
+import { createGoogleOAuth } from './src/providers/gmail/oauth.js';
+import { createGmailSync } from './src/providers/gmail/sync.js';
 
-const config = {
-  host: process.env.HOST || '127.0.0.1',
-  port: Number(process.env.PORT) || 4310,
+const port = Number(process.env.PORT) || 4310;
+const host = process.env.HOST || '127.0.0.1';
+const dataDir = process.env.DATA_DIR || join(import.meta.dirname, 'data');
+
+const db = openDatabase(join(dataDir, 'relay.db'));
+seedIfEmpty(db, { demo: process.env.DEMO_DATA !== '0' });
+const store = createStore(db);
+
+const vault = createVault(loadKey({ envKey: process.env.RELAY_SECRET_KEY, keyFile: join(dataDir, 'secret.key') }));
+const oauth = createGoogleOAuth({ clientId: process.env.GOOGLE_CLIENT_ID, clientSecret: process.env.GOOGLE_CLIENT_SECRET });
+const sync = createGmailSync({ store, vault, oauth });
+
+const ai = createMistralClient({ apiKey: process.env.MISTRAL_API_KEY || '', model: process.env.MISTRAL_MODEL || 'mistral-small-latest' });
+const server = createApp({
+  store, ai,
   ownerName: process.env.OWNER_NAME || 'Jean-Hugues',
-  mistral: {
-    apiKey: process.env.MISTRAL_API_KEY || '',
-    model: process.env.MISTRAL_MODEL || 'mistral-small-latest',
-  },
-};
-
-const store = createStore();
-const ai = createMistralClient(config.mistral);
-const server = createApp({ store, ai, ownerName: config.ownerName });
-
-server.listen(config.port, config.host, () => {
-  console.log(`Relay Desk sur http://${config.host}:${config.port}`);
-  if (!config.mistral.apiKey) console.warn('MISTRAL_API_KEY absente : l’assistant renverra une erreur.');
+  gmail: { oauth, sync, redirectUri: `http://127.0.0.1:${port}/oauth/google/callback` },
+  allowedHosts: [`127.0.0.1:${port}`, `localhost:${port}`, `[::1]:${port}`],
 });
 
-const stop = () => server.close(() => process.exit(0));
+server.listen(port, host, () => {
+  console.log(`Relay Desk sur http://127.0.0.1:${port}`);
+  if (!ai.configured) console.warn('MISTRAL_API_KEY absente : l’assistant renverra une erreur.');
+  if (!oauth.configured) console.warn('GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET absents : la connexion Gmail est désactivée.');
+  sync.start(Number(process.env.SYNC_INTERVAL_MS) || 60000);
+});
+
+const stop = () => { sync.stop(); server.close(() => { db.close(); process.exit(0); }); };
 process.on('SIGINT', stop);
 process.on('SIGTERM', stop);

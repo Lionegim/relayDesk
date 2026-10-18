@@ -4,6 +4,16 @@ import { CH, LABELS, ACCOUNT_COLORS, NAV, GROUPS, FREQ, SORTS, AV, TONES, STEPS,
 const plural = (n, word) => `${n} ${word}${n > 1 ? 's' : ''}`;
 const initialsOf = name => name.split(/[\s.]+/).filter(Boolean).slice(0, 2).map(w => w[0].toUpperCase()).join('');
 const timeOf = iso => new Date(iso).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
+const DAY = 86400000;
+// Libellé façon Apple Mail : heure aujourd'hui, « Hier », jour de la semaine, puis date.
+function whenLabel(ms) {
+  const d = new Date(ms), today = new Date(); today.setHours(0, 0, 0, 0);
+  if (d >= today) return timeOf(ms);
+  if (d >= today - DAY) return 'Hier';
+  if (d >= today - 6 * DAY) { const w = d.toLocaleDateString('fr-FR', { weekday: 'short' }); return w[0].toUpperCase() + w.slice(1); }
+  return d.toLocaleDateString('fr-FR', { day: 'numeric', month: 'short', year: d.getFullYear() === today.getFullYear() ? undefined : 'numeric' });
+}
+const timeLabel = m => m.time ?? whenLabel(m.sortAt ?? m.at);
 const icon = name => raw(ICON[name]);
 
 export function renderApp(s, v) {
@@ -139,7 +149,7 @@ function messageList(s, v) {
               <span class="thread-line">
                 <span class="thread-from ellipsis">${m.from}</span>
                 ${when(m.flagged, () => html`<span class="thread-flag">⚑</span>`)}
-                <span class="thread-time">${m.time}</span>
+                <span class="thread-time">${timeLabel(m)}</span>
               </span>
               <span class="thread-subject"><span class="grow ellipsis">${m.subject}</span><span class="thread-channel">${CH[m.channel].label}</span></span>
               <span class="thread-preview">${m.preview}</span>
@@ -187,14 +197,15 @@ function reader(s, v) {
 }
 
 function messageView(s, v, sel) {
-  const trail = sel.trail || [];
+  const full = s.details[sel.id];
+  const trail = full?.trail || [];
   const folderName = s.data.folders.find(f => f.id === sel.folderId)?.name || 'Boîte de réception';
   const composeLabel = { reply: `Répondre à ${sel.from}`, replyAll: 'Répondre à tous', forward: `Transférer : ${sel.subject}` }[s.composing];
-  const draft = s.drafts[sel.id] ?? sel.draft?.text ?? '';
+  const draft = s.drafts[sel.id] ?? full?.draft?.text ?? '';
   return html`
     <div class="reader-scroll">
       <div class="reader-top">
-        <span>${plural(trail.length + 1, 'message')}</span>
+        <span>${plural(sel.count || 1, 'message')}</span>
         <button class="link-btn" data-on-click="aiSummary">${icon('sparkle')}Résumer</button>
       </div>
       <div class="msg-head">
@@ -204,14 +215,17 @@ function messageView(s, v, sel) {
           <span style="font-size:13px">${sel.subject}</span>
           <span class="muted" style="font-size:12px">${sel.handle} → ${sel.account}</span>
         </div>
-        <div class="msg-side"><span>${folderName} · ${sel.account}</span><span>${sel.time}</span></div>
+        <div class="msg-side"><span>${folderName} · ${sel.account}</span><span>${timeLabel(sel)}</span></div>
       </div>
       ${when(v.showTriage, () => html`
         <div class="triage">
           <span class="badge badge-${LABELS[sel.label] || 'secondary'}">${sel.label}</span>
           <span class="grow ellipsis" style="min-width:0">${sel.triage}</span>
         </div>`)}
-      <div class="msg-body">${sel.body}</div>
+      ${full ? html`<div class="msg-body">${full.failed ? sel.preview : full.body}</div>` : html`
+        <div style="display:flex;flex-direction:column;gap:8px;max-width:720px;padding:18px 0 22px">
+          <div class="skeleton" style="width:100%"></div><div class="skeleton" style="width:91.6%"></div><div class="skeleton" style="width:60%"></div>
+        </div>`}
       ${when(trail.length, () => html`
         <div style="display:flex;flex-direction:column">
           ${[...trail].reverse().map((t, i) => {
@@ -220,7 +234,7 @@ function messageView(s, v, sel) {
               <button class="${cls('trail-item', s.expandedTrail[key] && 'is-open')}" data-on-click="toggleTrail" data-trail="${key}">
                 <span class="avatar">${t.initials}</span>
                 <span style="display:flex;flex-direction:column;gap:3px;flex:1;min-width:0">
-                  <span style="display:flex;gap:8px;font-size:13px"><b style="font-weight:600">${t.from}</b><span class="muted" style="margin-left:auto;font-size:12px">${t.time}</span></span>
+                  <span style="display:flex;gap:8px;font-size:13px"><b style="font-weight:600">${t.from}</b><span class="muted" style="margin-left:auto;font-size:12px">${timeLabel(t)}</span></span>
                   <span class="trail-text">${s.expandedTrail[key] ? t.body : t.body.replace(/\n/g, ' ')}</span>
                 </span>
               </button>`;
@@ -246,7 +260,7 @@ function messageView(s, v, sel) {
 function aiPanel(s, sel) {
   const ai = s.ai, draftMode = ai.mode === 'draft';
   const result = ai.forId === sel.id ? ai.result : null;
-  const n = (sel.trail || []).length + 1;
+  const n = sel.count || 1;
   return html`
     <div class="ai" role="dialog" aria-label="Assistant">
       <div class="ai-head">
@@ -374,7 +388,10 @@ function connectWizard(s) {
   const profileName = id => s.data.profiles.find(p => p.id === id).name;
   const next = { config: 'Continuer', auth: d?.btn, done: 'Ouvrir la boîte' }[c.step];
   const nextDisabled = c.step === 'auth' ? missing : c.step === 'config' ? !c.name.trim() : false;
-  const checks = [['Autorisation reçue', 1, ''], ['Capacités vérifiées', 20, `${permsOn.length} accès`], [`Import des ${c.win} derniers jours`, 100, `${Math.round(msgs * c.progress / 100)} / ${msgs}`], ['Triage local', 100, '']];
+  const importMeta = c.real ? `${c.real.done} / ${c.real.total} conversations` : `${Math.round(msgs * c.progress / 100)} / ${msgs}`;
+  const checks = [['Autorisation reçue', 1, ''], ['Capacités vérifiées', c.real ? 2 : 20, `${permsOn.length} accès`], [`Import des ${c.win} derniers jours`, 100, importMeta], ['Triage local', 100, '']];
+  const stats = c.real ? [[c.real.messages, 'messages importés'], [c.real.threads, 'conversations'], [c.real.todo, 'à traiter']]
+    : [[msgs, 'messages importés'], [Math.round(msgs / 3.2), 'conversations'], [Math.round(msgs / 22), 'à traiter']];
   const barColor = p => p === 100 ? 'var(--success)' : p >= 75 ? 'var(--primary)' : p >= 50 ? 'var(--warning)' : p >= 25 ? 'var(--status-high)' : 'var(--destructive)';
 
   return html`
@@ -427,14 +444,17 @@ function connectWizard(s) {
             <div class="field" style="gap:8px">
               <span class="field-label">Permissions</span>
               <div class="perms">
-                ${d.perms.map(k => html`
+                ${d.perms.map(k => {
+                  const soon = d.available && !d.available.includes(k);
+                  return html`
                   <div class="perm">
                     <span style="display:flex;flex-direction:column;gap:2px;flex:1">
                       <span style="font-size:13px;font-weight:600">${PERM[k][0]}</span>
-                      <span class="muted" style="font-size:12px">${PERM[k][1]}</span>
+                      <span class="muted" style="font-size:12px">${soon ? 'Disponible dans une prochaine version' : PERM[k][1]}</span>
                     </span>
-                    <button class="switch" role="switch" aria-checked="${!!c.perms[k]}" aria-label="${PERM[k][0]}" data-on-click="cPerm" data-perm="${k}" ${raw(k === 'read' ? 'disabled' : '')}></button>
-                  </div>`)}
+                    <button class="switch" role="switch" aria-checked="${!soon && !!c.perms[k]}" aria-label="${PERM[k][0]}" data-on-click="cPerm" data-perm="${k}" ${raw(k === 'read' || soon ? 'disabled' : '')}></button>
+                  </div>`;
+                })}
               </div>
             </div>
             <div class="field" style="gap:8px">
@@ -486,7 +506,7 @@ function connectWizard(s) {
 
           ${when(c.step === 'done', () => html`
             <div class="stats">
-              ${[[msgs, 'messages importés'], [Math.round(msgs / 3.2), 'conversations'], [Math.round(msgs / 22), 'à traiter']].map(([n, label]) => html`
+              ${stats.map(([n, label]) => html`
                 <div class="stat"><strong>${n}</strong><span class="muted" style="font-size:12px">${label}</span></div>`)}
             </div>`)}
         </div>

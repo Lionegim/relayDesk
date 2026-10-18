@@ -2,6 +2,8 @@ import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { createApp } from '../src/http/app.js';
 import { createStore } from '../src/store.js';
+import { openDatabase } from '../src/db/index.js';
+import { seedIfEmpty } from '../src/db/seed.js';
 import { createMistralClient } from '../src/ai/mistral.js';
 
 let server, base, lastRequest;
@@ -13,7 +15,9 @@ const fakeFetch = async (url, init) => {
 
 before(async () => {
   const ai = createMistralClient({ apiKey: 'test-key', model: 'mistral-small-latest', fetchImpl: fakeFetch });
-  server = createApp({ store: createStore(), ai, ownerName: 'Jean-Hugues' });
+  const db = openDatabase(':memory:');
+  seedIfEmpty(db);
+  server = createApp({ store: createStore(db), ai, ownerName: 'Jean-Hugues' });
   await new Promise(r => server.listen(0, '127.0.0.1', r));
   base = `http://127.0.0.1:${server.address().port}`;
 });
@@ -28,7 +32,11 @@ test('état initial : profils, messages, services', async () => {
   const { status, body } = await req('GET', '/api/state');
   assert.equal(status, 200);
   assert.equal(body.profiles.length, 3);
-  assert.ok(body.messages.find(m => m.id === 1).trail.length === 2);
+  assert.equal(body.messages.find(m => m.id === 1).count, 3);
+  assert.equal(body.messages[0].body, undefined, 'le corps n’est pas dans l’état global');
+  const full = await req('GET', '/api/messages/1');
+  assert.equal(full.body.trail.length, 2);
+  assert.match(full.body.body, /Bonjour Jean-Hugues/);
   assert.ok(body.services.gmail);
   assert.equal(body.ai.configured, true);
 });

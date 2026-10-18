@@ -11,7 +11,9 @@ export const PERMISSIONS = {
 
 // fields : [clé, libellé, valeur initiale, placeholder, type, lecture seule, pleine largeur]
 export const SERVICES = {
+  // `real` : connexion effective. `available` : permissions déjà prises en charge (les autres restent grisées).
   gmail: { name: 'Gmail', provider: 'Google', ch: 'email', note: 'Gmail ou Google Workspace', auth: 'oauth', btn: 'Continuer avec Google', perms: ['read', 'labels', 'drafts', 'send', 'mcp'],
+    real: true, available: ['read'],
     scopes: { read: ['Lire les messages', 'gmail.readonly'], labels: ['Gérer les libellés', 'gmail.labels'], drafts: ['Créer des brouillons', 'gmail.compose'], send: ['Envoyer des messages', 'gmail.send'] } },
   outlook: { name: 'Outlook / Microsoft 365', provider: 'Microsoft', ch: 'email', note: 'Compte personnel ou professionnel', auth: 'oauth', btn: 'Continuer avec Microsoft', perms: ['read', 'labels', 'drafts', 'send', 'mcp'],
     scopes: { read: ['Lire les messages', 'Mail.Read'], labels: ['Classer les messages', 'Mail.ReadWrite'], drafts: ['Créer des brouillons', 'Mail.ReadWrite'], send: ['Envoyer des messages', 'Mail.Send'] } },

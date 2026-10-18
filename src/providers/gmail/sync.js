@@ -1,0 +1,166 @@
+// Import initial et mise à jour incrémentale (history.list) des comptes Gmail, avec reprise après erreur.
+import { createGmailClient } from './api.js';
+import { threadToRecord } from './parse.js';
+
+const MAX_THREADS = 1000;
+const CONCURRENCY = 5;
+const BASE_BACKOFF_MS = 60000;
+const MAX_BACKOFF_MS = 30 * 60000;
+
+async function pool(items, size, fn) {
+  let i = 0;
+  await Promise.all(Array.from({ length: Math.min(size, items.length) }, async () => {
+    while (i < items.length) await fn(items[i++]);
+  }));
+}
+
+export function createGmailSync({ store, vault, oauth, fetchImpl = globalThis.fetch, log = console }) {
+  const clients = new Map();
+  const running = new Set();
+  const failures = new Map(); // accountId -> { count, retryAt }
+  let timer = null;
+
+  function credentials(accountId) {
+    const sealed = store.getSecret(accountId);
+    return sealed ? vault.open(accountId, sealed) : null;
+  }
+  function client(accountId) {
+    if (!clients.has(accountId)) {
+      const cred = credentials(accountId);
+      if (!cred) throw Object.assign(new Error('Aucun jeton pour ce compte.'), { code: 'invalid_grant' });
+      clients.set(accountId, { gmail: createGmailClient({ refreshToken: cred.refreshToken, oauth, fetchImpl }), email: cred.email });
+    }
+    return clients.get(accountId);
+  }
+
+  async function labelNames(gmail) {
+    const { labels = [] } = await gmail.labels();
+    return Object.fromEntries(labels.filter(l => l.type === 'user').map(l => [l.id, l.name]));
+  }
+
+  async function applyThread(accountId, gmail, email, names, threadId) {
+    let thread;
+    try {
+      thread = await gmail.getThread(threadId);
+    } catch (e) {
+      if (e.code === 'not_found') return store.removeThread(accountId, threadId);
+      throw e;
+    }
+    const rec = threadToRecord(thread, { ownEmail: email, labelNames: names });
+    if (!rec) return store.removeThread(accountId, threadId);
+    rec.folderId = rec.labelId ? store.ensureLabelFolder(accountId, rec.labelId, names[rec.labelId]) : null;
+    store.upsertThread(accountId, rec);
+  }
+
+  async function initialSync(accountId) {
+    const { gmail, email } = client(accountId);
+    const days = store.getSync(accountId)?.window_days || 30;
+    store.setSync(accountId, { status: 'syncing', total: 0, done: 0, error: null });
+    // historyId relevé avant la liste : aucun changement ne passe entre les deux.
+    const profile = await gmail.profile();
+    const names = await labelNames(gmail);
+    const ids = [];
+    let pageToken;
+    do {
+      const page = await gmail.listThreads(`newer_than:${days}d`, pageToken);
+      ids.push(...(page.threads || []).map(t => t.id));
+      pageToken = page.nextPageToken;
+    } while (pageToken && ids.length < MAX_THREADS);
+    const todo = ids.slice(0, MAX_THREADS);
+    store.setSync(accountId, { total: todo.length });
+    let done = 0;
+    await pool(todo, CONCURRENCY, async id => {
+      await applyThread(accountId, gmail, email, names, id);
+      done++;
+      if (done % 5 === 0 || done === todo.length) store.setSync(accountId, { done });
+    });
+    store.setSync(accountId, { status: 'ok', history_id: profile.historyId, done: todo.length, last_sync_at: new Date().toISOString() });
+    store.setAccountStatus(accountId, 'Connecté', 'ok');
+  }
+
+  async function incrementalSync(accountId) {
+    const state = store.getSync(accountId);
+    if (!state?.history_id) return initialSync(accountId);
+    const { gmail, email } = client(accountId);
+    const changed = new Set();
+    let historyId = state.history_id, pageToken;
+    try {
+      do {
+        const page = await gmail.history(state.history_id, pageToken);
+        for (const h of page.history || []) for (const m of h.messages || []) changed.add(m.threadId);
+        historyId = page.historyId || historyId;
+        pageToken = page.nextPageToken;
+      } while (pageToken);
+    } catch (e) {
+      // historyId trop ancien : Google ne garde qu'un historique limité, on réimporte.
+      if (e.code === 'not_found') return initialSync(accountId);
+      throw e;
+    }
+    if (changed.size) {
+      const names = await labelNames(gmail);
+      await pool([...changed], CONCURRENCY, id => applyThread(accountId, gmail, email, names, id));
+    }
+    store.setSync(accountId, { status: 'ok', history_id: historyId, error: null, last_sync_at: new Date().toISOString() });
+    if (store.getAccount(accountId).c !== 'ok') store.setAccountStatus(accountId, 'Connecté', 'ok');
+  }
+
+  async function run(accountId, fn) {
+    if (running.has(accountId)) return;
+    running.add(accountId);
+    try {
+      await fn(accountId);
+      failures.delete(accountId);
+    } catch (e) {
+      const count = (failures.get(accountId)?.count || 0) + 1;
+      failures.set(accountId, { count, retryAt: Date.now() + Math.min(MAX_BACKOFF_MS, BASE_BACKOFF_MS * 2 ** (count - 1)) });
+      if (e.code === 'invalid_grant') {
+        clients.delete(accountId);
+        store.setAccountStatus(accountId, 'À reconnecter', 'warn');
+        store.setSync(accountId, { status: 'error', error: 'Accès révoqué ou expiré : reconnecte le compte.' });
+      } else {
+        store.setSync(accountId, { status: 'error', error: e.message });
+        if (e.code !== 'retryable') store.setAccountStatus(accountId, 'Erreur de synchronisation', 'warn');
+      }
+      log.error?.(`Synchronisation Gmail du compte ${accountId} : ${e.message}`);
+    } finally {
+      running.delete(accountId);
+    }
+  }
+
+  function tick() {
+    const now = Date.now();
+    for (const id of store.accountsBySvc('gmail')) {
+      const s = store.getSync(id);
+      if (!s || !store.getSecret(id) || running.has(id)) continue;
+      if ((failures.get(id)?.retryAt || 0) > now) continue;
+      if (store.getAccount(id).status === 'À reconnecter') continue;
+      run(id, s.status === 'syncing' || !s.history_id ? initialSync : incrementalSync);
+    }
+  }
+
+  return {
+    // Enregistre le compte après l'autorisation et lance l'import en arrière-plan.
+    connect({ profileId, name, windowDays, refreshToken, email }) {
+      const account = store.upsertAccount(profileId, { name, channel: 'email', svc: 'gmail', address: email });
+      store.putSecret(account.id, vault.seal(account.id, { refreshToken, email }));
+      clients.delete(account.id);
+      failures.delete(account.id);
+      store.setAccountStatus(account.id, 'Synchronisation…', 'info');
+      store.setSync(account.id, { status: 'syncing', window_days: windowDays, history_id: null, total: 0, done: 0, error: null });
+      const job = run(account.id, initialSync);
+      return { account: store.getAccount(account.id), job };
+    },
+    progress(accountId) {
+      const s = store.getSync(accountId);
+      if (!s) return null;
+      return { status: s.status, total: s.total, done: s.done, error: s.error, ...store.countThreads(accountId) };
+    },
+    syncNow: accountId => run(accountId, incrementalSync),
+    start(intervalMs = 60000) {
+      tick();
+      timer = setInterval(tick, intervalMs);
+      timer.unref?.();
+    },
+    stop() { clearInterval(timer); },
+  };
+}

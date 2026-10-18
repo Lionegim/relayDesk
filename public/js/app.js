@@ -19,6 +19,7 @@ const state = {
   ai: null, aiTone: 'Cordial', aiIntent: '',
   group: 'all', picked: {}, focusId: null, contactQuery: '', contactSearch: false, sort: 'recent',
   c: null,
+  details: {},
 };
 
 const root = document.getElementById('root');
@@ -32,7 +33,36 @@ function render() {
     patch(root, `<div class="loading">${state.loadError ? 'Impossible de charger les données.' : 'Chargement…'}</div>`);
     return;
   }
-  patch(root, renderApp(state, derive(state)));
+  const v = derive(state);
+  if (v.sel) loadDetails(v.sel.id);
+  patch(root, renderApp(state, v));
+}
+
+// Corps et fil sont chargés à la demande : l'état global ne contient que la liste.
+const loading = new Set();
+function loadDetails(id) {
+  if (state.details[id] || loading.has(id)) return;
+  loading.add(id);
+  api.message(id)
+    .then(full => set(s => ({ details: { ...s.details, [id]: full } })))
+    .catch(err => { set(s => ({ details: { ...s.details, [id]: { failed: true, trail: [] } } })); fail(err); })
+    .finally(() => loading.delete(id));
+}
+
+// Rafraîchit la liste quand un compte réel est synchronisé en arrière-plan.
+const REFRESH_MS = 30000;
+setInterval(async () => {
+  if (!state.data || state.c || !state.data.profiles.some(p => p.accounts.some(a => a.svc === 'gmail'))) return;
+  try { applyData(await api.state()); } catch { /* nouvel essai au prochain passage */ }
+}, REFRESH_MS);
+
+function applyData(data) {
+  const before = new Map((state.data?.messages || []).map(m => [m.id, m.sortAt + ':' + m.count]));
+  const details = Object.fromEntries(Object.entries(state.details).filter(([id]) => {
+    const m = data.messages.find(x => x.id === Number(id));
+    return m && before.get(m.id) === m.sortAt + ':' + m.count;
+  }));
+  set({ data, details });
 }
 
 let toastTimer;
@@ -103,7 +133,9 @@ function patchMessage(id, fields) {
   const before = Object.fromEntries(Object.keys(fields).map(k => [k, m[k]]));
   Object.assign(m, fields);
   set({});
-  api.updateMessage(id, fields).catch(err => { Object.assign(m, before); fail(err); });
+  const d = state.details[id];
+  if (d) Object.assign(d, fields);
+  api.updateMessage(id, fields).catch(err => { Object.assign(m, before); if (d) Object.assign(d, before); fail(err); });
 }
 
 function commitFolder() {
@@ -155,6 +187,52 @@ function openWizard(svc, name) {
 }
 const setC = f => set(s => ({ c: { ...s.c, ...(typeof f === 'function' ? f(s.c) : f) } }));
 function closeWizard() { clearInterval(syncTimer); set({ c: null }); }
+
+// Gmail : autorisation réelle dans Google (pleine page), puis suivi de l'import côté serveur.
+function startGoogleAuth() {
+  const c = state.c;
+  if (!state.data.integrations?.gmail?.configured) {
+    setC({ error: 'Connexion Gmail non configurée : renseigne GOOGLE_CLIENT_ID et GOOGLE_CLIENT_SECRET dans .env, puis redémarre Relay.' });
+    return;
+  }
+  location.href = '/oauth/google/start?' + new URLSearchParams({ profile: c.profile, name: c.name.trim(), win: c.win });
+}
+function trackImport(accountId) {
+  clearInterval(syncTimer);
+  const poll = async () => {
+    let p;
+    try { p = await api.syncProgress(accountId); } catch (e) { return setC({ error: e.message }); }
+    if (!state.c) return clearInterval(syncTimer);
+    if (p.status === 'error') {
+      clearInterval(syncTimer);
+      return setC({ step: 'auth', error: p.error || 'La synchronisation a échoué.' });
+    }
+    const progress = p.status === 'ok' ? 100 : p.total ? Math.max(2, Math.round(p.done / p.total * 98)) : 2;
+    setC({ progress, real: p });
+    if (p.status === 'ok') {
+      clearInterval(syncTimer);
+      applyData(await api.state());
+      if (state.c) setC({ step: 'done' });
+    }
+  };
+  poll();
+  syncTimer = setInterval(poll, 700);
+}
+function resumeFromRedirect() {
+  const params = new URLSearchParams(location.search);
+  if (!params.has('connect') && !params.has('connect_error')) return;
+  history.replaceState(null, '', '/');
+  const base = { svc: 'gmail', perms: { read: true }, fields: {}, progress: 0, fromAccount: false };
+  if (params.has('connect_error')) {
+    set({ c: { ...base, step: 'auth', profile: state.profileId, name: 'Gmail', win: 30, error: params.get('connect_error') } });
+    return;
+  }
+  const accountId = Number(params.get('account')), profile = params.get('profile');
+  const acc = state.data.profiles.find(p => p.id === profile)?.accounts.find(a => a.id === accountId);
+  if (!acc) return;
+  set({ profileId: profile, selectedId: firstOf(profile), app: 'mail', folder: null, c: { ...base, step: 'sync', profile, name: acc.name, win: Number(params.get('win')) || 30, accountId } });
+  trackImport(accountId);
+}
 function startSync() {
   setC({ step: 'sync', progress: 0 });
   clearInterval(syncTimer);
@@ -260,8 +338,12 @@ const actions = {
   saveDraft: () => {
     const sel = derive(state).sel;
     if (!sel) return;
-    const text = state.drafts[sel.id] ?? sel.draft?.text ?? '';
-    api.saveDraft(sel.id, text).then(draft => { sel.draft = draft; set({}); }).catch(fail);
+    const text = state.drafts[sel.id] ?? state.details[sel.id]?.draft?.text ?? '';
+    api.saveDraft(sel.id, text).then(draft => {
+      sel.draft = { savedAt: draft.savedAt };
+      if (state.details[sel.id]) state.details[sel.id].draft = draft;
+      set({});
+    }).catch(fail);
   },
   toggleFlag: () => { const sel = derive(state).sel; if (sel) patchMessage(sel.id, { flagged: !sel.flagged }); },
   toggleRead: () => { const sel = derive(state).sel; if (sel) patchMessage(sel.id, { unread: !sel.unread }); },
@@ -312,14 +394,18 @@ const actions = {
   pickService: ({ svc }) => { if (!state.data.services[svc].disabled) setC(svcInit(svc)); },
   cProfile: ({ id }) => setC({ profile: id }),
   cName: (_, e) => setC({ name: e.target.value }),
-  cPerm: ({ perm }) => setC(c => ({ perms: { ...c.perms, [perm]: !c.perms[perm] } })),
+  cPerm: ({ perm }) => {
+    const def = state.data.services[state.c.svc];
+    if (def.available && !def.available.includes(perm)) return;
+    setC(c => ({ perms: { ...c.perms, [perm]: !c.perms[perm] } }));
+  },
   cWindow: ({ win }) => { const w = Number(win); if (WINDOWS.includes(w)) setC({ win: w }); },
   cField: ({ field }, e) => { const v = e.target.value; setC(c => ({ fields: { ...c.fields, [field]: v } })); },
   cBack: () => setC(c => ({ step: c.step === 'auth' ? 'config' : 'pick', error: null })),
   cNext: () => {
     const c = state.c;
     if (c.step === 'config') setC({ step: 'auth', error: null });
-    else if (c.step === 'auth') startSync();
+    else if (c.step === 'auth') state.data.services[c.svc].real ? startGoogleAuth() : startSync();
     else if (c.step === 'done') { clearInterval(syncTimer); set({ c: null, app: 'mail', profileId: c.profile, selectedId: c.profile === state.profileId ? state.selectedId : firstOf(c.profile), folder: null }); }
   },
 };
@@ -337,6 +423,9 @@ document.addEventListener('keydown', e => {
 });
 
 api.state()
-  .then(data => set({ data, selectedId: data.messages.find(m => m.p === state.profileId && !m.archived)?.id ?? null }))
+  .then(data => {
+    set({ data, selectedId: data.messages.find(m => m.p === state.profileId && !m.archived)?.id ?? null });
+    resumeFromRedirect();
+  })
   .catch(err => { set({ loadError: err.message }); });
 render();

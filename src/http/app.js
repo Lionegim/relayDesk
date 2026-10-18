@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { HttpError, badRequest, notFound } from './errors.js';
 import { SERVICES, PERMISSIONS } from '../connectors.js';
 import { summaryPrompt, draftPrompt } from '../ai/assistant.js';
+import { emailFromIdToken } from '../providers/gmail/oauth.js';
 
 const PUBLIC_DIR = fileURLToPath(new URL('../../public/', import.meta.url));
 const MAX_BODY = 64 * 1024;
@@ -54,11 +55,58 @@ const messageId = raw => {
   return id;
 };
 
-export function createApp({ store, ai, ownerName }) {
+const WINDOWS = [7, 30, 90];
+
+function redirect(res, location) {
+  res.writeHead(302, { ...SECURITY_HEADERS, location, 'cache-control': 'no-store' });
+  res.end();
+}
+
+const accountId = raw => {
+  const id = Number(raw);
+  if (!Number.isInteger(id)) throw badRequest('Identifiant de compte invalide');
+  return id;
+};
+
+// gmail : { oauth, sync, redirectUri } (facultatif). allowedHosts : protège contre le DNS rebinding.
+export function createApp({ store, ai, ownerName, gmail = null, allowedHosts = null }) {
+  // Autorisation Google : navigation pleine page, puis retour vers l'interface avec le résultat dans l'URL.
+  async function oauthRoute(pathname, url, res) {
+    const back = params => redirect(res, '/?' + new URLSearchParams(params));
+    if (pathname === '/oauth/google/start') {
+      if (!gmail?.oauth.configured) return back({ connect_error: 'Renseigne GOOGLE_CLIENT_ID et GOOGLE_CLIENT_SECRET dans .env, puis redémarre Relay.' });
+      const profileId = url.searchParams.get('profile'), name = (url.searchParams.get('name') || '').trim(), win = Number(url.searchParams.get('win'));
+      if (!store.hasProfile(profileId) || !name || name.length > 80 || !WINDOWS.includes(win)) {
+        return back({ connect_error: 'Paramètres de connexion invalides.' });
+      }
+      return redirect(res, gmail.oauth.start({ redirectUri: gmail.redirectUri, context: { profileId, name, win } }));
+    }
+    if (pathname === '/oauth/google/callback') {
+      if (url.searchParams.get('error')) return back({ connect_error: 'Autorisation refusée dans Google.' });
+      try {
+        const r = await gmail.oauth.finish({ state: url.searchParams.get('state'), code: url.searchParams.get('code') });
+        const email = emailFromIdToken(r.idToken);
+        const { account } = gmail.sync.connect({ profileId: r.context.profileId, name: r.context.name, windowDays: r.context.win, refreshToken: r.refreshToken, email });
+        return back({ connect: 'gmail', account: account.id, profile: r.context.profileId, win: r.context.win });
+      } catch (e) {
+        if (!(e instanceof HttpError)) console.error(e);
+        return back({ connect_error: e instanceof HttpError ? e.message : 'La connexion à Gmail a échoué.' });
+      }
+    }
+    throw notFound();
+  }
+
   // [méthode, motif, gestionnaire(params, body)]
   const routes = [
     ['GET', /^\/api\/health$/, () => ({ ok: true, ai: { provider: 'mistral', configured: ai.configured, model: ai.model } })],
-    ['GET', /^\/api\/state$/, () => ({ ...store.snapshot(), services: SERVICES, permissions: PERMISSIONS, ai: { configured: ai.configured } })],
+    ['GET', /^\/api\/state$/, () => ({ ...store.snapshot(), services: SERVICES, permissions: PERMISSIONS, ai: { configured: ai.configured }, integrations: { gmail: { configured: !!gmail?.oauth.configured } } })],
+    ['GET', /^\/api\/accounts\/([^/]+)\/sync$/, ([id]) => gmail?.sync.progress(accountId(id)) || (() => { throw notFound('Aucune synchronisation pour ce compte'); })()],
+    ['POST', /^\/api\/accounts\/([^/]+)\/sync$/, ([id]) => {
+      if (store.getAccount(accountId(id)).svc !== 'gmail' || !gmail) throw badRequest('Compte non synchronisable');
+      gmail.sync.syncNow(accountId(id));
+      return { started: true };
+    }],
+    ['GET', /^\/api\/messages\/([^/]+)$/, ([id]) => store.getMessage(messageId(id))],
     ['PATCH', /^\/api\/messages\/([^/]+)$/, ([id], body) => store.updateMessage(messageId(id), body)],
     ['PUT', /^\/api\/messages\/([^/]+)\/draft$/, ([id], body) => store.saveDraft(messageId(id), body.text)],
     ['POST', /^\/api\/folders$/, (_, body) => store.createFolder(body)],
@@ -76,7 +124,13 @@ export function createApp({ store, ai, ownerName }) {
 
   return http.createServer(async (req, res) => {
     try {
-      const { pathname } = new URL(req.url, 'http://localhost');
+      if (allowedHosts && !allowedHosts.includes(req.headers.host)) throw new HttpError(403, 'Hôte non autorisé', 'forbidden_host');
+      const url = new URL(req.url, 'http://localhost');
+      const { pathname } = url;
+      if (pathname.startsWith('/oauth/')) {
+        if (req.method !== 'GET') throw new HttpError(405, 'Méthode non autorisée', 'method_not_allowed');
+        return await oauthRoute(pathname, url, res);
+      }
       if (!pathname.startsWith('/api/')) {
         if (req.method !== 'GET' && req.method !== 'HEAD') throw new HttpError(405, 'Méthode non autorisée', 'method_not_allowed');
         return await serveStatic(req, res, pathname);
