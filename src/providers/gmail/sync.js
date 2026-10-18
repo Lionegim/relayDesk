@@ -202,6 +202,8 @@ export function createGmailSync({ store, vault, oauth, fetchImpl = globalThis.fe
     permissions,
     // Lots C et D : écritures (brouillons, envoi) dans la file du compte, avec son client Gmail.
     exclusive: (accountId, fn) => serial(accountId, () => fn(client(accountId))),
+    // Même file, sans client Gmail (enregistrement local d'un compte sans permission ou non connecté).
+    queue: (accountId, fn) => serial(accountId, fn),
     // Lot B : coupe immédiatement les tâches en cours (elles n'écrivent plus rien), puis exécute `fn`
     // dans la file du compte, après la fin de la tâche en cours.
     forget(accountId, fn) {

@@ -100,3 +100,46 @@ test('erreur Gmail : rien d’enregistré comme brouillon Gmail', async () => {
   await assert.rejects(outbox.saveDraft(msg.id, { text: 'x', mode: 'reply' }), e => e.code === 'retryable');
   assert.equal(store.getMessage(msg.id).draft, null);
 });
+
+test('revue P2 : enregistrement local après un brouillon Gmail : non annoncé comme Gmail', async () => {
+  const { outbox, msg, store, g } = await ready();
+  assert.equal((await outbox.saveDraft(msg.id, { text: 'pour tous', mode: 'replyAll' })).gmail, true);
+  const local = await outbox.saveDraft(msg.id, { text: 'transfert à compléter', mode: 'forward', to: '' });
+  assert.equal(local.gmail, false);
+  assert.equal(store.getMessage(msg.id).draft.gmail, false);
+  assert.equal(store.snapshot().messages.find(m => m.id === msg.id).draft.gmail, false);
+  // Le lien est gardé : la sauvegarde suivante met à jour le même brouillon Gmail.
+  const again = await outbox.saveDraft(msg.id, { text: 'transfert', mode: 'forward', to: 'paul@x.fr' });
+  assert.equal(again.gmail, true);
+  assert.ok(g.calls.some(c => c.method === 'PUT' && c.path.endsWith('/drafts/d1')));
+});
+
+test('revue : sauvegardes du même compte dans l’ordre, y compris le repli local', async () => {
+  const { outbox, msg, store, g } = await ready();
+  let release;
+  const gate = new Promise(r => { release = r; });
+  const real = g.fetch;
+  g.fetch = async (url, init = {}) => {
+    if ((init.method || 'GET') === 'POST' && String(url).endsWith('/drafts')) await gate;
+    return real(url, init);
+  };
+  // Les clients Gmail déjà créés gardent leur fetch : on force un nouveau client.
+  const { createGmailSync } = await import('../src/providers/gmail/sync.js');
+  const { createGoogleOAuth } = await import('../src/providers/gmail/oauth.js');
+  const { createGmailOutbox: mk } = await import('../src/providers/gmail/outbox.js');
+  const sync = createGmailSync({ store, vault: { open: () => ({ refreshToken: 'rt', email: 'jh@gmail.com', scopes: READ_DRAFTS }) }, oauth: createGoogleOAuth({ clientId: 'c', clientSecret: 's', fetchImpl: g.fetch }), fetchImpl: g.fetch, log: {} });
+  const ob = mk({ store, sync, ownerName: 'JH' });
+  const first = ob.saveDraft(msg.id, { text: 'ancien', mode: 'reply' });
+  const second = ob.saveDraft(msg.id, { text: 'plus récent', mode: 'forward', to: '' });
+  await new Promise(r => setTimeout(r, 20));
+  release();
+  await Promise.all([first, second]);
+  const d = store.getMessage(msg.id).draft;
+  assert.deepEqual([d.text, d.mode, d.gmail], ['plus récent', 'forward', false]);
+});
+
+test('compte non connecté ou de démonstration : enregistrement local sans client Gmail', async () => {
+  const { outbox, store } = await ready();
+  const demo = store.snapshot().messages.find(m => m.accountId == null);
+  assert.equal((await outbox.saveDraft(demo.id, { text: 'démo', mode: 'reply' })).gmail, false);
+});

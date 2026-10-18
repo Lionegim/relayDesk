@@ -7,7 +7,6 @@ import { replyMeta } from './parse.js';
 const MODES = ['reply', 'replyAll', 'forward'];
 const MAX_TEXT = 20000;
 const MAX_TO = 2000;
-
 export function readComposeInput(body) {
   const { text, mode = 'reply', to = null } = body || {};
   if (typeof text !== 'string' || text.length > MAX_TEXT) throw badRequest('Texte invalide');
@@ -69,9 +68,12 @@ export function createGmailOutbox({ store, sync, ownerName = '' }) {
     async saveDraft(messageId, input) {
       const { text, mode, to } = readComposeInput(input);
       const { accountId } = store.composeContext(messageId);
-      if (!can(accountId, 'drafts')) return store.saveDraft(messageId, text, { mode, to });
+      const local = () => store.saveDraft(messageId, text, { mode, to });
+      if (!isGmail(accountId)) return local();
+      // Toutes les sauvegardes d'un compte Gmail passent par sa file, y compris l'enregistrement local :
+      // une écriture Gmail plus ancienne encore en cours ne peut pas écraser un brouillon plus récent.
       // Un transfert sans destinataire valide reste local jusqu'à ce qu'une adresse soit saisie.
-      if (mode === 'forward' && !String(to).includes('@')) return store.saveDraft(messageId, text, { mode, to });
+      if (!can(accountId, 'drafts') || (mode === 'forward' && !String(to).includes('@'))) return sync.queue(accountId, local);
       return sync.exclusive(accountId, async ({ gmail }) => {
         await ensureReply(gmail, messageId);
         const { mime, threadId, ctx } = compose(messageId, { text, mode, to });
@@ -86,7 +88,7 @@ export function createGmailOutbox({ store, sync, ownerName = '' }) {
           }
         }
         if (!draftId) draftId = (await gmail.post('drafts', { message })).id;
-        return store.saveDraft(messageId, text, { mode, to, externalId: draftId });
+        return store.saveDraft(messageId, text, { mode, to, externalId: draftId, synced: true });
       });
     },
   };

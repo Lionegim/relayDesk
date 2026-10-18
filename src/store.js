@@ -13,7 +13,7 @@ const toMessage = (r, full) => {
     id: r.id, p: r.profile_id, accountId: r.account_id, from: r.from_name, initials: r.initials, handle: r.handle, channel: r.channel,
     account: r.account, time: r.time_label, sortAt: r.sort_at, unread: bool(r.unread), flagged: bool(r.flagged), archived: bool(r.archived),
     folderId: r.folder_id, label: r.label, subject: r.subject, preview: r.preview, triage: r.triage, count: r.message_count,
-    draft: r.draft_saved_at ? { savedAt: r.draft_saved_at, gmail: !!r.draft_external_id, ...(full ? { text: r.draft_text, mode: r.draft_mode, to: r.draft_to } : {}) } : null,
+    draft: r.draft_saved_at ? { savedAt: r.draft_saved_at, gmail: !!r.draft_synced, ...(full ? { text: r.draft_text, mode: r.draft_mode, to: r.draft_to } : {}) } : null,
   };
   if (full) Object.assign(m, { body: r.body, trail: JSON.parse(r.trail) });
   return m;
@@ -87,19 +87,22 @@ export function createStore(db) {
       return toMessage(row(id), false);
     },
 
-    saveDraft(id, text, { mode = null, to = null, externalId } = {}) {
+    // `synced` : le contenu enregistré est aussi celui du brouillon Gmail. Un enregistrement local garde le lien
+    // vers le brouillon Gmail existant (pour le mettre à jour ensuite) mais le marque comme non synchronisé.
+    saveDraft(id, text, { mode = null, to = null, externalId, synced = false } = {}) {
       const r = row(id);
       if (typeof text !== 'string' || text.length > MAX_DRAFT) throw badRequest('Brouillon invalide');
       const savedAt = new Date().toISOString();
       const ext = externalId === undefined ? r.draft_external_id : externalId;
-      q('UPDATE messages SET draft_text = ?, draft_saved_at = ?, draft_mode = ?, draft_to = ?, draft_external_id = ? WHERE id = ?').run(text, savedAt, mode, to, ext, id);
-      return { text, savedAt, mode, to, gmail: !!ext };
+      q('UPDATE messages SET draft_text = ?, draft_saved_at = ?, draft_mode = ?, draft_to = ?, draft_external_id = ?, draft_synced = ? WHERE id = ?')
+        .run(text, savedAt, mode, to, ext, +(synced && !!ext), id);
+      return { text, savedAt, mode, to, gmail: synced && !!ext };
     },
     setReplyMeta(id, reply) {
       q('UPDATE messages SET reply_meta = ? WHERE id = ?').run(JSON.stringify(reply), id);
     },
     clearDraft(id) {
-      q('UPDATE messages SET draft_text = NULL, draft_saved_at = NULL, draft_mode = NULL, draft_to = NULL, draft_external_id = NULL WHERE id = ?').run(id);
+      q('UPDATE messages SET draft_text = NULL, draft_saved_at = NULL, draft_mode = NULL, draft_to = NULL, draft_external_id = NULL, draft_synced = 0 WHERE id = ?').run(id);
     },
     // Lots C et D : de quoi construire une réponse dans le fil.
     composeContext(id) {

@@ -66,6 +66,8 @@ Avec la permission **Brouillons** (`gmail.compose`), **Enregistrer** crée le br
 - Les destinataires sont lus sur les en-têtes bruts : un nom d'affichage encodé ne peut pas ajouter d'adresse.
 - Pour les fils importés avant cette version, Relay relit les en-têtes du fil dans Gmail au premier brouillon.
 - Un brouillon supprimé dans Gmail est recréé au prochain enregistrement.
+- Quand un enregistrement reste local (transfert sans adresse, permission absente), le statut indique « Brouillon enregistré », sans « Gmail » : le brouillon Gmail garde la version précédente jusqu'au prochain enregistrement synchronisé, qui le met à jour.
+- Les enregistrements d'un même compte passent dans la même file que la synchronisation et les actions : une sauvegarde plus ancienne ne peut pas écraser une plus récente.
 
 ## Déconnecter un compte
 

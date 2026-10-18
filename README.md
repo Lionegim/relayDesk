@@ -42,7 +42,7 @@ Pour connecter un vrai compte Gmail : [docs/gmail.md](docs/gmail.md).
 
 - Les comptes d’exemple (`src/demo-data.js`) restent présents si `DEMO_DATA` vaut `1`.
 - Outlook, Proton, WhatsApp et Instagram : la connexion ne contacte aucun fournisseur ; la progression est simulée.
-- Gmail sans la permission **Libellés** reste en lecture seule ; seuls ces comptes conservent les changements de classement localement. Les brouillons Gmail et la déconnexion depuis Relay restent à implémenter (lots C et B).
+- Gmail sans la permission **Libellés** reste en lecture seule ; seuls ces comptes conservent les changements de classement localement. Sans la permission **Brouillons**, les brouillons restent dans Relay.
 - « Envoyer » reste désactivé : l’envoi exigera un compte réellement connecté et la validation du contenu exact.
 
 ## Structure
