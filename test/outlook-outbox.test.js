@@ -196,3 +196,11 @@ test('revue P2 : clé de rattachement persistée (migration 005) et relue après
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test('mémoire Outlook : apprentissage seulement après sendMail confirmé, aucun apprentissage du brouillon ni erreur',async()=>{
+ const {outbox,msg,ms,store,sync}=await ready();const input={text:'Merci pour ton retour, à bientôt !',mode:'reply'};
+ const before=store.getReplyMemory(msg.id).sampleCount;
+ await outbox.saveDraft(msg.id,input);const p=await outbox.preview(msg.id,input);assert.equal(store.getReplyMemory(msg.id).sampleCount,before);
+ ms.fail=(method,path)=>path==='me/sendMail';ms.failStatus=503;await assert.rejects(outbox.send(msg.id,{...input,digest:p.digest}));assert.equal(store.getReplyMemory(msg.id).sampleCount,before);
+ ms.fail=null;const fresh=await outbox.preview(msg.id,input);await outbox.send(msg.id,{...input,digest:fresh.digest});assert.equal(store.getReplyMemory(msg.id).sampleCount,before+1);sync.stop();
+});

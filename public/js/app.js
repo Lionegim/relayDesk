@@ -191,7 +191,7 @@ function commitFolder() {
 let aiRequest = 0;
 async function aiRun(regenerate = false) {
   const s = state, sel = derive(s).sel;
-  if (!s.ai || !sel || s.ai.loading || !s.data.ai?.configured) return;
+  if (!s.ai || !sel || s.ai.loading || s.ai.memoryBusy || !s.data.ai?.configured) return;
   const mode = s.ai.mode, forId = sel.id, request = ++aiRequest, version = selectionVersion, profileId = s.profileId;
   set({ ai: { ...s.ai, loading: true, result: null, error: null, forId } });
   let result = null, error = null;
@@ -204,6 +204,21 @@ async function aiRun(regenerate = false) {
   if (request === aiRequest && version === selectionVersion && profileId === state.profileId && state.selectedId === forId && state.ai?.forId === forId && state.ai.mode === mode) {
     if (result && state.details[forId] && mode !== 'draft') state.details[forId].aiResults = { ...state.details[forId].aiResults, [mode]: result };
     set({ ai: { ...state.ai, loading: false, result, error, folderId: result?.folderId ?? null } });
+  }
+}
+
+async function changeReplyMemory(input) {
+  const sel=derive(state).sel, a=state.ai;
+  if(!sel || !a || a.memoryBusy) return;
+  const id=sel.id, version=selectionVersion, request=++aiRequest;
+  set({ai:{...a,memoryBusy:true,loading:false,result:null,error:null,memoryConfirm:false}});
+  try {
+    const memory=await api.changeReplyMemory(id,input);
+    if(version!==selectionVersion || request!==aiRequest || state.selectedId!==id || state.ai?.forId!==id) return;
+    if(state.details[id]) state.details[id].replyMemory=memory;
+    set({ai:{...state.ai,memoryBusy:false}});
+  } catch(e) {
+    if(version===selectionVersion && request===aiRequest && state.ai?.forId===id) set({ai:{...state.ai,memoryBusy:false,error:e.message}});
   }
 }
 
@@ -527,6 +542,10 @@ const actions = {
   // Assistant IA
   aiSummary: () => aiOpen('summary'),
   aiDraft: () => aiOpen('draft'),
+  aiMemoryToggle: () => {const sel=derive(state).sel;const memory=state.details[sel?.id]?.replyMemory;if(memory?.available) return changeReplyMemory({enabled:!memory.enabled});},
+  aiMemoryReset: () => set({ai:{...state.ai,memoryConfirm:true}}),
+  aiMemoryCancel: () => set({ai:{...state.ai,memoryConfirm:false}}),
+  aiMemoryConfirm: () => changeReplyMemory({reset:true}),
   aiClassify: () => aiOpen('classify'),
   aiTab: ({ mode }) => { if (state.ai?.mode !== mode) aiOpen(mode); },
   aiClose: () => { aiRequest++; set({ ai: null }); },

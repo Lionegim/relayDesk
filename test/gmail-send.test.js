@@ -177,3 +177,16 @@ test('routes HTTP : aperçu puis envoi', async () => {
     await new Promise(r => server.close(r));
   }
 });
+
+test('mémoire Gmail : apprentissage seulement après succès, jamais brouillon, aperçu ou erreur incertaine',async()=>{
+ const {outbox,msg,g,store,sync}=await ready();
+ const input={text:'Mon style envoyé avec validation',mode:'reply'};
+ const before=store.getReplyMemory(msg.id).sampleCount;
+ await outbox.saveDraft(msg.id,input);const p=await outbox.preview(msg.id,input);
+ assert.equal(store.getReplyMemory(msg.id).sampleCount,before);
+ g.fail=(method,path)=>method==='POST'&&path==='messages/send';g.failStatus=503;
+ await assert.rejects(outbox.send(msg.id,{...input,digest:p.digest}));assert.equal(store.getReplyMemory(msg.id).sampleCount,before);
+ g.fail=null;const fresh=await outbox.preview(msg.id,input);await outbox.send(msg.id,{...input,digest:fresh.digest});
+ assert.equal(store.getReplyMemory(msg.id).sampleCount,before+1);
+ assert.ok(store.getReplyMemory(msg.id).examples.some(x=>x.text===input.text));sync.stop();
+});

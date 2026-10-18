@@ -23,6 +23,10 @@ const dataDir = process.env.DATA_DIR || join(import.meta.dirname, 'data');
 const db = openDatabase(join(dataDir, 'relay.db'));
 seedIfEmpty(db, { demo: process.env.DEMO_DATA !== '0' });
 const store = createStore(db);
+store.pruneReplyMemory();
+store.learnAvailableReplies();
+const memoryPruning = setInterval(()=>store.pruneReplyMemory(),3600000);
+memoryPruning.unref();
 
 const vault = createVault(loadKey({ envKey: process.env.RELAY_SECRET_KEY, keyFile: join(dataDir, 'secret.key') }));
 const oauth = createGoogleOAuth({ clientId: process.env.GOOGLE_CLIENT_ID, clientSecret: process.env.GOOGLE_CLIENT_SECRET });
@@ -55,6 +59,6 @@ server.listen(port, host, () => {
   Promise.resolve(whatsapp.sync.start()).catch(() => console.error('WhatsApp : reprise différée des sessions locales.'));
 });
 
-const stop = async () => { sync.stop(); outlookSync.stop(); await whatsapp.sync.stop(); server.close(() => { db.close(); process.exit(0); }); };
+const stop = async () => { clearInterval(memoryPruning); sync.stop(); outlookSync.stop(); await whatsapp.sync.stop(); server.close(() => { db.close(); process.exit(0); }); };
 process.on('SIGINT', stop);
 process.on('SIGTERM', stop);

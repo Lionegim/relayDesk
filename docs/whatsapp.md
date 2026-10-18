@@ -53,3 +53,7 @@ Les compteurs indiquent uniquement ce qui est reçu sur le Mac. Une attente, une
 Si le téléphone ne répond pas aux demandes sur une ancienne session, **Relier l’appareil** renouvelle seulement la liaison et conserve le compte, les messages, les brouillons, les dossiers et les drapeaux. Les anciennes validations d’envoi sont invalidées. Le nouveau QR doit être scanné par le titulaire pour le même numéro.
 
 Les nouvelles liaisons utilisent un profil navigateur avec historique étendu, conservé avec les identifiants chiffrés pour les reprises suivantes. WhatsApp peut transmettre des lots plus anciens ; seuls les textes autorisés des sept derniers jours sont enregistrés par Relay. Le nom de l’appareil visible sur le téléphone peut être « Mac OS / Chrome ». L’ouverture de la boîte indique la connexion, pas la fin de l’historique.
+
+## Mémoire du style
+
+L’assistant peut maintenant utiliser une [mémoire locale propre à chaque conversation](reply-memory.md), construite uniquement à partir des textes réellement envoyés par le propriétaire. Elle se consulte, se met en pause et se réinitialise dans **Répondre → Ton style, ici**. Aucun apprentissage ne lance un appel IA ni un envoi automatique.

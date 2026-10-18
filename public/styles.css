@@ -391,3 +391,16 @@ svg { display: block; }
   .wa-status { order: -1; flex-basis: 100%; }
   .wa-actions .wa-send { margin-left: auto; }
 }
+
+/* Mémoire de style : carnet local discret dans le panneau existant. */
+.reply-memory {border:1px solid #d5e4dd;border-radius:10px;background:#f5f9f6;padding:14px;color:#25453a;}
+.reply-memory-head {display:flex;align-items:center;justify-content:space-between;gap:8px;font-size:13px;}
+.reply-memory-badge {font-size:10px;letter-spacing:.04em;text-transform:uppercase;color:#527569;white-space:nowrap;}
+.reply-memory p {font-size:12px;line-height:1.5;margin:8px 0;}
+.reply-memory-traits {display:flex;flex-wrap:wrap;gap:5px;}
+.reply-memory-traits span {font-size:11px;border-radius:4px;background:#e3eee7;padding:3px 6px;}
+.reply-memory summary {cursor:pointer;font-size:12px;margin-top:10px;}
+.reply-memory blockquote {white-space:pre-wrap;overflow-wrap:anywhere;margin:10px 0;padding:4px 0 4px 10px;border-left:2px solid #a9c5b4;font-size:12px;line-height:1.5;}
+.reply-memory-actions {display:flex;flex-wrap:wrap;gap:6px;margin:8px -7px -7px;}
+.reply-memory .btn {font-size:11px;min-height:30px;}
+.reply-memory-reset {border-top:1px solid #d5e4dd;margin-top:10px;padding-top:2px;}

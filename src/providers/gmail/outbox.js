@@ -168,6 +168,7 @@ export function createGmailOutbox({ store, sync, ownerName = '' }) {
           // Toute validation de cette composition devient caduque, y compris les anciennes versions.
           // SQLite peut réutiliser son identifiant après suppression du brouillon local.
           for (const [key, c] of confirmations) if (c.messageId === messageId && c.accountId === accountId) confirmations.delete(key);
+          if (['reply','replyAll'].includes(parsed.mode)) store.rememberReply(messageId,parsed.text);
           store.clearDraft(messageId);
           // Le brouillon Gmail lié n'est jamais supprimé : Gmail n'offre pas de suppression conditionnelle à une version,
           // et il a pu être modifié ailleurs. Seul le brouillon local est nettoyé ; le distant est signalé.

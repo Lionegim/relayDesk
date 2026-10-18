@@ -158,7 +158,9 @@ export function createApp({ store, ai, ownerName, gmail = null, providers = {}, 
     ['POST', /^\/api\/accounts\/([^/]+)\/disconnect$/, ([id]) => {
       return mail.providerFor(accountId(id)).disconnect(accountId(id));
     }],
-    ['GET', /^\/api\/messages\/([^/]+)$/, ([id]) => ({ ...store.getMessage(messageId(id)), aiResults: assistant.results(messageId(id)) })],
+    ['GET', /^\/api\/messages\/([^/]+)$/, ([id]) => ({ ...store.getMessage(messageId(id)), aiResults: assistant.results(messageId(id)), replyMemory:store.getReplyMemory(messageId(id)) })],
+    ['GET', /^\/api\/messages\/([^/]+)\/memory$/, ([id]) => store.getReplyMemory(messageId(id))],
+    ['PATCH', /^\/api\/messages\/([^/]+)\/memory$/, ([id],body) => store.changeReplyMemory(messageId(id),body)],
     ['PATCH', /^\/api\/messages\/([^/]+)$/, ([id], body) => mail.updateMessage(messageId(id), body)],
     ['POST', /^\/api\/drafts$/, (_, body) => mail.createComposition(body.accountId)],
     ['PUT', /^\/api\/messages\/([^/]+)\/draft$/, ([id], body) => mail.saveDraft(messageId(id), body)],

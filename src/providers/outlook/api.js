@@ -67,7 +67,7 @@ export function createGraphClient({ refreshToken, oauth, fetchImpl = globalThis.
     }
     return { value: out };
   }
-  const MSG_FIELDS = 'id,conversationId,parentFolderId,subject,bodyPreview,body,from,toRecipients,ccRecipients,replyTo,receivedDateTime,sentDateTime,isRead,isDraft,flag,importance,inferenceClassification,internetMessageId';
+  const MSG_FIELDS = 'id,conversationId,parentFolderId,subject,bodyPreview,body,from,sender,toRecipients,ccRecipients,replyTo,receivedDateTime,sentDateTime,isRead,isDraft,flag,importance,inferenceClassification,internetMessageId';
 
   return {
     request,

@@ -378,6 +378,25 @@ function whatsappView(s, v, sel) {
     </section>`;
 }
 
+function replyMemoryPanel(s, sel) {
+  const a=s.ai, memory=s.details[sel.id]?.replyMemory;
+  if(!memory) return html`<p class="muted">Chargement de la mémoire locale…</p>`;
+  if(!memory.available) return html`<p class="muted">La mémoire de style sera disponible dans une conversation d’un compte connecté.</p>`;
+  const busy=a.loading || a.memoryBusy;
+  return html`<section class="reply-memory" aria-label="Mémoire de cette conversation">
+    <div class="reply-memory-head"><strong>Ton style, ici</strong><span class="reply-memory-badge">Sur ce Mac</span></div>
+    <p>${memory.enabled ? memory.sampleCount ? `${plural(memory.sampleCount,'exemple')} de tes messages envoyés` : 'La mémoire apprendra de tes prochains messages envoyés.' : 'Mémoire en pause pour cette conversation.'}</p>
+    ${when(memory.enabled && memory.sampleCount>0,()=>html`
+      <div class="reply-memory-traits">${memory.traits.map(t=>html`<span>${t}</span>`)}</div>
+      ${when(memory.sampleCount<3,()=>html`<p class="muted">Encore peu d’exemples : le style reste à affiner.</p>`)}
+      <details><summary>Voir quelques exemples</summary>${memory.examples.map(e=>html`<blockquote>${e.text}</blockquote>`)}</details>`)}
+    <p class="muted">Mémoire séparée par conversation et compte. Jusqu’à 24 exemples distincts, conservés 180 jours.</p>
+    ${when(a.memoryConfirm,()=>html`<div class="reply-memory-reset"><p>Effacer cette mémoire ? Elle repartira de tes prochains envois. Les messages de la conversation seront conservés.</p>
+      <button class="btn btn-ghost" data-on-click="aiMemoryCancel">Annuler</button><button class="btn btn-ghost" data-on-click="aiMemoryConfirm" ${raw(busy?'disabled':'')}>Effacer la mémoire</button></div>`)}
+    ${when(!a.memoryConfirm,()=>html`<div class="reply-memory-actions"><button class="btn btn-ghost" data-on-click="aiMemoryToggle" ${raw(busy?'disabled':'')}>${memory.enabled?'Mettre en pause':'Réactiver'}</button><button class="btn btn-ghost" data-on-click="aiMemoryReset" ${raw(busy || !memory.sampleCount?'disabled':'')}>Réinitialiser</button></div>`)}
+  </section>`;
+}
+
 function aiPanel(s, sel) {
   const ai = s.ai, draftMode = ai.mode === 'draft', classifyMode = ai.mode === 'classify';
   const categories = { action: 'À traiter', waiting: 'En attente', information: 'Information', newsletter: 'Newsletter', spam: 'Indésirable potentiel' };
@@ -402,8 +421,9 @@ function aiPanel(s, sel) {
           <button class="${cls('ai-tab', ai.mode === mode && 'is-on')}" data-on-click="aiTab" data-mode="${mode}">${label}</button>`)}
       </div>
       <div class="ai-body">
-        <p class="muted" style="font-size:12px;margin:0">${configured ? 'À ta demande, le texte de ce fil est transmis à Mistral. Aucun déplacement ni envoi automatique.' : 'L’IA attend sa configuration. Ajoute MISTRAL_API_KEY au fichier .env sur ton Mac, puis redémarre Relay Desk.'}</p>
+        <p class="muted" style="font-size:12px;margin:0">${configured ? (draftMode ? 'À ta demande, le fil et jusqu’à 5 courts exemples de tes réponses à cette conversation sont transmis à Mistral si la mémoire est active. Aucun envoi automatique.' : 'À ta demande, le texte de ce fil est transmis à Mistral. Aucun déplacement ni envoi automatique.') : 'L’IA attend sa configuration. Ajoute MISTRAL_API_KEY au fichier .env sur ton Mac, puis redémarre Relay Desk.'}</p>
         ${when(draftMode, () => html`
+          ${replyMemoryPanel(s,sel)}
           <label class="field">
             <span class="field-label">Intention</span>
             <textarea data-on-input="aiIntent" maxlength="500" placeholder="Ex : valider, demander une dernière relecture du titre">${s.aiIntent}</textarea>
@@ -428,15 +448,16 @@ function aiPanel(s, sel) {
             </select>
           </label>
           <p class="muted" style="font-size:12px;margin:0">${result.appliedAt ? 'Classement déjà appliqué.' : localLabels ? 'Catégorie, priorité et dossier restent dans Relay Desk, sur ce Mac.' : 'La catégorie et la priorité restent dans Relay Desk. Le dossier choisi sera synchronisé avec ton compte.'}</p>` : html`<div class="ai-result">${result.text}</div>`)}
+        ${when(draftMode && result?.memoryUsed,()=>html`<span class="muted">Proposition adaptée à ${result.memorySamples} exemples de cette conversation.</span>`)}
         ${when(result?.createdAt, () => html`<span class="muted" style="font-size:11px">Analyse enregistrée à ${timeOf(result.createdAt)}${result.cached ? ' · réutilisée' : ''}</span>`)}
       </div>
       <div class="ai-foot">
-        ${when(result, () => html`<button class="btn btn-ghost" data-on-click="aiRegenerate" ${raw(ai.loading || !configured ? 'disabled' : '')}>Régénérer</button>`)}
+        ${when(result, () => html`<button class="btn btn-ghost" data-on-click="aiRegenerate" ${raw(ai.loading || ai.memoryBusy || !configured ? 'disabled' : '')}>Régénérer</button>`)}
         <div class="grow"></div>
         ${when(draftMode && result, () => html`<button class="btn btn-brand" data-on-click="aiInsert" ${raw(ai.loading ? 'disabled' : '')}>Insérer dans la réponse</button>`)}
         ${when(classifyMode && result && !result.appliedAt, () => html`<button class="btn btn-brand" data-on-click="aiApply" ${raw(ai.loading ? 'disabled' : '')}>Appliquer le classement</button>`)}
         ${when(!result, () => html`
-          <button class="btn btn-brand" data-on-click="aiRun" ${raw(ai.loading || !configured ? 'disabled' : '')}>
+          <button class="btn btn-brand" data-on-click="aiRun" ${raw(ai.loading || ai.memoryBusy || !configured ? 'disabled' : '')}>
             ${when(ai.loading, () => html`<span class="spinner"></span>`)}${ai.mode === 'summary' ? 'Résumer' : classifyMode ? 'Analyser le classement' : 'Proposer une réponse'}
           </button>`)}
       </div>

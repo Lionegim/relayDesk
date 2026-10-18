@@ -160,6 +160,7 @@ export function createOutlookOutbox({ store, sync, ownerName = '' }) {
           // Toutes les validations de ce message sont annulées avant de libérer la ligne : un identifiant de nouveau
           // message réutilisé par SQLite ne peut jamais hériter d'un aperçu antérieur.
           for (const [d, c] of confirmations) if (c.messageId === messageId && c.accountId === accountId) confirmations.delete(d);
+          if (['reply','replyAll'].includes(mode)) store.rememberReply(messageId,text);
           store.clearDraft(messageId);
           // Le brouillon Outlook lié n'est jamais supprimé (pas de suppression conditionnelle à une version).
           return { sent: true, draftRemoved: !fresh.draftExternalId };

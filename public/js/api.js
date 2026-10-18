@@ -15,6 +15,7 @@ export const api = {
   cancelWhatsAppLink: id => call('DELETE', `/api/whatsapp/links/${encodeURIComponent(id)}`, {}),
   createComposition: accountId => call('POST', '/api/drafts', { accountId }),
   state: () => call('GET', '/api/state'),
+  changeReplyMemory: (id,input) => call('PATCH', `/api/messages/${id}/memory`, input),
   message: id => call('GET', `/api/messages/${id}`),
   syncProgress: accountId => call('GET', `/api/accounts/${accountId}/sync`),
   syncNow: accountId => call('POST', `/api/accounts/${accountId}/sync`, {}),

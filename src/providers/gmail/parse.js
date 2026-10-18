@@ -106,6 +106,7 @@ export function threadToRecord(thread, { ownEmail, labelNames = {}, preferredLab
     ? preferredLabelId : [...labels].find(l => labelNames[l]);
   return {
     externalId: thread.id,
+    ownSamples: msgs.filter(m => (m.labelIds || []).includes('SENT') && parseAddress(headerMap(m).from || '').email === ownEmail?.toLowerCase()).map(m=>({fromMe:true,text:bodyText(m),at:Number(m.internalDate)})),
     from: from.name, initials: initialsOf(from.name), handle: from.email,
     sortAt: Number(last.internalDate) || Date.now(),
     unread: labels.has('UNREAD'), flagged: labels.has('STARRED'), archived: !labels.has('INBOX'),

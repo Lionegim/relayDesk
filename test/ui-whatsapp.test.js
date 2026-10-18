@@ -55,3 +55,16 @@ test('conversation WhatsApp : actualisation conserve les bulles jusqu’au charg
  resolve({...m,sortAt:200,count:3,body:'Nouveau message',trail:[{body:'Historique'}]});await tick();
  assert.equal(s.details[42].body,'Nouveau message');assert.equal(s.details[42].refreshing,undefined);
 });
+
+test('mémoire UI : pause invalide la proposition et une réponse tardive ne modifie pas une autre sélection',async()=>{
+ const u=await ui(),s=u.c.inspect();s.data.messages=[{id:1,p:'anove',channel:'whatsapp',sortAt:1,count:1}];s.selectedId=1;
+ s.details[1]={replyMemory:{available:true,enabled:true,sampleCount:1}};
+ s.ai={forId:1,mode:'draft',result:{text:'Ancienne proposition'},loading:false};
+ let finish;u.api.changeReplyMemory=()=>new Promise(r=>finish=r);
+ const job=u.c.act.aiMemoryToggle();assert.equal(u.c.inspect().ai.result,null);assert.equal(u.c.inspect().ai.memoryBusy,true);
+ u.c.act.aiClose();finish({available:true,enabled:false,sampleCount:1});await job;
+ assert.equal(u.c.inspect().ai,null,'la fermeture du panneau ne le rouvre pas');
+ s.ai={forId:1,mode:'draft',result:{text:'Ancienne proposition'},loading:false};s.details[1].replyMemory.enabled=true;
+ u.api.changeReplyMemory=async()=>({available:true,enabled:false,sampleCount:1});await u.c.act.aiMemoryToggle();
+ assert.equal(u.c.inspect().details[1].replyMemory.enabled,false);assert.equal(u.c.inspect().ai.result,null);
+});

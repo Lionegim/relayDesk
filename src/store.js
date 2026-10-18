@@ -1,4 +1,5 @@
 // Dépôt SQLite. Les routes ne voient que ces fonctions ; les secrets n'en sortent jamais par snapshot().
+import { createReplyMemoryRepository } from './ai/reply-memory.js';
 import { SERVICES } from './connectors.js';
 import { badRequest, notFound } from './http/errors.js';
 import { transaction } from './db/index.js';
@@ -23,6 +24,7 @@ const toAccount = r => ({ id: r.id, name: r.name, channel: r.channel, svc: r.svc
 export function createStore(db) {
   const q = sql => db.prepare(sql);
   let seq = 0;
+  const memory = createReplyMemoryRepository(db);
 
   const profile = id => q('SELECT * FROM profiles WHERE id = ?').get(id) || (() => { throw notFound('Profil introuvable'); })();
   const row = id => q('SELECT * FROM messages WHERE id = ?').get(id) || (() => { throw notFound('Message introuvable'); })();
@@ -33,8 +35,43 @@ export function createStore(db) {
   };
   const accountOf = id => q('SELECT * FROM accounts WHERE id = ?').get(id) || (() => { throw notFound('Compte introuvable'); })();
 
+  function memoryScope(id) {
+    const m = row(id);
+    if (!m.account_id || !m.external_id || m.compose_kind === 'new') return null;
+    const acc = accountOf(m.account_id);
+    if (acc.profile_id !== m.profile_id || !['gmail','outlook','whatsapp'].includes(acc.svc)) return null;
+    return {accountId:m.account_id,conversationId:m.external_id,profileId:m.profile_id};
+  }
+
   return {
     db,
+    pruneReplyMemory: () => memory.prune(),
+    markAIReply(id,text) {memory.markAI(memoryScope(id),text);},
+    learnAvailableReplies() {
+      for(const m of q("SELECT id FROM messages WHERE channel='whatsapp' AND account_id IS NOT NULL").all()) this.getReplyMemory(m.id);
+    },
+    getReplyMemory(id, {internal=false}={}) {
+      const scope=memoryScope(id);
+      if(scope && accountOf(scope.accountId).svc==='whatsapp') {
+        const sent=q('SELECT text,ts AS at FROM whatsapp_messages WHERE account_id=? AND chat_jid=? AND from_me=1 ORDER BY ts DESC LIMIT 100')
+          .all(scope.accountId,scope.conversationId).map(m=>({...m,fromMe:true}));
+        memory.observe(scope,sent);
+      }
+      const value=memory.view(scope);
+      if(!internal) {const {promptExamples,revision,...publicView}=value;return publicView;}
+      return value;
+    },
+    changeReplyMemory(id, input) {
+      if(!input || typeof input!=='object' || Array.isArray(input) || Object.keys(input).some(k=>!['enabled','reset'].includes(k)) ||
+        ('enabled' in input && typeof input.enabled!=='boolean') || ('reset' in input && input.reset!==true) || !Object.keys(input).length) throw badRequest('Réglage de mémoire invalide');
+      const scope=memoryScope(id);if(!scope) throw badRequest('La mémoire nécessite une conversation et un compte connectés');
+      memory.change(scope,input);return this.getReplyMemory(id);
+    },
+    // Après accusé de succès fournisseur seulement. Une erreur de mémoire ne transforme jamais un envoi réussi en échec.
+    rememberReply(id,text) {
+      try {const scope=memoryScope(id);if(scope) memory.observe(scope,[{fromMe:true,text,at:Date.now()}]);} catch {return false;}
+      return true;
+    },
 
     snapshot() {
       const accounts = q('SELECT * FROM accounts ORDER BY position, id').all();
@@ -293,6 +330,7 @@ export function createStore(db) {
     upsertThread(accountId, t, opts) {
       const id = this.writeThread(accountId, t, opts);
       if (t.reply) q('UPDATE messages SET reply_meta = ? WHERE id = ?').run(JSON.stringify(t.reply), id);
+      if (t.ownSamples?.length) memory.observe(memoryScope(id),t.ownSamples);
       return id;
     },
     writeThread(accountId, t, { syncFolder = false } = {}) {
@@ -339,6 +377,8 @@ export function createStore(db) {
       transaction(db, () => {
         for (const m of list) if (ins.run(accountId, m.chatJid, m.msgId, +m.fromMe, m.ts, m.text, m.participantJid || null, m.senderName || null).changes) changed.add(m.chatJid);
       });
+      const scope={accountId,conversationId:null,profileId:accountOf(accountId).profile_id};
+      for(const jid of new Set(list.filter(m=>m.fromMe).map(m=>m.chatJid))) memory.observe({...scope,conversationId:jid},list.filter(m=>m.chatJid===jid && m.fromMe).map(m=>({fromMe:true,text:m.text,at:m.ts})));
       return changed;
     },
     // Tous les textes de la fenêtre importée ; une lecture ne supprime jamais les messages précédents.
@@ -369,6 +409,7 @@ export function createStore(db) {
       q(`INSERT INTO whatsapp_chats (account_id, chat_jid, ephemeral) VALUES (?, ?, ?)
         ON CONFLICT (account_id, chat_jid) DO UPDATE SET ephemeral = excluded.ephemeral`).run(accountId, chatJid, +ephemeral);
       if (ephemeral) transaction(db, () => {
+        memory.forget({accountId,conversationId:chatJid});
         q('DELETE FROM whatsapp_messages WHERE account_id = ? AND chat_jid = ?').run(accountId, chatJid);
         q('DELETE FROM messages WHERE account_id = ? AND external_id = ?').run(accountId, chatJid);
         q('DELETE FROM contacts WHERE account_id = ? AND external_id = ?').run(accountId, chatJid);

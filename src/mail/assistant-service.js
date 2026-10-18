@@ -4,7 +4,7 @@ import { HttpError, badRequest } from '../http/errors.js';
 import { SERVICES } from '../connectors.js';
 
 const digest = value => createHash('sha256').update(JSON.stringify(value)).digest('hex');
-const stale = () => new HttpError(409, 'Le fil ou les dossiers ont changé. Relance l’analyse avant de continuer.', 'ai_stale');
+const stale = () => new HttpError(409, 'Le fil, la mémoire ou les dossiers ont changé. Relance l’analyse avant de continuer.', 'ai_stale');
 
 // Ne connaît aucun jeton ni API de messagerie. Toute écriture distante passe par mail.updateMessage.
 export function createAssistantService({ store, ai, mail, ownerName }) {
@@ -13,11 +13,12 @@ export function createAssistantService({ store, ai, mail, ownerName }) {
     const m = store.getMessage(id);
     const source = store.getMessageSource(id);
     const account = source.accountId ? store.getAccount(source.accountId) : null;
+    const memory = kind === 'draft' ? store.getReplyMemory(id, {internal:true}) : null;
     const folders = kind === 'classify' ? store.aiFolders(m.p).slice(0, 200) : [];
     const fingerprint = digest({ version: 1, model: ai.model, ownerName, source: { accountId: source.accountId, externalId: source.externalId, svc: account?.svc, address: account?.address }, profile: m.p,
-      kind: m.kind, subject: m.subject, from: m.from, handle: m.handle, body: m.body, trail: m.trail,
+      memoryRevision: memory?.revision, memoryEnabled: memory?.enabled, kind: m.kind, subject: m.subject, from: m.from, handle: m.handle, body: m.body, trail: m.trail,
       count: m.count, sortAt: m.sortAt, ...(kind === 'draft' ? { draft: m.draft } : {}), folders });
-    return { m, folders, fingerprint };
+    return { m, folders, fingerprint, memory };
   }
   function currentResult(id, kind) {
     const c = context(id, kind), r = store.getAIResult(id, kind);
@@ -38,11 +39,11 @@ export function createAssistantService({ store, ai, mail, ownerName }) {
       if (pending.has(key)) return pending.get(key);
       const job = (async () => {
         const prompts = kind === 'summary' ? summaryPrompt(c.m, ownerName)
-          : kind === 'classify' ? classifyPrompt(c.m, ownerName, c.folders) : draftPrompt(c.m, ownerName, options);
+          : kind === 'classify' ? classifyPrompt(c.m, ownerName, c.folders) : draftPrompt(c.m, ownerName, {...options, memory:c.memory});
         const text = await ai.complete(prompts, { temperature: kind === 'draft' ? 0.5 : 0.1, maxTokens: kind === 'summary' ? 400 : 1000, json: kind === 'classify' });
         if (typeof text !== 'string' || !text.trim() || text.length > 20000) throw new HttpError(502, 'Réponse IA invalide.', 'ai_invalid');
         if (context(id, kind).fingerprint !== c.fingerprint) throw stale();
-        if (kind === 'draft') return { text: text.trim(), fingerprint: c.fingerprint };
+        if (kind === 'draft') {store.markAIReply(id,text.trim());return { text: text.trim(), fingerprint: c.fingerprint, memoryUsed: !!(c.memory?.enabled && c.memory?.sampleCount), memorySamples: c.memory?.enabled ? c.memory.sampleCount : 0 };}
         const result = kind === 'classify' ? parseClassification(text, c.folders) : { text: text.trim() };
         return { ...store.saveAIResult(id, kind, c.fingerprint, result, randomUUID()), cached: false };
       })();
