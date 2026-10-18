@@ -83,7 +83,7 @@ export function bodyText(msg) {
 }
 
 // Renvoie null si la conversation ne contient plus de message visible (corbeille, spam, brouillon seul).
-export function threadToRecord(thread, { ownEmail, labelNames = {} }) {
+export function threadToRecord(thread, { ownEmail, labelNames = {}, preferredLabelId = null }) {
   const msgs = (thread.messages || []).filter(m => !(m.labelIds || []).some(l => SKIP.includes(l)));
   if (!msgs.length) return null;
   const labels = new Set(msgs.flatMap(m => m.labelIds || []));
@@ -94,7 +94,8 @@ export function threadToRecord(thread, { ownEmail, labelNames = {} }) {
     return a.email === ownEmail ? { name: 'Moi', email: a.email } : a;
   };
   const from = who(last);
-  const userLabel = [...labels].find(l => l.startsWith('Label_') && labelNames[l]);
+  const userLabel = preferredLabelId && labels.has(preferredLabelId) && labelNames[preferredLabelId]
+    ? preferredLabelId : [...labels].find(l => labelNames[l]);
   return {
     externalId: thread.id,
     from: from.name, initials: initialsOf(from.name), handle: from.email,

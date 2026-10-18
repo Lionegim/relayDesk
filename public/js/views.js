@@ -92,11 +92,18 @@ function sidebar(s, v) {
       <div class="side-section">
         <div class="side-label">Comptes</div>
         ${v.profile.accounts.map(a => html`
+          <div style="position:relative">
           <button class="side-item hov" data-on-click="openAccount" data-name="${a.name}" title="${a.status}">
             <span class="acct-mark" style="background:${CH[a.channel].tint};color:${CH[a.channel].ink}">${CH[a.channel].mark}</span>
             <span class="grow ellipsis">${a.name}</span>
             <span class="acct-dot" style="background:${ACCOUNT_COLORS[a.c] || ACCOUNT_COLORS.muted}"></span>
-          </button>`)}
+          </button>
+          ${when(a.svc === 'gmail' && s.accountMenu === a.id, () => html`
+            <div class="menu" role="menu" aria-label="Compte Gmail" style="left:0;right:0;top:100%">
+              <button class="side-item hov" role="menuitem" data-on-click="accountSync" data-id="${a.id}">Synchroniser maintenant</button>
+              <button class="side-item hov" role="menuitem" data-on-click="accountPermissions" data-id="${a.id}">Modifier les permissions</button>
+            </div>`)}
+          </div>`)}
         <button class="side-item hov side-add" data-on-click="openConnect">
           <span class="mark" style="width:18px;height:18px;font-size:15px;font-weight:400">+</span><span class="ellipsis">Ajouter un canal</span>
         </button>
@@ -434,12 +441,12 @@ function connectWizard(s) {
             <div class="field" style="gap:8px">
               <span class="field-label">Profil de destination</span>
               <div style="display:flex;gap:6px;flex-wrap:wrap">
-                ${s.data.profiles.map(p => html`<button class="${cls('pill', p.id === c.profile && 'is-on')}" data-on-click="cProfile" data-id="${p.id}">${p.name}</button>`)}
+                ${s.data.profiles.map(p => html`<button class="${cls('pill', p.id === c.profile && 'is-on')}" data-on-click="cProfile" data-id="${p.id}" ${raw(c.accountId ? 'disabled' : '')}>${p.name}</button>`)}
               </div>
             </div>
             <label class="field" style="gap:8px">
               <span class="field-label">Nom du compte</span>
-              <input class="input" value="${c.name}" data-on-input="cName" maxlength="80">
+              <input class="input" value="${c.name}" data-on-input="cName" maxlength="80" ${raw(c.accountId ? 'readonly' : '')}>
             </label>
             <div class="field" style="gap:8px">
               <span class="field-label">Permissions</span>
@@ -450,13 +457,14 @@ function connectWizard(s) {
                   <div class="perm">
                     <span style="display:flex;flex-direction:column;gap:2px;flex:1">
                       <span style="font-size:13px;font-weight:600">${PERM[k][0]}</span>
-                      <span class="muted" style="font-size:12px">${soon ? 'Disponible dans une prochaine version' : PERM[k][1]}</span>
+                      <span class="muted" style="font-size:12px">${soon ? 'Disponible dans une prochaine version' : d.real && d.scopes[k] ? d.scopes[k][0] : PERM[k][1]}</span>
                     </span>
                     <button class="switch" role="switch" aria-checked="${!soon && !!c.perms[k]}" aria-label="${PERM[k][0]}" data-on-click="cPerm" data-perm="${k}" ${raw(k === 'read' || soon ? 'disabled' : '')}></button>
                   </div>`;
                 })}
               </div>
             </div>
+            ${when(c.accountId && d.real, () => html`<p class="muted" style="font-size:12px">Une permission supplémentaire demande une nouvelle autorisation Google. Décocher un accès déjà accordé ne le révoque pas dans Google.</p>`)}
             <div class="field" style="gap:8px">
               <span class="field-label">Historique à importer</span>
               <div style="display:flex;gap:6px">

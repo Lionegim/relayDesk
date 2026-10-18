@@ -11,7 +11,7 @@ const storage = {
 
 const state = {
   data: null, loadError: null, toast: null,
-  app: 'mail', profileId: 'anove', menu: false,
+  app: 'mail', profileId: 'anove', menu: false, accountMenu: null,
   nav: 'all', folder: null, channel: 'all', query: '', selectedId: null,
   collapsed: {}, creating: false, folderDraft: '', dragOver: null, moveOpen: false,
   listW: Number(storage.get(LIST_W_KEY)) || 340, resizing: false,
@@ -180,10 +180,11 @@ function svcInit(key, name) {
   (def.fields || []).forEach(f => { fields[f[0]] = f[2]; });
   return { step: 'config', svc: key, name: name || def.name, fields, perms: { read: true } };
 }
-function openWizard(svc, name) {
+function openWizard(svc, name, account = null) {
   const c = { step: 'pick', svc: null, profile: state.profileId, name: '', perms: { read: true }, win: 30, fields: {}, progress: 0, fromAccount: !!name };
   if (svc) Object.assign(c, svcInit(svc, name));
-  set({ c, menu: false });
+  if (account) Object.assign(c, { accountId: account.id, win: account.windowDays || 30, perms: Object.fromEntries(['read', ...(account.perms || [])].map(p => [p, true])) });
+  set({ c, menu: false, accountMenu: null });
 }
 const setC = f => set(s => ({ c: { ...s.c, ...(typeof f === 'function' ? f(s.c) : f) } }));
 function closeWizard() { clearInterval(syncTimer); set({ c: null }); }
@@ -195,7 +196,8 @@ function startGoogleAuth() {
     setC({ error: 'Connexion Gmail non configurée : renseigne GOOGLE_CLIENT_ID et GOOGLE_CLIENT_SECRET dans .env, puis redémarre Relay.' });
     return;
   }
-  location.href = '/oauth/google/start?' + new URLSearchParams({ profile: c.profile, name: c.name.trim(), win: c.win });
+  const perms = state.data.services.gmail.available.filter(p => c.perms[p]);
+  location.href = '/oauth/google/start?' + new URLSearchParams({ profile: c.profile, name: c.name.trim(), win: c.win, perms: perms.join(','), ...(c.accountId ? { account: c.accountId } : {}) });
 }
 function trackImport(accountId) {
   clearInterval(syncTimer);
@@ -230,7 +232,7 @@ function resumeFromRedirect() {
   const accountId = Number(params.get('account')), profile = params.get('profile');
   const acc = state.data.profiles.find(p => p.id === profile)?.accounts.find(a => a.id === accountId);
   if (!acc) return;
-  set({ profileId: profile, selectedId: firstOf(profile), app: 'mail', folder: null, c: { ...base, step: 'sync', profile, name: acc.name, win: Number(params.get('win')) || 30, accountId } });
+  set({ profileId: profile, selectedId: firstOf(profile), app: 'mail', folder: null, c: { ...base, perms: Object.fromEntries((acc.perms || ['read']).map(p => [p, true])), step: 'sync', profile, name: acc.name, win: Number(params.get('win')) || 30, accountId } });
   trackImport(accountId);
 }
 function startSync() {
@@ -261,8 +263,8 @@ const firstOf = profileId => state.data.messages.find(m => m.p === profileId && 
 
 const actions = {
   noop: () => {},
-  toggleProfileMenu: () => set({ menu: !state.menu }),
-  selectProfile: ({ id }) => set({ profileId: id, menu: false, picked: {}, group: 'all', channel: 'all', query: '', selectedId: firstOf(id), folder: null, ai: null, moveOpen: false, creating: false, composing: null }),
+  toggleProfileMenu: () => set({ menu: !state.menu, accountMenu: null }),
+  selectProfile: ({ id }) => set({ profileId: id, menu: false, accountMenu: null, picked: {}, group: 'all', channel: 'all', query: '', selectedId: firstOf(id), folder: null, ai: null, moveOpen: false, creating: false, composing: null }),
   selectApp: ({ app }) => set({ app, ai: null, moveOpen: false }),
   selectNav: ({ id }) => set({ nav: id, channel: 'all', folder: null }),
   selectGroup: ({ id }) => set({ group: id, app: 'contacts' }),
@@ -297,9 +299,21 @@ const actions = {
   // Comptes
   openAccount: ({ name }) => {
     const acc = derive(state).profile.accounts.find(a => a.name === name);
+    if (acc?.svc === 'gmail') return set({ accountMenu: state.accountMenu === acc.id ? null : acc.id, menu: false });
     if (!acc || acc.c === 'ok' || !acc.svc) return;
     const def = state.data.services[acc.svc];
     if (def.disabled) openWizard(); else openWizard(acc.svc, acc.name);
+  },
+  accountPermissions: ({ id }) => {
+    const acc = derive(state).profile.accounts.find(a => a.id === Number(id));
+    if (acc) openWizard(acc.svc, acc.name, acc);
+  },
+  accountSync: async ({ id }) => {
+    set({ accountMenu: null });
+    try {
+      await api.syncNow(Number(id));
+      set({ toast: 'Synchronisation Gmail demandée.' });
+    } catch (e) { fail(e); }
   },
   openConnect: () => openWizard(),
 
@@ -419,7 +433,7 @@ document.addEventListener('keydown', e => {
   if (e.key !== 'Escape') return;
   if (state.c) closeWizard();
   else if (state.ai) set({ ai: null });
-  else if (state.menu || state.moveOpen) set({ menu: false, moveOpen: false });
+  else if (state.menu || state.moveOpen || state.accountMenu) set({ menu: false, moveOpen: false, accountMenu: null });
 });
 
 api.state()

@@ -35,14 +35,14 @@ Pour connecter un vrai compte Gmail : [docs/gmail.md](docs/gmail.md).
 - **Assistant (Mistral)** : résumé du fil et rédaction d’une réponse (intention + ton), insertion dans la réponse. Le navigateur n’envoie que l’identifiant du message ; le serveur construit le fil, le balise comme contenu non fiable et appelle Mistral. La clé ne quitte jamais le serveur.
 - **Contacts** : groupes, recherche, tri, fréquence de suivi, sélection et « Voir les messages ».
 - **Ajout d’un canal** : assistant en 4 étapes (service, configuration, autorisation, synchronisation).
-- **Gmail (lecture)** : autorisation OAuth réelle (PKCE, `gmail.readonly`), jeton chiffré, import des conversations de la période choisie avec progression réelle, libellés en dossiers, mise à jour toutes les 60 secondes par `history.list`, reprise après erreur et passage à « À reconnecter » si l’accès est révoqué.
+- **Gmail (lecture et classement facultatif)** : autorisation OAuth réelle (PKCE, `gmail.readonly`), jeton chiffré, import des conversations de la période choisie avec progression réelle, libellés en dossiers, mise à jour toutes les 60 secondes par `history.list`, reprise après erreur et passage à « À reconnecter » si l’accès est révoqué. Avec **Libellés** (`gmail.modify`), lu/non lu, drapeau, archivage et dossiers sont renvoyés à Gmail avant la mise à jour locale. Le menu du compte permet de synchroniser et de modifier les permissions ; chaque nouvel accès exige une nouvelle autorisation Google et sa déclaration dans Google Auth Platform → Accès aux données.
 - **Persistance** : SQLite (`data/relay.db`), migrations SQL, WAL.
 
 ## Ce qui reste simulé
 
 - Les comptes d’exemple (`src/demo-data.js`) restent présents si `DEMO_DATA` vaut `1`.
 - Outlook, Proton, WhatsApp et Instagram : la connexion ne contacte aucun fournisseur ; la progression est simulée.
-- Gmail est en lecture seule : lu, drapeau, archivage et dossiers modifiés dans Relay ne sont pas renvoyés à Gmail.
+- Gmail sans la permission **Libellés** reste en lecture seule ; seuls ces comptes conservent les changements de classement localement. Les brouillons Gmail et la déconnexion depuis Relay restent à implémenter (lots C et B).
 - « Envoyer » reste désactivé : l’envoi exigera un compte réellement connecté et la validation du contenu exact.
 
 ## Structure

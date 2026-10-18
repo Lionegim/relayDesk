@@ -54,20 +54,36 @@ export function createStore(db) {
     hasProfile: id => !!q('SELECT 1 FROM profiles WHERE id = ?').get(id),
     getMessage: id => toMessage(row(id), true),
 
-    updateMessage(id, patch) {
-      const m = row(id);
-      const sets = [], vals = [];
+    // Validation partagée : aucun appel fournisseur ne précède ces contrôles.
+    validateMessagePatch(id, patch) {
+      const m = row(id), fields = {};
       for (const k of ['unread', 'flagged', 'archived']) {
         if (!(k in patch)) continue;
         if (typeof patch[k] !== 'boolean') throw badRequest(`${k} doit être un booléen`);
-        sets.push(`${k} = ?`); vals.push(+patch[k]);
+        fields[k] = patch[k];
       }
       if ('folderId' in patch) {
         const f = patch.folderId;
         if (f !== null && !q('SELECT 1 FROM folders WHERE id = ? AND profile_id = ?').get(f, m.profile_id)) throw badRequest('Dossier invalide pour ce profil');
-        sets.push('folder_id = ?'); vals.push(f);
+        fields.folderId = f;
       }
-      if (sets.length) q(`UPDATE messages SET ${sets.join(', ')} WHERE id = ?`).run(...vals, id);
+      return fields;
+    },
+
+    getMessageSource(id) {
+      const m = row(id);
+      return { accountId: m.account_id, externalId: m.external_id, folderId: m.folder_id };
+    },
+    getThreadFolder(accountId, externalId) {
+      return q('SELECT folder_id FROM messages WHERE account_id = ? AND external_id = ?').get(accountId, externalId)?.folder_id ?? null;
+    },
+
+    updateMessage(id, patch) {
+      const fields = this.validateMessagePatch(id, patch);
+      const columns = { unread: 'unread', flagged: 'flagged', archived: 'archived', folderId: 'folder_id' };
+      const keys = Object.keys(fields);
+      if (keys.length) q(`UPDATE messages SET ${keys.map(k => `${columns[k]} = ?`).join(', ')} WHERE id = ?`)
+        .run(...keys.map(k => k === 'folderId' ? fields[k] : +fields[k]), id);
       return toMessage(row(id), false);
     },
 
@@ -139,29 +155,54 @@ export function createStore(db) {
       return next;
     },
 
-    // Dossier lié à un libellé fournisseur, créé à la demande.
+    // Liens par compte : un même dossier local peut correspondre à plusieurs libellés Gmail.
+    folderLabel(folderId, accountId) {
+      return q('SELECT label_id FROM folder_labels WHERE folder_id = ? AND account_id = ?').get(folderId, accountId)?.label_id ?? null;
+    },
+    linkFolderLabel(folderId, accountId, labelId) {
+      const acc = accountOf(accountId);
+      if (!q('SELECT 1 FROM folders WHERE id = ? AND profile_id = ?').get(folderId, acc.profile_id)) throw badRequest('Dossier invalide pour ce profil');
+      q(`INSERT INTO folder_labels (folder_id, account_id, label_id) VALUES (?, ?, ?)
+         ON CONFLICT (folder_id, account_id) DO UPDATE SET label_id = excluded.label_id`).run(folderId, accountId, labelId);
+    },
+    folderPath(folderId) {
+      const parts = [], seen = new Set();
+      let id = folderId;
+      while (id !== null) {
+        if (seen.has(id)) throw badRequest('Hiérarchie de dossiers invalide');
+        seen.add(id);
+        const f = q('SELECT name, parent_id FROM folders WHERE id = ?').get(id);
+        if (!f) throw badRequest('Dossier introuvable');
+        parts.unshift(f.name);
+        id = f.parent_id;
+      }
+      return parts.join('/');
+    },
     ensureLabelFolder(accountId, externalId, labelName) {
       const acc = accountOf(accountId);
-      const found = q('SELECT id FROM folders WHERE account_id = ? AND external_id = ?').get(accountId, externalId);
-      if (found) {
-        q('UPDATE folders SET name = ? WHERE id = ?').run(labelName, found.id);
-        return found.id;
-      }
+      const found = q('SELECT folder_id FROM folder_labels WHERE account_id = ? AND label_id = ?').get(accountId, externalId);
       const id = `g${accountId}_${externalId}`.replace(/[^\w-]/g, '_');
-      q(`INSERT INTO folders (id, profile_id, name, parent_id, account_id, external_id, position)
-         VALUES (?, ?, ?, NULL, ?, ?, (SELECT COALESCE(MAX(position), 0) + 1 FROM folders))`).run(id, acc.profile_id, labelName, accountId, externalId);
+      if (found) {
+        // Seuls les dossiers créés par l'import suivent un renommage externe.
+        // Ne jamais remplacer le nom d'un dossier local ou partagé par un chemin Gmail.
+        const links = q('SELECT COUNT(*) AS n FROM folder_labels WHERE folder_id = ?').get(found.folder_id).n;
+        if (found.folder_id === id && links === 1) q('UPDATE folders SET name = ? WHERE id = ? AND parent_id IS NULL').run(labelName, id);
+        return found.folder_id;
+      }
+      q(`INSERT INTO folders (id, profile_id, name, parent_id, position)
+         VALUES (?, ?, ?, NULL, (SELECT COALESCE(MAX(position), 0) + 1 FROM folders))`).run(id, acc.profile_id, labelName);
+      this.linkFolderLabel(id, accountId, externalId);
       return id;
     },
 
-    // Insère ou met à jour une conversation importée. Le dossier et le brouillon choisis localement sont conservés ;
-    // lu, drapeau et archivage suivent l'état du fournisseur (accès en lecture seule pour l'instant).
-    upsertThread(accountId, t) {
+    // Les brouillons sont conservés. Avec labels, le dossier suit aussi Gmail.
+    upsertThread(accountId, t, { syncFolder = false } = {}) {
       const acc = accountOf(accountId);
       const existing = q('SELECT id FROM messages WHERE account_id = ? AND external_id = ?').get(accountId, t.externalId);
       const vals = [t.from, t.initials, t.handle, t.sortAt, +t.unread, +t.flagged, t.label, t.subject, t.preview, t.body, t.triage, JSON.stringify(t.trail), t.count];
       if (existing) {
         q(`UPDATE messages SET from_name = ?, initials = ?, handle = ?, sort_at = ?, unread = ?, flagged = ?, label = ?, subject = ?, preview = ?, body = ?,
-           triage = ?, trail = ?, message_count = ?, archived = ? WHERE id = ?`).run(...vals, +t.archived, existing.id);
+           triage = ?, trail = ?, message_count = ?, archived = ?${syncFolder ? ", folder_id = ?" : ""} WHERE id = ?`).run(...vals, +t.archived, ...(syncFolder ? [t.folderId ?? null] : []), existing.id);
         return existing.id;
       }
       return Number(q(`INSERT INTO messages (from_name, initials, handle, sort_at, unread, flagged, label, subject, preview, body, triage, trail, message_count,

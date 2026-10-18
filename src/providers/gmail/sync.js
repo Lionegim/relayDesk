@@ -1,6 +1,8 @@
 // Import initial et mise à jour incrémentale (history.list) des comptes Gmail, avec reprise après erreur.
 import { createGmailClient } from './api.js';
 import { threadToRecord } from './parse.js';
+import { GMAIL_SCOPES, grantedPermissions } from './oauth.js';
+import { createGmailActions } from './actions.js';
 
 const MAX_THREADS = 1000;
 const CONCURRENCY = 5;
@@ -9,16 +11,29 @@ const MAX_BACKOFF_MS = 30 * 60000;
 
 async function pool(items, size, fn) {
   let i = 0;
-  await Promise.all(Array.from({ length: Math.min(size, items.length) }, async () => {
+  const results = await Promise.allSettled(Array.from({ length: Math.min(size, items.length) }, async () => {
     while (i < items.length) await fn(items[i++]);
   }));
+  const failed = results.find(r => r.status === 'rejected');
+  if (failed) throw failed.reason;
 }
 
 export function createGmailSync({ store, vault, oauth, fetchImpl = globalThis.fetch, log = console }) {
   const clients = new Map();
-  const running = new Set();
+  const running = new Map();
+  const connecting = new Map();
   const failures = new Map(); // accountId -> { count, retryAt }
+  const queues = new Map();
   let timer = null;
+
+  // Une synchronisation et une action du même compte ne peuvent pas s'écraser.
+  function serial(accountId, fn) {
+    const job = (queues.get(accountId) || Promise.resolve()).then(fn);
+    const tail = job.catch(() => {});
+    queues.set(accountId, tail);
+    tail.then(() => { if (queues.get(accountId) === tail) queues.delete(accountId); });
+    return job;
+  }
 
   function credentials(accountId) {
     const sealed = store.getSecret(accountId);
@@ -33,6 +48,12 @@ export function createGmailSync({ store, vault, oauth, fetchImpl = globalThis.fe
     return clients.get(accountId);
   }
 
+  function permissions(accountId) {
+    const cred = credentials(accountId);
+    return cred ? grantedPermissions(cred.scopes ?? [GMAIL_SCOPES.read]) : [];
+  }
+  const actions = createGmailActions({ store, client: id => client(id).gmail, permissions });
+
   async function labelNames(gmail) {
     const { labels = [] } = await gmail.labels();
     return Object.fromEntries(labels.filter(l => l.type === 'user').map(l => [l.id, l.name]));
@@ -46,10 +67,12 @@ export function createGmailSync({ store, vault, oauth, fetchImpl = globalThis.fe
       if (e.code === 'not_found') return store.removeThread(accountId, threadId);
       throw e;
     }
-    const rec = threadToRecord(thread, { ownEmail: email, labelNames: names });
+    const currentFolder = store.getThreadFolder(accountId, threadId);
+    const preferredLabelId = currentFolder && store.folderLabel(currentFolder, accountId);
+    const rec = threadToRecord(thread, { ownEmail: email, labelNames: names, preferredLabelId });
     if (!rec) return store.removeThread(accountId, threadId);
     rec.folderId = rec.labelId ? store.ensureLabelFolder(accountId, rec.labelId, names[rec.labelId]) : null;
-    store.upsertThread(accountId, rec);
+    store.upsertThread(accountId, rec, { syncFolder: permissions(accountId).includes('labels') });
   }
 
   async function initialSync(accountId) {
@@ -87,7 +110,11 @@ export function createGmailSync({ store, vault, oauth, fetchImpl = globalThis.fe
     try {
       do {
         const page = await gmail.history(state.history_id, pageToken);
-        for (const h of page.history || []) for (const m of h.messages || []) changed.add(m.threadId);
+        for (const h of page.history || []) {
+          const messages = [...(h.messages || []), ...['messagesAdded', 'messagesDeleted', 'labelsAdded', 'labelsRemoved']
+            .flatMap(k => (h[k] || []).map(entry => entry.message))];
+          for (const m of messages) if (m?.threadId) changed.add(m.threadId);
+        }
         historyId = page.historyId || historyId;
         pageToken = page.nextPageToken;
       } while (pageToken);
@@ -104,11 +131,11 @@ export function createGmailSync({ store, vault, oauth, fetchImpl = globalThis.fe
     if (store.getAccount(accountId).c !== 'ok') store.setAccountStatus(accountId, 'Connecté', 'ok');
   }
 
-  async function run(accountId, fn) {
-    if (running.has(accountId)) return;
-    running.add(accountId);
+  async function run(accountId, fn, { force = false } = {}) {
+    if (running.has(accountId) && !force) return;
+    running.set(accountId, (running.get(accountId) || 0) + 1);
     try {
-      await fn(accountId);
+      await serial(accountId, () => fn(accountId));
       failures.delete(accountId);
     } catch (e) {
       const count = (failures.get(accountId)?.count || 0) + 1;
@@ -123,7 +150,8 @@ export function createGmailSync({ store, vault, oauth, fetchImpl = globalThis.fe
       }
       log.error?.(`Synchronisation Gmail du compte ${accountId} : ${e.message}`);
     } finally {
-      running.delete(accountId);
+      const remaining = running.get(accountId) - 1;
+      if (remaining) running.set(accountId, remaining); else running.delete(accountId);
     }
   }
 
@@ -140,22 +168,34 @@ export function createGmailSync({ store, vault, oauth, fetchImpl = globalThis.fe
 
   return {
     // Enregistre le compte après l'autorisation et lance l'import en arrière-plan.
-    connect({ profileId, name, windowDays, refreshToken, email }) {
+    connect({ profileId, name, windowDays, refreshToken, email, scopes = [GMAIL_SCOPES.read] }) {
       const account = store.upsertAccount(profileId, { name, channel: 'email', svc: 'gmail', address: email });
-      store.putSecret(account.id, vault.seal(account.id, { refreshToken, email }));
-      clients.delete(account.id);
-      failures.delete(account.id);
-      store.setAccountStatus(account.id, 'Synchronisation…', 'info');
-      store.setSync(account.id, { status: 'syncing', window_days: windowDays, history_id: null, total: 0, done: 0, error: null });
-      const job = run(account.id, initialSync);
+      const pending = { started: false };
+      connecting.set(account.id, pending);
+      const job = run(account.id, async () => {
+        pending.started = true;
+        store.putSecret(account.id, vault.seal(account.id, { refreshToken, email, scopes }));
+        clients.delete(account.id);
+        failures.delete(account.id);
+        store.setAccountStatus(account.id, 'Synchronisation…', 'info');
+        store.setSync(account.id, { status: 'syncing', window_days: windowDays, history_id: null, total: 0, done: 0, error: null });
+        await initialSync(account.id);
+      }, { force: true });
+      job.then(() => { if (connecting.get(account.id) === pending) connecting.delete(account.id); });
       return { account: store.getAccount(account.id), job };
     },
     progress(accountId) {
       const s = store.getSync(accountId);
+      if (connecting.has(accountId) && !connecting.get(accountId).started) return { status: 'syncing', total: 0, done: 0, error: null, ...store.countThreads(accountId) };
       if (!s) return null;
       return { status: s.status, total: s.total, done: s.done, error: s.error, ...store.countThreads(accountId) };
     },
     syncNow: accountId => run(accountId, incrementalSync),
+    permissions,
+    updateMessage(id, patch) {
+      const { accountId } = store.getMessageSource(id);
+      return serial(accountId, () => actions.updateMessage(id, patch));
+    },
     start(intervalMs = 60000) {
       tick();
       timer = setInterval(tick, intervalMs);

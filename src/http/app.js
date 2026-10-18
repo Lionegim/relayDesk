@@ -79,14 +79,23 @@ export function createApp({ store, ai, ownerName, gmail = null, allowedHosts = n
       if (!store.hasProfile(profileId) || !name || name.length > 80 || !WINDOWS.includes(win)) {
         return back({ connect_error: 'Paramètres de connexion invalides.' });
       }
-      return redirect(res, gmail.oauth.start({ redirectUri: gmail.redirectUri, context: { profileId, name, win } }));
+      const perms = url.searchParams.has('perms') ? url.searchParams.get('perms').split(',') : ['read'];
+      if (perms.some(p => !SERVICES.gmail.available.includes(p))) return back({ connect_error: 'Permission Gmail invalide ou indisponible.' });
+      const existingId = url.searchParams.get('account');
+      let account = null;
+      if (existingId !== null) {
+        account = store.getAccount(accountId(existingId));
+        if (account.svc !== 'gmail' || account.profileId !== profileId || account.name !== name) throw badRequest('Compte Gmail invalide');
+      }
+      return redirect(res, gmail.oauth.start({ redirectUri: gmail.redirectUri, perms, context: { profileId, name, win, address: account?.address } }));
     }
     if (pathname === '/oauth/google/callback') {
       if (url.searchParams.get('error')) return back({ connect_error: 'Autorisation refusée dans Google.' });
       try {
         const r = await gmail.oauth.finish({ state: url.searchParams.get('state'), code: url.searchParams.get('code') });
         const email = emailFromIdToken(r.idToken);
-        const { account } = gmail.sync.connect({ profileId: r.context.profileId, name: r.context.name, windowDays: r.context.win, refreshToken: r.refreshToken, email });
+        if (r.context.address && r.context.address !== email) throw badRequest('Choisis le compte Google déjà connecté pour modifier ses permissions.');
+        const { account } = gmail.sync.connect({ profileId: r.context.profileId, name: r.context.name, windowDays: r.context.win, refreshToken: r.refreshToken, email, scopes: r.scopes });
         return back({ connect: 'gmail', account: account.id, profile: r.context.profileId, win: r.context.win });
       } catch (e) {
         if (!(e instanceof HttpError)) console.error(e);
@@ -99,7 +108,14 @@ export function createApp({ store, ai, ownerName, gmail = null, allowedHosts = n
   // [méthode, motif, gestionnaire(params, body)]
   const routes = [
     ['GET', /^\/api\/health$/, () => ({ ok: true, ai: { provider: 'mistral', configured: ai.configured, model: ai.model } })],
-    ['GET', /^\/api\/state$/, () => ({ ...store.snapshot(), services: SERVICES, permissions: PERMISSIONS, ai: { configured: ai.configured }, integrations: { gmail: { configured: !!gmail?.oauth.configured } } })],
+    ['GET', /^\/api\/state$/, () => {
+      const snapshot = store.snapshot();
+      for (const profile of snapshot.profiles) for (const account of profile.accounts) {
+        account.perms = account.svc === 'gmail' && gmail ? gmail.sync.permissions(account.id) : [];
+        if (account.svc === 'gmail') account.windowDays = store.getSync(account.id)?.window_days || 30;
+      }
+      return { ...snapshot, services: SERVICES, permissions: PERMISSIONS, ai: { configured: ai.configured }, integrations: { gmail: { configured: !!gmail?.oauth.configured } } };
+    }],
     ['GET', /^\/api\/accounts\/([^/]+)\/sync$/, ([id]) => gmail?.sync.progress(accountId(id)) || (() => { throw notFound('Aucune synchronisation pour ce compte'); })()],
     ['POST', /^\/api\/accounts\/([^/]+)\/sync$/, ([id]) => {
       if (store.getAccount(accountId(id)).svc !== 'gmail' || !gmail) throw badRequest('Compte non synchronisable');
@@ -107,7 +123,7 @@ export function createApp({ store, ai, ownerName, gmail = null, allowedHosts = n
       return { started: true };
     }],
     ['GET', /^\/api\/messages\/([^/]+)$/, ([id]) => store.getMessage(messageId(id))],
-    ['PATCH', /^\/api\/messages\/([^/]+)$/, ([id], body) => store.updateMessage(messageId(id), body)],
+    ['PATCH', /^\/api\/messages\/([^/]+)$/, ([id], body) => gmail ? gmail.sync.updateMessage(messageId(id), body) : store.updateMessage(messageId(id), body)],
     ['PUT', /^\/api\/messages\/([^/]+)\/draft$/, ([id], body) => store.saveDraft(messageId(id), body.text)],
     ['POST', /^\/api\/folders$/, (_, body) => store.createFolder(body)],
     ['PATCH', /^\/api\/contacts\/([^/]+)$/, ([id], body) => store.updateContact(id, body)],
