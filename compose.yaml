@@ -1,5 +1,5 @@
-# Relay Desk hébergé : fichier PRÉPARATOIRE, bloqué.
-# - Le serveur refuse RELAY_MODE=hosted tant que l'authentification (lot 3) n'existe pas ; aucun contournement.
+# Relay Desk hébergé : fichier PRÉPARATOIRE, non déployé.
+# - Le serveur refuse le mode hébergé sans configuration OIDC complète et propriétaire/MFA explicites.
 # - Les deux services sont dans le profil « hosted » : un simple « docker compose up » ne démarre rien.
 # - Les variables obligatoires (${...:?}) n'ont pas de valeur par défaut : sans configuration explicite, Compose s'arrête.
 # Ne pas démarrer ce fichier avant l'autorisation de déploiement (voir docs/architecture-docker-mobile.md).
@@ -27,6 +27,12 @@ services:
     stop_grace_period: 45s
     environment:
       RELAY_MODE: hosted
+      AUTH_MODE: oidc
+      AUTH_ISSUER: ${AUTH_ISSUER:?AUTH_ISSUER Keycloak HTTPS requis}
+      AUTH_OWNER_SUB: ${AUTH_OWNER_SUB:?AUTH_OWNER_SUB propriétaire requis}
+      AUTH_MFA_ACR: ${AUTH_MFA_ACR:?AUTH_MFA_ACR niveau MFA requis}
+      AUTH_CLIENT_ID_FILE: /run/secrets/auth_client_id
+      AUTH_CLIENT_SECRET_FILE: /run/secrets/auth_client_secret
       HOST: 0.0.0.0
       PORT: "4310"
       PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:?PUBLIC_BASE_URL requis (https://domaine)}
@@ -38,6 +44,8 @@ services:
       MICROSOFT_CLIENT_ID_FILE: /run/secrets/microsoft_client_id
       DEMO_DATA: "0"
     secrets:
+      - auth_client_id
+      - auth_client_secret
       - relay_secret_key
       - mistral_api_key
       - google_client_id
@@ -80,6 +88,10 @@ services:
 
 # Fichiers secrets sur la VM, hors dépôt et hors volume de données (propriétaire uid 1000, mode 0400).
 secrets:
+  auth_client_id:
+    file: ${RELAY_SECRETS_DIR:?RELAY_SECRETS_DIR requis}/auth_client_id
+  auth_client_secret:
+    file: ${RELAY_SECRETS_DIR:?RELAY_SECRETS_DIR requis}/auth_client_secret
   relay_secret_key:
     file: ${RELAY_SECRETS_DIR:?RELAY_SECRETS_DIR requis}/relay_secret_key
   mistral_api_key:

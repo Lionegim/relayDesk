@@ -28,6 +28,7 @@ export function renderApp(s, v) {
     ${when(s.c, () => connectWizard(s))}
     ${when(s.confirm?.kind === 'disconnect', () => disconnectDialog(s.confirm))}
     ${when(s.confirm?.kind === 'send' && s.confirm.preview, () => sendDialog(s.confirm))}
+    ${when(s.authPanel, () => authDevices(s))}
     ${when(s.toast, () => html`<div class="${cls('toast', s.toastOk && 'toast-ok')}" role="status">${s.toast}</div>`)}`;
 }
 
@@ -112,6 +113,10 @@ function sidebar(s, v) {
           <span class="mark" style="width:18px;height:18px;font-size:15px;font-weight:400">+</span><span class="ellipsis">Ajouter un canal</span>
         </button>
       </div>
+      ${when(s.auth?.enabled, () => html`<div class="side-section auth-controls">
+        <button class="side-item hov" data-on-click="authDevices">Appareils connectés</button>
+        <button class="side-item hov" data-on-click="authLogout">Se déconnecter</button>
+      </div>`)}
     </aside>`;
 }
 
@@ -766,5 +771,16 @@ function newMailDialog(s, v) {
       ${when(!account?.perms?.includes('send'), () => html`<p class="muted">Active la permission Envoi pour envoyer depuis ce compte.</p>`)}
       ${when(!s.data.ai?.configured, () => html`<p class="muted">L’assistant sera disponible après configuration de l’IA.</p>`)}
     ` : html`<p>Connecte un compte Gmail ou Outlook pour rédiger un message.</p><button class="btn btn-brand" data-on-click="newMailConnect">Connecter un compte</button>`}
+  </section></div>`;
+}
+
+
+function authDevices(s) {
+  const devices=Array.isArray(s.authPanel)?s.authPanel:s.authPanel.sessions || [];
+  return html`<div class="overlay" data-on-click="authClose"><section class="dialog auth-dialog" role="dialog" aria-modal="true" aria-labelledby="devices-title" data-on-click="noop">
+    <h2 id="devices-title">Appareils connectés</h2>
+    <p class="muted">Fermer une session retire son accès aux messages et à l’assistant.</p>
+    ${devices.map(device=>html`<div class="auth-device"><div><strong>${device.current || device.id===s.auth?.sessionId?'Cet appareil':device.device || 'Autre session'}</strong><p class="muted">Connexion : ${new Date(device.createdAt || device.authenticatedAt).toLocaleString('fr-FR')}</p></div><button class="btn btn-ghost" data-on-click="authRevoke" data-id="${device.id}">Déconnecter</button></div>`)}
+    <div class="auth-dialog-actions"><a class="btn btn-ghost" href="/auth/login?reauth=1">Confirmer mon identité</a><button class="btn btn-brand" data-on-click="authClose">Fermer</button></div>
   </section></div>`;
 }

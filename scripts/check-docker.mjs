@@ -17,9 +17,9 @@ const run=(volume,args=[])=>['run','--rm','--network','none','--read-only','--ca
 const environment=['-e','RELAY_MODE=local','-e','HOST=0.0.0.0','-e','PUBLIC_BASE_URL=http://127.0.0.1:4311','-e','RELAY_SECRET_KEY_FILE=/run/relay-secrets/key','-e','RELAY_CONNECTORS_ENABLED=false','-e','RELAY_AI_ENABLED=false','-e','DEMO_DATA=1'];
 const exec=(name,source)=>docker(['exec',name,'node','--input-type=module','-e',source]);
 const cold=(volume,source)=>docker([...run(volume),...environment,'--entrypoint','node',image,'--input-type=module','-e',source]);
-async function start(volume) {
+async function start(volume,extraEnv=[]) {
  const name=`${prefix}-${containers.length}`;containers.push(name);
- docker([...run(volume,['-d','--name',name,'--init']).filter(x=>x!=='--rm'),...environment,image]);
+ docker([...run(volume,['-d','--name',name,'--init']).filter(x=>x!=='--rm'),...environment,...extraEnv,image]);
  for(let n=0;n<100;n++) {
   const check=docker(['exec',name,'node','deploy/healthcheck.mjs'],{ok:false});
   if(check.status===0) return name;
@@ -59,8 +59,12 @@ try {
  // Copie à froid après arrêt et checkpoint, jamais d'une base active ; aucune ancienne session n'est reprise.
  docker([...run(data,['-v',`${restored}:/restore`]),'--entrypoint','node',image,'-e',"const fs=require('node:fs');for(const file of ['relay.db','test-expectation.json'])fs.copyFileSync('/data/'+file,'/restore/'+file)"]);
  name=await start(restored);stop(name);cold(restored,verify);
- const hosted=docker([...run(restored),...environment,'-e','RELAY_MODE=hosted','-e','PUBLIC_BASE_URL=https://relay.example.test',image],{ok:false});assert.equal(hosted.status,1);assert.match(hosted.stderr,/lot 3/);
- console.log('Docker : non-root, lecture seule, zéro réseau, clé séparée, verrou inter-conteneurs, SIGKILL/reprise, brouillon/mémoire/secrets persistants et restauration fictive validés. Hébergé refusé.');
+ const hosted=docker([...run(restored),...environment,'-e','RELAY_MODE=hosted','-e','PUBLIC_BASE_URL=https://relay.example.test',image],{ok:false});assert.equal(hosted.status,1);assert.match(hosted.stderr,/AUTH_|authentification|OIDC/);
+ // Hébergé OIDC configuré uniquement avec des valeurs fictives : serveur isolé sans réseau ni port publié.
+ name=await start(restored,['-e','RELAY_MODE=hosted','-e','PUBLIC_BASE_URL=https://relay.example.test','-e','AUTH_MODE=oidc','-e','AUTH_ISSUER=https://identity.example.test/realms/test','-e','AUTH_CLIENT_ID=synthetic-client','-e','AUTH_CLIENT_SECRET=synthetic-not-a-real-secret','-e','AUTH_OWNER_SUB=synthetic-owner','-e','AUTH_MFA_ACR=relay-mfa']);
+ exec(name,`import assert from 'node:assert/strict';import {request} from 'node:http';const call=path=>new Promise((resolve,reject)=>{const r=request({host:'127.0.0.1',port:4310,path,headers:{host:'relay.example.test'}},res=>{res.resume();resolve(res.statusCode);});r.on('error',reject);r.end();});for(const path of ['/api/state','/api/messages/1','/api/whatsapp/links/fake','/js/app.js','/auth/sessions'])assert.equal(await call(path),401,path);assert.equal(await call('/api/health'),200);assert.equal(await call('/'),302);assert.equal(await call('/login'),200);`);
+ stop(name);
+ console.log('Docker : non-root, lecture seule, zéro réseau, clé séparée, verrou inter-conteneurs, SIGKILL/reprise, brouillon/mémoire/secrets persistants et restauration fictive validés. Hébergé sans OIDC refusé ; avec configuration fictive, API/QR/contenus privés et connexion publique vérifiés.');
 } finally {
  for(const name of containers) docker(['rm','-f',name],{ok:false});
  for(const volume of [data,key,restored]) docker(['volume','rm',volume],{ok:false});

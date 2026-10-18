@@ -9,7 +9,7 @@ async function ui() {
  const root={querySelector:()=>timeline};
  const data={profiles:[{id:'anove',name:'Anove',accounts:[]},{id:'perso',name:'Personnel',accounts:[]}],messages:[],folders:[],contacts:[],services:{whatsapp:{name:'WhatsApp',auth:'qr',available:['read','drafts','send']}},integrations:{whatsapp:{configured:true}}};
  let snapshots=0,failSnapshot=false;
- const api={state:async()=>{snapshots++;if(failSnapshot){failSnapshot=false;throw new Error('Réseau temporaire');}return structuredClone(data)},startWhatsAppLink:()=>new Promise((resolve,reject)=>requests.push({resolve,reject})),cancelWhatsAppLink:async id=>{cancelled.push(id)},whatsAppLink:async()=>({status:'qr',qrDataUrl:'fake'})};
+ const api={session:async()=>({enabled:false}),state:async()=>{snapshots++;if(failSnapshot){failSnapshot=false;throw new Error('Réseau temporaire');}return structuredClone(data)},startWhatsAppLink:()=>new Promise((resolve,reject)=>requests.push({resolve,reject})),cancelWhatsAppLink:async id=>{cancelled.push(id)},whatsAppLink:async()=>({status:'qr',qrDataUrl:'fake'})};
  const c={api,patch:()=>{if(nextTimeline!==undefined){timeline=nextTimeline;nextTimeline=undefined}},delegate:()=>{},renderApp:()=>'',NAV:[['all','Boîte']],GROUPS:[['all','Tous']],SETTINGS:{},WINDOWS:[7,30,90],
   localStorage:{getItem:()=>null,setItem:()=>{}},document:{getElementById:()=>root,addEventListener:()=>{}},queueMicrotask,setTimeout:()=>1,clearTimeout:()=>{},setInterval:fn=>{intervals.push(fn);return intervals.length},clearInterval:()=>{},URLSearchParams,location:{search:''},history:{replaceState:()=>{}},console};
  vm.createContext(c);

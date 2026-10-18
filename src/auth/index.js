@@ -15,7 +15,7 @@ const TOKEN = /^[A-Za-z0-9_-]{43}$/;   // 32 octets en base64url
 
 const sha256 = value => createHash('sha256').update(value).digest();
 const b64 = buf => buf.toString('base64url');
-const sameText = (a, b) => typeof a === 'string' && typeof b === 'string' && a.length === b.length && timingSafeEqual(Buffer.from(a), Buffer.from(b));
+const sameText = (a, b) => typeof a === 'string' && typeof b === 'string' && Buffer.byteLength(a) === Buffer.byteLength(b) && timingSafeEqual(Buffer.from(a), Buffer.from(b));
 
 function parseCookies(header) {
   const out = {};
@@ -199,7 +199,8 @@ export async function createOwnerAuth({ config, db, clock = Date.now, oidc = nul
     }
     if (claims.acr !== auth.mfaAcr) return deny(403, 'Authentification forte requise.', 'mfa_required');
     const now = clock();
-    const authTime = Number.isFinite(claims.auth_time) ? claims.auth_time * 1000 : now;
+    if(claims.auth_time!==undefined && (!Number.isInteger(claims.auth_time) || claims.auth_time<=0 || claims.auth_time*1000>now+60000)) return deny(401,'Date d’authentification invalide.','auth_time_invalid');
+    const authTime = Number.isFinite(claims.auth_time) ? claims.auth_time * 1000 : 0;
     // Réauthentification demandée : auth_time signé obligatoire et récent (prompt=login, max_age=0 côté fournisseur).
     if (tx.forceLogin && (!Number.isFinite(claims.auth_time) || now - authTime > 5 * 60000)) return deny(401, 'Reconnexion non confirmée.', 'reauth_failed');
     // Rotation : la session éventuelle de ce navigateur est révoquée ; un nouveau jeton est toujours émis.

@@ -7,6 +7,7 @@ import { SERVICES, PERMISSIONS } from '../connectors.js';
 import { createAssistantService } from '../mail/assistant-service.js';
 import { emailFromIdToken } from '../providers/gmail/oauth.js';
 import { createMailService } from '../mail/service.js';
+import { createSessionAccess } from './session-access.js';
 
 const PUBLIC_DIR = fileURLToPath(new URL('../../public/', import.meta.url));
 const MAX_BODY = 64 * 1024;
@@ -70,12 +71,13 @@ const accountId = raw => {
 };
 
 // gmail : { oauth, sync, redirectUri, disconnect, outbox } (facultatif). allowedHosts : protège contre le DNS rebinding.
-export function createApp({ store, ai, ownerName, gmail = null, providers = {}, allowedHosts = null, health = null }) {
+export function createApp({ store, ai, ownerName, gmail = null, providers = {}, allowedHosts = null, health = null, auth = null }) {
   providers = { ...providers, ...(gmail ? { gmail } : {}) };
+  const access=createSessionAccess();
   const mail = createMailService({ store, providers });
   const assistant = createAssistantService({ store, ai, mail, ownerName });
   // Autorisation Google : navigation pleine page, puis retour vers l'interface avec le résultat dans l'URL.
-  async function oauthRoute(pathname, url, res) {
+  async function oauthRoute(pathname, url, res, session=null, json=false) {
     if (!['/oauth/google/start', '/oauth/google/callback', '/oauth/microsoft/start', '/oauth/microsoft/callback'].includes(pathname)) throw notFound();
     const service = pathname.startsWith('/oauth/microsoft/') ? 'outlook' : 'gmail';
     const provider = providers[service];
@@ -95,9 +97,12 @@ export function createApp({ store, ai, ownerName, gmail = null, providers = {}, 
         account = store.getAccount(accountId(existingId));
         if (account.svc !== service || account.profileId !== profileId || account.name !== name) throw badRequest('Compte de messagerie invalide');
       }
-      return redirect(res, provider.oauth.start({ redirectUri: provider.redirectUri, perms, context: { profileId, name, win, address: account?.address } }));
+      const location=provider.oauth.start({ redirectUri: provider.redirectUri, perms, context: { profileId, name, win, address: account?.address } });
+      if(auth) access.rememberOAuth(session,service,location);
+      return json?send(res,200,{url:location}):redirect(res,location);
     }
     if (pathname.endsWith('/callback')) {
+      if(auth) access.consumeOAuth(session,service,url.searchParams.get('state'));
       if (url.searchParams.get('error')) return back({ connect_error: `Autorisation refusée dans ${def.provider}.` });
       try {
         const r = await provider.oauth.finish({ state: url.searchParams.get('state'), code: url.searchParams.get('code') });
@@ -106,7 +111,7 @@ export function createApp({ store, ai, ownerName, gmail = null, providers = {}, 
         const { account } = provider.sync.connect({ profileId: r.context.profileId, name: r.context.name, windowDays: r.context.win, refreshToken: r.refreshToken, email, scopes: r.scopes, ...(r.homeAccountId ? { homeAccountId: r.homeAccountId } : {}) });
         return back({ connect: service, account: account.id, profile: r.context.profileId, win: r.context.win });
       } catch (e) {
-        if (!(e instanceof HttpError)) console.error(e);
+        // Les erreurs fournisseur peuvent inclure code OAuth, URL ou corps : ne jamais les journaliser.
         return back({ connect_error: e instanceof HttpError ? e.message : `La connexion à ${def.name} a échoué.` });
       }
     }
@@ -115,7 +120,7 @@ export function createApp({ store, ai, ownerName, gmail = null, providers = {}, 
 
   // [méthode, motif, gestionnaire(params, body)]
   const routes = [
-    ['GET', /^\/api\/health$/, () => health ? health() : ({ ok: true, ai: { provider: 'mistral', configured: ai.configured, model: ai.model } })],
+    ['GET', /^\/api\/health$/, () => health ? health() : auth ? ({ok:true}) : ({ ok: true, ai: { provider: 'mistral', configured: ai.configured, model: ai.model } })],
     ['GET', /^\/api\/state$/, () => {
       const snapshot = store.snapshot();
       for (const profile of snapshot.profiles) for (const account of profile.accounts) {
@@ -164,10 +169,12 @@ export function createApp({ store, ai, ownerName, gmail = null, providers = {}, 
     ['PATCH', /^\/api\/messages\/([^/]+)$/, ([id], body) => mail.updateMessage(messageId(id), body)],
     ['POST', /^\/api\/drafts$/, (_, body) => mail.createComposition(body.accountId)],
     ['PUT', /^\/api\/messages\/([^/]+)\/draft$/, ([id], body) => mail.saveDraft(messageId(id), body)],
-    ['POST', /^\/api\/messages\/([^/]+)\/send\/preview$/, ([id], body) => {
-      return mail.preview(messageId(id), body);
+    ['POST', /^\/api\/messages\/([^/]+)\/send\/preview$/, async ([id], body, session) => {
+      const preview=await mail.preview(messageId(id),body);
+      return auth?access.rememberPreview(session,messageId(id),body,preview):preview;
     }],
-    ['POST', /^\/api\/messages\/([^/]+)\/send$/, ([id], body) => {
+    ['POST', /^\/api\/messages\/([^/]+)\/send$/, ([id], body, session) => {
+      if(auth) access.consumePreview(session,messageId(id),body);
       return mail.send(messageId(id), body);
     }],
     ['POST', /^\/api\/folders$/, (_, body) => store.createFolder(body)],
@@ -185,12 +192,37 @@ export function createApp({ store, ai, ownerName, gmail = null, providers = {}, 
 
   return http.createServer(async (req, res) => {
     try {
+      for(const [name,value] of Object.entries(SECURITY_HEADERS)) res.setHeader(name,value);
       if (allowedHosts && !allowedHosts.includes(req.headers.host)) throw new HttpError(403, 'Hôte non autorisé', 'forbidden_host');
       const url = new URL(req.url, 'http://localhost');
       const { pathname } = url;
+      if(auth && await auth.handle(req,res,url)) return;
+      if(!auth && pathname==='/auth/session' && req.method==='GET') return send(res,200,{enabled:false,authenticated:false});
+      const publicLogin=['/login','/js/login.js','/styles.css','/fonts/inter-latin-wght-normal.woff2','/fonts/jetbrains-mono-latin-wght-normal.woff2'].includes(pathname);
+      const publicHealth=pathname==='/api/health' && req.method==='GET';
+      let session=null;
+      if(auth && !publicLogin && !publicHealth) {
+        try {session=auth.requireSession(req);}catch(error) {
+          if(pathname==='/' && ['GET','HEAD'].includes(req.method)) return redirect(res,'/login');
+          throw error;
+        }
+        access.limit(session,pathname,req.method);
+        if(!['GET','HEAD'].includes(req.method)) auth.assertMutation(req,session);
+        if(/^(\/api\/whatsapp\/links|\/api\/oauth\/|.*\/disconnect$)/.test(pathname)) auth.assertRecent(session);
+      }
+      if(publicLogin) {
+        if(!['GET','HEAD'].includes(req.method)) throw new HttpError(405,'Méthode non autorisée','method_not_allowed');
+        return await serveStatic(req,res,pathname==='/login'?'/login.html':pathname);
+      }
+      if(req.method==='POST' && /^\/api\/oauth\/(google|microsoft)\/start$/.test(pathname)) {
+        const body=await readJson(req),start=new URL('/oauth/'+pathname.split('/')[3]+'/start','http://localhost');
+        for(const [key,value] of Object.entries(body)) if(['profile','name','win','perms','account'].includes(key)) start.searchParams.set(key,String(value));
+        return await oauthRoute(start.pathname,start,res,session,true);
+      }
       if (pathname.startsWith('/oauth/')) {
+        if(auth && pathname.endsWith('/start')) throw new HttpError(405,'Utilise le parcours de connexion protégé.','method_not_allowed');
         if (req.method !== 'GET') throw new HttpError(405, 'Méthode non autorisée', 'method_not_allowed');
-        return await oauthRoute(pathname, url, res);
+        return await oauthRoute(pathname, url, res,session);
       }
       if (!pathname.startsWith('/api/')) {
         if (req.method !== 'GET' && req.method !== 'HEAD') throw new HttpError(405, 'Méthode non autorisée', 'method_not_allowed');
@@ -202,10 +234,10 @@ export function createApp({ store, ai, ownerName, gmail = null, providers = {}, 
       if (!route) throw new HttpError(405, 'Méthode non autorisée', 'method_not_allowed');
       const params = pathname.match(route[1]).slice(1);
       const body = req.method === 'GET' ? {} : await readJson(req);
-      send(res, 200, await route[2](params, body));
+      send(res, 200, await route[2](params, body,session));
     } catch (e) {
       const known = e instanceof HttpError;
-      if (!known) console.error(e);
+      if (!known) console.error('Requête interrompue : erreur interne.');
       send(res, known ? e.status : 500, { error: { code: known ? e.code : 'internal', message: known ? e.message : 'Erreur interne' } });
     }
   });

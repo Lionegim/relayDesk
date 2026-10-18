@@ -1,15 +1,26 @@
+let csrfToken=null;
 async function call(method, url, body) {
   const res = await fetch(url, {
     method,
-    headers: body ? { 'content-type': 'application/json' } : undefined,
+    credentials: 'same-origin',
+    headers: { ...(body?{'content-type':'application/json'}:{}),...(!['GET','HEAD'].includes(method) && csrfToken?{'x-csrf-token':csrfToken}:{}) },
     body: body ? JSON.stringify(body) : undefined,
   });
   const data = await res.json().catch(() => ({}));
+  // Compatibilité avec le processus local antérieur, qui peut rester ouvert pendant la mise à jour du code.
+  // Cela ne désactive aucun contrôle serveur et ne s'applique jamais à une origine distante.
+  if(res.status===404 && url==='/auth/session' && ['127.0.0.1','localhost','[::1]'].includes(location.hostname)) return {enabled:false,legacy:true};
+  if(res.status===401 && url!=='/auth/session') {location.replace('/login');throw new Error('Session expirée : reconnecte-toi.');}
   if (!res.ok) throw new Error(data?.error?.message || `Erreur ${res.status}`);
   return data;
 }
 
 export const api = {
+  async session() {const info=await call('GET','/auth/session');csrfToken=info.csrfToken || null;return info;},
+  sessions: ()=>call('GET','/auth/sessions'),
+  revokeSession: id=>call('DELETE',`/auth/sessions/${encodeURIComponent(id)}`,{}),
+  logout: ()=>call('POST','/auth/logout',{}),
+  startOAuth: (service,input)=>call('POST',`/api/oauth/${service}/start`,input),
   startWhatsAppLink: input => call('POST', '/api/whatsapp/links', input),
   whatsAppLink: id => call('GET', `/api/whatsapp/links/${encodeURIComponent(id)}`),
   cancelWhatsAppLink: id => call('DELETE', `/api/whatsapp/links/${encodeURIComponent(id)}`, {}),

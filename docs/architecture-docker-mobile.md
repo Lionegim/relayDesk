@@ -4,6 +4,10 @@ Relay Desk tournera sur un serveur hébergé persistant et restera accessible lo
 
 Plan établi avec Claude le 19 octobre 2026. Les deux décisions confirmées sont l’hébergement indépendant du Mac et l’usage durablement personnel. Le choix du prestataire, du domaine et du budget reste à fixer avant le déploiement.
 
+## État de réalisation
+
+Les lots 1, 2 et 3 sont implémentés et vérifiés avec des données fictives. Keycloak a été choisi pour la future identité du propriétaire ; l’application exige l’émetteur, le sujet stable et le niveau MFA configurés explicitement. Le serveur Keycloak réel, son client et l’identité du propriétaire ne sont pas encore configurés. Les tests OIDC emploient des jetons signés et un émetteur simulé ; aucun déploiement ni transfert de données réelles n’a été effectué. Les configurations et limites actuelles sont détaillées dans `docs/auth.md` et `docs/docker.md`.
+
 ## Architecture retenue
 
 ```mermaid

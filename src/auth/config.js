@@ -7,7 +7,7 @@ export class AuthConfigError extends Error {
 const invalid = message => { throw new AuthConfigError(message); };
 
 const HOUR = 3600000, MINUTE = 60000;
-const DEFAULTS = { sessionTtlMs: 7 * 24 * HOUR, idleTtlMs: 24 * HOUR, recentMs: 15 * MINUTE };
+const DEFAULTS = { sessionTtlMs: 12 * HOUR, idleTtlMs: HOUR, recentMs: 10 * MINUTE };
 
 function duration(env, name, fallback, min, max, unit) {
   const raw = env[name];

@@ -28,11 +28,10 @@ test('runtime hors réseau : santé minimale, adaptateurs absents et appels IA/c
  await r.stop();await r.stop();assert.equal(r.state,'stopped');await assert.rejects(r.start(),/arrêté/);
 });
 
-test('runtime hébergé verrouillé avant authentification : aucun fichier, aucune écoute, aucun fournisseur',async t=>{
- const dir=join(temp(t),'untouched');let touched=false;
- const c=config(dir,{RELAY_MODE:'hosted',PUBLIC_BASE_URL:'https://relay.example.test',PORT:'4310'});
- const r=createRuntime(c,{providerFactory:()=>{touched=true;}});
- await assert.rejects(r.start(),e=>e.code==='hosted_not_ready');assert.equal(touched,false);assert.equal(existsSync(dir),false);await r.stop();
+test('runtime hébergé : configuration sans authentification refusée avant tout accès disque',async t=>{
+ const dir=join(temp(t),'untouched');
+ assert.throws(()=>config(dir,{RELAY_MODE:'hosted',PUBLIC_BASE_URL:'https://relay.example.test',PORT:'4310'}),e=>e.code==='configuration_invalid');assert.equal(existsSync(dir),false);
+ const c={...config(dir),mode:'hosted'};const r=createRuntime(c);await assert.rejects(r.start(),e=>e.code==='hosted_not_ready');assert.equal(existsSync(dir),false);await r.stop();
 });
 
 test('redémarrage : données fictives, brouillon, mémoire et secrets chiffrés persistent avec identité stable',async t=>{

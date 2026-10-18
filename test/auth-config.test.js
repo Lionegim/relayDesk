@@ -11,9 +11,9 @@ test('configuration : forme et valeurs par défaut', () => {
   assert.equal(c.enabled, true);
   assert.equal(c.redirectUri, 'https://relay.test/auth/callback');
   assert.equal(c.secureCookies, true);
-  assert.equal(c.sessionTtlMs, 7 * 24 * 3600000);
-  assert.equal(c.idleTtlMs, 24 * 3600000);
-  assert.equal(c.recentMs, 15 * 60000);
+  assert.equal(c.sessionTtlMs, 12 * 3600000);
+  assert.equal(c.idleTtlMs, 3600000);
+  assert.equal(c.recentMs, 10 * 60000);
   assert.ok(Object.isFrozen(c));
   assert.equal(read({}, 'local', 'http://127.0.0.1:4310').enabled, false, 'local : désactivé par défaut');
   assert.equal(read({ ...OK, AUTH_MODE: 'oidc' }, 'local', 'http://127.0.0.1:4310').secureCookies, false);

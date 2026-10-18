@@ -1,12 +1,13 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { isIP } from 'node:net';
+import {readAuthConfig} from '../auth/config.js';
 
 export class ConfigurationError extends Error {
   constructor(message) { super(`Configuration : ${message}`); this.code='configuration_invalid'; }
 }
 const invalid = message => { throw new ConfigurationError(message); };
-const SECRET_NAMES=['RELAY_SECRET_KEY','MISTRAL_API_KEY','GOOGLE_CLIENT_ID','GOOGLE_CLIENT_SECRET','MICROSOFT_CLIENT_ID'];
+const SECRET_NAMES=['RELAY_SECRET_KEY','MISTRAL_API_KEY','GOOGLE_CLIENT_ID','GOOGLE_CLIENT_SECRET','MICROSOFT_CLIENT_ID','AUTH_CLIENT_ID','AUTH_CLIENT_SECRET'];
 function secret(env,name,cwd) {
   const value=env[name], file=env[`${name}_FILE`];
   if(value && file) invalid(`${name} et ${name}_FILE ne peuvent pas être utilisés ensemble.`);
@@ -44,8 +45,12 @@ export function readConfig(env=process.env,{cwd=process.cwd()}={}) {
   if(mode==='hosted' && (base.protocol!=='https:' || loopback)) invalid('PUBLIC_BASE_URL doit utiliser HTTPS et un hôte externe en mode hébergé.');
   const secrets=Object.fromEntries(SECRET_NAMES.map(name=>[name,secret(env,name,cwd)]));
   if(mode==='hosted' && !secrets.RELAY_SECRET_KEY) invalid('la clé du coffre doit être fournie en mode hébergé.');
+  let auth;
+  try {auth=readAuthConfig({env,mode,publicBaseUrl:base.origin,secret:name=>secrets[name] || ''});}
+  catch(error) {invalid(error.message);}
+  if(auth.enabled && (!env.PUBLIC_BASE_URL || port===0)) invalid('OIDC exige PUBLIC_BASE_URL explicite et un port fixe.');
   return Object.freeze({
-    mode,host,port,publicBaseUrl:base.origin,dataDir:resolve(cwd,env.DATA_DIR || 'data'),
+    auth,mode,host,port,publicBaseUrl:base.origin,dataDir:resolve(cwd,env.DATA_DIR || 'data'),
     keyFile:resolve(cwd,env.DATA_DIR || 'data','secret.key'),secrets:Object.freeze(secrets),
     allowedHosts:[...new Set([base.host,...(mode==='local'?[port,base.port || (base.protocol==='https:'?443:80)].flatMap(p=>[`127.0.0.1:${p}`,`localhost:${p}`,`[::1]:${p}`]):[])])],
     googleRedirectUri:`${base.origin}/oauth/google/callback`,

@@ -13,9 +13,9 @@ Ce module ne configure aucun fournisseur réel. Les tests utilisent un émetteur
 | `AUTH_CLIENT_ID`, `AUTH_CLIENT_SECRET` (ou `*_FILE`) | Client Web confidentiel. |
 | `AUTH_OWNER_SUB` | `sub` exact du propriétaire chez l'émetteur (identifiant stable, pas une adresse). |
 | `AUTH_MFA_ACR` | Valeur `acr` exacte exigée dans l'ID token signé (p. ex. `relay-mfa`, associée au niveau LoA 2 dans Keycloak). Obligatoire en mode `oidc`. |
-| `AUTH_SESSION_TTL_HOURS` | Durée absolue d'une session (défaut 168 h). |
-| `AUTH_IDLE_TTL_HOURS` | Expiration après inactivité (défaut 24 h, au plus la durée absolue). |
-| `AUTH_RECENT_MINUTES` | Fenêtre de « confirmation récente » pour les actions sensibles (défaut 15 min). |
+| `AUTH_SESSION_TTL_HOURS` | Durée absolue d'une session (défaut 12 h). |
+| `AUTH_IDLE_TTL_HOURS` | Expiration après inactivité (défaut 1 h, au plus la durée absolue). |
+| `AUTH_RECENT_MINUTES` | Fenêtre de « confirmation récente » pour les actions sensibles (défaut 10 min). |
 
 `readAuthConfig({ env, mode, publicBaseUrl, secret })` (`src/auth/config.js`) produit `config.auth` :
 
@@ -77,3 +77,23 @@ En mode désactivé, `requireSession` renvoie `null` et `assertMutation`/`assert
 - Authentification par étapes : niveau LoA 2 (second facteur) associé à la valeur `acr` `relay-mfa` (« ACR to LoA mapping »), flux de navigateur conditionnel au niveau demandé.
 - Vérifier sur un vrai jeton que `acr` vaut exactement `relay-mfa` après authentification forte, puis renseigner `AUTH_MFA_ACR`. Envoyer `acr_values` ne suffit pas : Relay vérifie le claim signé.
 - `AUTH_OWNER_SUB` : identifiant de l'utilisateur Keycloak (UUID), pas son nom ni son adresse.
+
+
+Le runtime construit ce module uniquement si `AUTH_MODE=oidc`. En mode hébergé, la configuration complète est obligatoire avant tout accès au stockage. L’instance locale historique et la démonstration Docker locale restent explicitement sans authentification ; elles ne constituent pas un hébergement sécurisé.
+
+L’application intègre la protection à toutes les routes de contenu, mémoire, QR, messagerie et ressources JavaScript de l’application. Seuls `/login`, ses ressources nécessaires, les points de connexion OIDC et la santé minimale sont publics. Les mutations exigent la même origine et un jeton CSRF ; les connexions de fournisseurs et retraits de comptes exigent aussi une authentification récente. Sans `auth_time` signé, une session peut lire les contenus mais n’est jamais considérée comme récemment authentifiée ; une date anormalement future est refusée.
+
+Les aperçus ajoutent un `approvalToken` aléatoire de cinq minutes, lié à la session, au message, au contenu exact et à l’empreinte fournisseur. Il est consommé avant l’appel d’envoi, même si celui-ci échoue : revenir à l’aperçu avant une nouvelle tentative. Le changement de session ou le redémarrage invalide ces approbations. Les retours OAuth de messagerie sont aussi liés à la session ayant lancé la connexion ; leur démarrage passe par POST avec CSRF.
+
+L’interface propose « Appareils connectés », la révocation et la déconnexion. « Confirmer mon identité » demande `prompt=login` et `max_age=0`. La déconnexion retire l’accès à Relay Desk ; elle ne déconnecte pas les messageries ni la session SSO Keycloak elle-même.
+
+Références : [sessions OWASP](https://cheatsheetseries.owasp.org/cheatsheets/Session_Management_Cheat_Sheet.html), [vérification des signatures openid-client](https://github.com/panva/openid-client/blob/main/docs/functions/enableNonRepudiationChecks.md), [authentification par niveaux Keycloak](https://www.keycloak.org/docs/latest/server_admin/#_step-up-flow).
+
+
+## Validation du lot 3 (19 octobre 2026)
+
+214 tests réussis sur Mac et dans l’image Linux Node 24, sans réseau sortant dans le stage de tests. L’émetteur simulé produit de vrais jetons RS256 avec JWKS fictifs ; les tests refusent mauvaise signature, audience, émetteur, nonce, état, expiration, autre propriétaire et niveau MFA insuffisant. Ils couvrent aussi CSRF, origine, Fetch Metadata, expiration inactive/absolue, rotation, révocation, confirmation récente et invalidation par changement de configuration.
+
+Le runtime complet a été vérifié avec deux appareils fictifs : cookies de sessions persistants après redémarrage, ancien aperçu invalidé, révocation d’un autre appareil et déconnexion. Gmail, Outlook et WhatsApp utilisent des fournisseurs simulés pour les tests de liaison de l’aperçu à la session et de double clic. Le runtime Docker protégé est testé avec des paramètres OIDC fictifs, sans réseau et sans port publié. La recette Chrome utilise uniquement une base éphémère et un émetteur signé simulé injecté par un programme de test distinct de `server.js`.
+
+Une revue indépendante a identifié le quota de polling QR partagé avec les mutations ; il a été séparé avec un test de régression. Aucun P1/P2 restant n’a été identifié lors de la revue finale. Aucun fournisseur Keycloak réel, compte, déploiement ou transfert de données réelles n’a été effectué. La recette ne valide pas encore la configuration MFA d’un véritable serveur Keycloak : ce contrôle reste nécessaire avant un usage hébergé.

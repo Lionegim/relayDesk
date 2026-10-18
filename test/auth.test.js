@@ -3,68 +3,11 @@
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
-import { createHash, generateKeyPairSync, sign, randomBytes } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
 import { createOwnerAuth, readAuthConfig } from '../src/auth/index.js';
 
-const ISSUER = 'https://idp.test/realms/relay';
-const PUBLIC = 'https://relay.test';
-const OWNER = 'owner-sub-1';
-const ACR = 'relay-mfa';
-const b64 = buf => Buffer.from(buf).toString('base64url');
-
-// ---------- Émetteur OIDC simulé ----------
-
-function fakeIdp() {
-  const key = generateKeyPairSync('rsa', { modulusLength: 2048 });
-  const other = generateKeyPairSync('rsa', { modulusLength: 2048 });
-  const jwk = { ...key.publicKey.export({ format: 'jwk' }), kid: 'k1', alg: 'RS256', use: 'sig' };
-  const codes = new Map();
-  const idp = { calls: [], next: {}, tokenRequests: [] };
-  const json = (body, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
-  const signJwt = (payload, { signer = key.privateKey, kid = 'k1' } = {}) => {
-    const head = b64(JSON.stringify({ alg: 'RS256', typ: 'JWT', kid }));
-    const body = b64(JSON.stringify(payload));
-    return `${head}.${body}.${b64(sign('sha256', Buffer.from(`${head}.${body}`), signer))}`;
-  };
-  // Le « navigateur » s'authentifie : l'émetteur émet un code lié aux paramètres de la demande.
-  idp.authorize = (location, overrides = {}) => {
-    const u = new URL(location);
-    const code = b64(randomBytes(16));
-    codes.set(code, { params: Object.fromEntries(u.searchParams), overrides });
-    return { code, state: u.searchParams.get('state'), params: Object.fromEntries(u.searchParams) };
-  };
-  idp.fetch = async (input, init = {}) => {
-    const url = new URL(typeof input === 'string' ? input : input.url);
-    idp.calls.push(url.pathname);
-    if (url.origin !== 'https://idp.test') throw new Error('hôte inattendu');
-    if (url.pathname === '/realms/relay/.well-known/openid-configuration') {
-      return json({
-        issuer: idp.next.discoveryIssuer || ISSUER, authorization_endpoint: `${ISSUER}/auth`, token_endpoint: `${ISSUER}/token`, jwks_uri: `${ISSUER}/jwks`,
-        response_types_supported: ['code'], subject_types_supported: ['public'], id_token_signing_alg_values_supported: ['RS256'],
-        token_endpoint_auth_methods_supported: ['client_secret_basic', 'client_secret_post'], code_challenge_methods_supported: ['S256'],
-      });
-    }
-    if (url.pathname === '/realms/relay/jwks') return json({ keys: [jwk] });
-    if (url.pathname === '/realms/relay/token') {
-      const body = new URLSearchParams(await new Response(init.body).text());
-      idp.tokenRequests.push({ body: Object.fromEntries(body), authorization: init.headers instanceof Headers ? init.headers.get('authorization') : null });
-      const entry = codes.get(body.get('code'));
-      codes.delete(body.get('code'));
-      if (!entry) return json({ error: 'invalid_grant' }, 400);
-      const challenge = b64(createHash('sha256').update(body.get('code_verifier') || '').digest());
-      if (challenge !== entry.params.code_challenge || body.get('redirect_uri') !== entry.params.redirect_uri) return json({ error: 'invalid_grant' }, 400);
-      const now = Math.floor(Date.now() / 1000);
-      const o = entry.overrides;
-      const claims = { iss: ISSUER, aud: 'relay-client', sub: OWNER, nonce: entry.params.nonce, iat: now, exp: now + 300, auth_time: now - 5, acr: ACR, ...o.claims };
-      for (const k of o.drop || []) delete claims[k];
-      const idToken = signJwt(claims, o.badSignature ? { signer: other.privateKey } : {});
-      return json({ access_token: 'at-fictif', token_type: 'Bearer', expires_in: 300, id_token: idToken });
-    }
-    return json({ error: 'not_found' }, 404);
-  };
-  return idp;
-}
+import {fakeIdp,ISSUER,PUBLIC,OWNER,ACR} from './helpers/fake-oidc.js';
+const b64=buf=>Buffer.from(buf).toString('base64url');
 
 // ---------- Serveur de test : routes /auth/* et une route protégée ----------
 
@@ -144,7 +87,7 @@ test('connexion complète : PKCE S256, state, nonce, acr demandé et vérifié, 
   assert.equal(res.headers.get('location'), '/');
   const set = res.headers.getSetCookie();
   assert.ok(set.some(c => /^__Host-relay_login=; .*Max-Age=0/.test(c)), 'transaction effacée');
-  assert.ok(set.some(c => /^__Host-relay_session=[A-Za-z0-9_-]{43}; Path=\/; HttpOnly; SameSite=Lax; Secure; Max-Age=604800$/.test(c)));
+  assert.ok(set.some(c => /^__Host-relay_session=[A-Za-z0-9_-]{43}; Path=\/; HttpOnly; SameSite=Lax; Secure; Max-Age=43200$/.test(c)));
   // Client confidentiel : authentification du client au point de jeton, vérificateur PKCE transmis.
   const tr = t.idp.tokenRequests.at(-1);
   assert.ok(tr.authorization?.startsWith('Basic ') || tr.body.client_secret);
@@ -258,7 +201,7 @@ test('appareils : liste sans secret, révocation récente exigée pour un autre 
   const phoneId = (await sessionOf(phone)).sessionId;
   const csrf = (await sessionOf(mac)).csrfToken;
 
-  now += 20 * 60000; // au-delà des 15 minutes de confirmation récente
+  now += 20 * 60000; // au-delà des 10 minutes de confirmation récente
   let res = await t.mutate(mac, `/auth/sessions/${phoneId}`, { csrf, method: 'DELETE' });
   assert.equal((await res.json()).code, 'reauth_required');
   assert.equal((await t.mutate(mac, '/api/sensitive', { csrf })).status, 403);
@@ -343,4 +286,14 @@ test('mode désactivé (local) et refus du mode hébergé sans authentification'
   assert.deepEqual(JSON.parse(out[2]), { enabled: false, authenticated: false });
   assert.equal(await owner.handle({ method: 'GET' }, res, new URL('http://x/auth/login')), false);
   await assert.rejects(() => createOwnerAuth({ config: { mode: 'hosted', auth }, db: new DatabaseSync(':memory:') }), /obligatoire/);
+});
+
+
+test('confirmation récente : auth_time absent ne prouve aucune fraîcheur et une date future est refusée',async()=>{
+ const a=await setup();const b=a.browser();await a.login(b,{overrides:{drop:['auth_time']}});const info=await sessionOf(b);assert.equal(info.authenticated,true);assert.equal(info.recent,false);assert.equal((await a.mutate(b,'/api/sensitive',{csrf:info.csrfToken})).status,403);a.close();
+ const c=await setup();const d=c.browser();const {res}=await c.login(d,{overrides:{claims:{auth_time:Math.floor(Date.now()/1000)+3600}}});assert.equal(res.status,401);assert.equal((await res.json()).code,'auth_time_invalid');c.close();
+});
+
+test('CSRF non ASCII : refus explicite sans exception de longueur de tampon',async()=>{
+ const a=await setup();const b=a.browser();await a.login(b);assert.equal((await a.mutate(b,'/api/data',{csrf:'é'.repeat(43)})).status,403);a.close();
 });

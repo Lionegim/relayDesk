@@ -20,7 +20,7 @@ const state = {
   group: 'all', picked: {}, focusId: null, contactQuery: '', contactSearch: false, sort: 'recent',
   c: null,
   details: {},
-  confirm: null,
+  confirm: null, auth: null, authPanel: null,
   composeTo: {}, newMail: null, newMailOpen: false,
 };
 
@@ -288,14 +288,15 @@ async function startWhatsAppLink() {
 }
 
 // Gmail : autorisation réelle dans Google (pleine page), puis suivi de l'import côté serveur.
-function startProviderAuth() {
+async function startProviderAuth() {
   const c = state.c;
   if (!state.data.integrations?.[c.svc]?.configured) {
     setC({ error: `Connexion ${state.data.services[c.svc].name} non configurée : consulte sa documentation de connexion.` });
     return;
   }
   const perms = state.data.services[c.svc].available.filter(p => c.perms[p]);
-  location.href = (c.svc === 'outlook' ? '/oauth/microsoft/start?' : '/oauth/google/start?') + new URLSearchParams({ profile: c.profile, name: c.name.trim(), win: c.win, perms: perms.join(','), ...(c.accountId ? { account: c.accountId } : {}) });
+  if(state.auth?.legacy){location.href=(c.svc==='outlook'?'/oauth/microsoft/start?':'/oauth/google/start?')+new URLSearchParams({profile:c.profile,name:c.name.trim(),win:c.win,perms:perms.join(','),...(c.accountId?{account:c.accountId}:{})});return;}
+  try {const result=await api.startOAuth(c.svc==='outlook'?'microsoft':'google',{ profile:c.profile,name:c.name.trim(),win:c.win,perms:perms.join(','),...(c.accountId?{account:c.accountId}:{}) });location.assign(result.url);}catch(error){setC({busy:false,error:error.message});}
 }
 function trackImport(accountId) {
   clearInterval(syncTimer);
@@ -383,6 +384,10 @@ const num = v => Number(v);
 const firstOf = profileId => state.data.messages.find(m => m.p === profileId && !m.archived)?.id ?? null;
 
 const actions = {
+  authDevices: async()=>{try{set({authPanel:await api.sessions()});}catch(e){fail(e);}},
+  authClose: ()=>set({authPanel:null}),
+  authLogout: async()=>{try{await api.logout();location.replace('/login');}catch(e){fail(e);}},
+  authRevoke: async({id})=>{try{await api.revokeSession(id);if(id===state.auth?.sessionId)location.replace('/login');else set({authPanel:await api.sessions()});}catch(e){fail(e);}},
   noop: () => {},
   newMessage: () => {
     const accounts = derive(state).profile.accounts.filter(a => a.channel === 'email' && a.perms?.includes('read'));
@@ -623,7 +628,7 @@ const actions = {
     set({ confirm: { ...c, busy: true, error: null } });
     let r;
     try {
-      r = await api.send(c.messageId, { ...c.input, digest: c.preview.digest });
+      r = await api.send(c.messageId, { ...c.input, digest: c.preview.digest, ...(c.preview.approvalToken?{approvalToken:c.preview.approvalToken}:{}) });
     } catch (e) {
       // 409 : le contenu ou le fil a changé, il faut revérifier ; le bouton de confirmation est désactivé.
       // Une erreur Gmail incertaine (réseau, 5xx) consomme aussi la validation : vérifier à nouveau avant tout nouvel essai.
@@ -712,10 +717,11 @@ document.addEventListener('keydown', e => {
   else if (state.menu || state.moveOpen || state.accountMenu) set({ menu: false, moveOpen: false, accountMenu: null });
 });
 
-api.state()
+api.session()
+  .then(auth=>{state.auth=auth;return api.state();})
   .then(data => {
     set({ data, selectedId: data.messages.find(m => m.p === state.profileId && !m.archived)?.id ?? null });
     resumeFromRedirect();
   })
-  .catch(err => { set({ loadError: err.message }); });
+  .catch(err => {if(!state.auth) location.replace('/login');else set({ loadError: err.message });});
 render();

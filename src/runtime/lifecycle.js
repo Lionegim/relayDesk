@@ -23,8 +23,8 @@ function verifyExistingVault(path,vault) {
   finally {db.close();}
 }
 
-export function createRuntime(config,{providerFactory=assembleProviders,appFactory=createApp,log=console}={}) {
-  let state='created',db,store,server,releaseLock,bundle,maintenance,startPromise,stopPromise,stopRequested=false,url;
+export function createRuntime(config,{providerFactory=assembleProviders,appFactory=createApp,authFactory=null,log=console}={}) {
+  let state='created',db,store,server,releaseLock,bundle,maintenance,startPromise,stopPromise,stopRequested=false,url,ownerAuth;
   const syncs=()=>bundle?.syncs || [];
   const requests=new Set();
   async function drainRequests() {while(requests.size) await Promise.allSettled([...requests]);}
@@ -38,7 +38,7 @@ export function createRuntime(config,{providerFactory=assembleProviders,appFacto
     });
   }
   function closeStorage() {
-    try {if(db) {try {db.exec('PRAGMA wal_checkpoint(TRUNCATE)');}finally{db.close();db=null;}}}
+    try {ownerAuth?.close();ownerAuth=null;if(db) {try {db.exec('PRAGMA wal_checkpoint(TRUNCATE)');}finally{db.close();db=null;}}}
     finally {releaseLock?.();releaseLock=null;}
   }
   async function start() {
@@ -47,9 +47,9 @@ export function createRuntime(config,{providerFactory=assembleProviders,appFacto
     if(state!=='created') throw new Error('Runtime déjà arrêté.');
     startPromise=(async()=>{
       state='starting';
-      // Lots 1/2 ne fournissent pas l'authentification du lot 3 : aucun drapeau d'environnement ne contourne ce verrou.
-      if(config.mode==='hosted') {
-        const error=new Error('Mode hébergé indisponible : l’authentification du lot 3 doit être implémentée avant exposition.');
+      // Défense supplémentaire pour les appelants qui ne passent pas par readConfig.
+      if(config.mode==='hosted' && !config.auth?.enabled) {
+        const error=new Error('Mode hébergé refusé : une authentification OIDC complète est obligatoire.');
         error.code='hosted_not_ready';state='failed';throw error;
       }
       try {
@@ -59,10 +59,15 @@ export function createRuntime(config,{providerFactory=assembleProviders,appFacto
         const vault=createVault(key);verifyExistingVault(path,vault);
         db=openDatabase(path);seedIfEmpty(db,{demo:config.demo});store=createStore(db);
         store.pruneReplyMemory();store.learnAvailableReplies();
+        if(config.auth?.enabled) {
+          const factory=authFactory || (await import('../auth/index.js')).createOwnerAuth;
+          ownerAuth=await factory({config,db});
+          if(!ownerAuth) throw new Error('Authentification indisponible.');
+        }
         bundle=await providerFactory({config,store,vault,log});
         const ai=createMistralClient({apiKey:config.aiEnabled?config.secrets.MISTRAL_API_KEY:'',model:config.mistralModel});
         const allowedHosts=[...config.allowedHosts];
-        server=appFactory({store,ai,providers:bundle.providers,gmail:bundle.gmail,ownerName:config.ownerName,allowedHosts,health:()=>({ok:state==='running'})});
+        server=appFactory({store,ai,providers:bundle.providers,gmail:bundle.gmail,ownerName:config.ownerName,allowedHosts,auth:ownerAuth,health:()=>({ok:state==='running'})});
         trackRequests();
         server.on('request',(_req,res)=>res.once('finish',()=>{if(state==='stopping') setImmediate(()=>server.closeIdleConnections?.());}));
         await new Promise((resolve,reject)=>{server.once('error',reject);server.listen(config.port,config.host,()=>{server.off('error',reject);resolve();});});

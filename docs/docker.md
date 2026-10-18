@@ -3,7 +3,7 @@
 Image Docker unique (Node 24, Debian slim) et deux fichiers Compose :
 
 - `compose.dev.yaml` : mode local de **test**, données fictives, connecteurs et IA désactivés, accessible seulement sur `http://127.0.0.1:4311` ;
-- `compose.yaml` : mode **hébergé, préparatoire et bloqué**. Le proxy attend une application saine. Le serveur refuse `RELAY_MODE=hosted` tant que l'authentification (lot 3) n'existe pas, et ce fichier ne démarre rien sans profil ni configuration explicites.
+- `compose.yaml` : mode **hébergé, préparatoire**. Le proxy attend une application saine. Le serveur exige une configuration OIDC complète pour le propriétaire, et ce fichier ne démarre rien sans profil ni configuration explicites.
 
 Aucun de ces fichiers ne lit le `.env` réel, ni les données ou secrets du Mac.
 
@@ -56,7 +56,7 @@ docker build --secret id=build_ca,src=/chemin/vers/ca.pem --target test .
 | Clé du coffre séparée des données | Volume de secrets monté en lecture seule (`/run/relay-secrets`), fichier `0400` propriété de l'uid 1000 | permissions vérifiées |
 | Arrêt propre | `init: true` (tini relaie SIGTERM), `stop_grace_period: 45s` | arrêt en moins d'une seconde, code 0 |
 | Une seule instance | `container_name` fixe : Compose refuse une seconde copie. Le verrou d'écrivain unique sur `/data` (lot 1) complète cette protection. | |
-| Hébergé bloqué | Profil `hosted`, variables obligatoires sans valeur par défaut, refus applicatif de `RELAY_MODE=hosted` | `up` sans profil : aucun service ; sans variables : arrêt de Compose |
+| Hébergé protégé | Profil `hosted`, configuration OIDC obligatoire, proxy après santé applicative | Sans configuration OIDC : démarrage refusé ; API privées sans session |
 
 ## Hébergement (préparation seulement)
 
@@ -64,7 +64,7 @@ Sur la VM, plus tard et sur autorisation :
 
 - secrets dans `RELAY_SECRETS_DIR` (hors dépôt, hors volume de données), un fichier par valeur : `relay_secret_key` (32 octets en base64 ou 64 caractères hexadécimaux), `mistral_api_key`, `google_client_id`, `google_client_secret`, `microsoft_client_id` ;
 - hors Swarm, Compose monte ces fichiers avec leurs droits d'origine : propriétaire uid 1000, mode `0400` ;
-- variables : `RELAY_IMAGE_TAG`, `PUBLIC_BASE_URL` (https), `RELAY_DOMAIN`, `ACME_EMAIL`, `RELAY_SECRETS_DIR` ;
+- variables : `RELAY_IMAGE_TAG`, `PUBLIC_BASE_URL` (https), `RELAY_DOMAIN`, `ACME_EMAIL`, `RELAY_SECRETS_DIR`, `AUTH_ISSUER`, `AUTH_OWNER_SUB`, `AUTH_MFA_ACR` ; secrets OIDC `auth_client_id` et `auth_client_secret` séparés ;
 - Caddy obtient le certificat, ajoute HSTS et quelques en-têtes, sans journal d'accès (les retours OAuth portent `code` et `state`). Son cœur ne fournit pas de limite de débit : elle relève de l'application (lot 3) ou d'un module choisi explicitement.
 
 ## Contrat du runtime intégré (lots 1 et 2)
@@ -76,7 +76,7 @@ Le runtime :
 3. répond `200` avec seulement `{ "ok": true }` sur `GET /api/health` lorsque le runtime local fonctionne ;
 4. conserve la base, son WAL et une base SQLite distincte pour le verrou de processus dans `DATA_DIR`. Le verrou reste détenu pendant toute la vie du runtime et le noyau le libère après un crash ;
 5. ferme l'entrée HTTP sur SIGTERM, attend les traitements HTTP et les tâches des connecteurs, puis ferme le stockage et libère le verrou, sans déconnecter l'appareil WhatsApp. Si le délai d'arrêt est dépassé, la commande termine en erreur sans relancer automatiquement un envoi ;
-6. refuse le mode hébergé avant toute création de données, écoute HTTP ou construction de connecteur tant que l'authentification du lot 3 n'est pas implémentée. Aucun drapeau d'environnement ne lève ce refus.
+6. refuse le mode hébergé sans configuration OIDC complète ; en mode hébergé configuré, protège tous les contenus par une session propriétaire. Les ressources de connexion et la santé minimale seules restent publiques.
 
 Le mode local de test désactive la construction des connecteurs et laisse Mistral non configuré. Les accès réels aux fournisseurs et le déploiement hébergé restent hors de cette recette.
 
@@ -91,16 +91,16 @@ Cette commande construit le stage de tests sans réseau sortant, construit l’i
 
 Elle vérifie les droits non-root, la lecture seule, l’absence de capacités, la clé externe non modifiable, les connecteurs/IA désactivés, le refus d’une seconde instance sur le même stockage, l’arrêt SIGTERM avec code 0, la reprise après SIGKILL, puis la persistance et la restauration d’un brouillon, d’une identité de mémoire et de jetons OAuth et identifiants WhatsApp entièrement fictifs. La copie de restauration se fait à froid, après arrêt et checkpoint SQLite ; les connecteurs restent désactivés pendant toute la recette.
 
-Validation du 19 octobre 2026 : **191 tests réussis sur Mac et dans le stage Linux Node 24**, puis recette Docker réussie. Un audit du contexte de construction (97 fichiers autorisés) a aussi confirmé l’exclusion de faux fichiers `.env`, clés, archives, bases, sauvegardes et exports placés sous un répertoire source de test. Le contexte réel n’inclut que les sources et ressources autorisées.
+Validation initiale des lots 1 et 2 du 19 octobre 2026 : **191 tests réussis sur Mac et dans le stage Linux Node 24**, puis recette Docker réussie. Un audit du contexte de construction (97 fichiers autorisés) a aussi confirmé l’exclusion de faux fichiers `.env`, clés, archives, bases, sauvegardes et exports placés sous un répertoire source de test. Le contexte réel n’inclut que les sources et ressources autorisées.
 
-La conservation d’identifiants WhatsApp est vérifiée avec de fausses valeurs chiffrées et de faux sockets. Aucune session WhatsApp réelle n’a été reprise dans Docker. Les lots 3 à 7, l’authentification distante, le déploiement et la migration restent à réaliser.
+La conservation d’identifiants WhatsApp est vérifiée avec de fausses valeurs chiffrées et de faux sockets. Aucune session WhatsApp réelle n’a été reprise dans Docker. Le lot 3 ajoute l’accès propriétaire via OIDC (voir `docs/auth.md`). La configuration Keycloak réelle, les lots 4 à 7, le déploiement et la migration restent à réaliser.
 
 
 ## Configuration locale
 
 | Variable | Comportement |
 | --- | --- |
-| `RELAY_MODE` | `local` par défaut ; `hosted` validé puis refusé jusqu’au lot 3. |
+| `RELAY_MODE` | `local` par défaut ; `hosted` exige une configuration OIDC complète et une origine HTTPS. |
 | `HOST`, `PORT` | `127.0.0.1:4310` par défaut ; dans Docker, `0.0.0.0:4310` derrière le port publié localement. |
 | `PUBLIC_BASE_URL` | Origine explicite sans chemin ; locale en mode local. Fixe les retours OAuth et les hôtes autorisés, indépendamment des en-têtes transmis. |
 | `DATA_DIR` | Répertoire de stockage, `data/` par défaut, `/data` dans Docker. Un seul runtime, disque local uniquement. |
@@ -110,3 +110,13 @@ La conservation d’identifiants WhatsApp est vérifiée avec de fausses valeurs
 | `SHUTDOWN_TIMEOUT_MS` | 30 000 par défaut ; délai Docker 45 s pour laisser l’arrêt applicatif terminer ou signaler une issue incertaine. |
 
 Les secrets pris en charge sous forme directe ou `*_FILE` sont `RELAY_SECRET_KEY`, `MISTRAL_API_KEY`, `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` et `MICROSOFT_CLIENT_ID`. Ne pas fournir les deux formes simultanément. Les commandes Docker n’utilisent pas `npm start` et ne chargent jamais le `.env` local. Le démarrage local historique reste disponible avec `npm start`.
+
+
+## Accès propriétaire (lot 3)
+
+Le Compose hébergé n’accepte pas `AUTH_MODE=disabled`. Il exige un émetteur Keycloak HTTPS précis, un client OIDC et le sujet stable du propriétaire (`AUTH_OWNER_SUB`), ainsi qu’un niveau `AUTH_MFA_ACR` explicitement configuré pour représenter l’authentification MFA dans Keycloak. L’adresse email ne sert pas de preuve d’identité. Les valeurs réelles de ces paramètres et le client Keycloak n’ont pas été créés pendant ce développement.
+
+Le Compose local de démonstration garde volontairement `AUTH_MODE=disabled` et uniquement des données fictives sur un port loopback. Pour tester la protection, `npm run test:docker` lance aussi un runtime hébergé configuré avec un émetteur fictif, sans réseau et sans port publié : les API, messages et QR sont inaccessibles sans session. Les parcours de connexion et de révocation complets sont testés avec un émetteur OIDC simulé, des jetons signés et de faux appareils. Aucun mode de connexion de test n’existe dans le serveur de production.
+
+
+Validation après lot 3 : **214 tests réussis sur Mac et Linux**, puis recette `npm run test:docker` réussie, y compris le refus d’un hébergement sans OIDC et le refus d’accès aux API/QR/contenus sans session dans un runtime protégé isolé. La configuration du Compose hébergé a été analysée avec des valeurs fictives uniquement ; le proxy n’a pas été démarré.
