@@ -69,11 +69,11 @@ test('liaison : QR en mémoire, validation, identité, import 7 jours', async ()
   assert.equal(t.unread, 1);
   assert.equal(t.channel, 'whatsapp');
   assert.deepEqual(JSON.parse(t.trail).map(x => x.body), ['Bonjour, on se voit jeudi ?']);
-  assert.equal(store.countThreads(accountId).threads, 1);
+  assert.equal(store.countThreads(accountId).threads, 2);
   const done = wa.linkStatus(linkId);
-  assert.deepEqual({ status: done.status, threads: done.threads, messages: done.messages }, { status: 'connected', threads: 1, messages: 2 });
+  assert.deepEqual({ status: done.status, threads: done.threads, messages: done.messages }, { status: 'connected', threads: 2, messages: 3 });
   assert.deepEqual(wa.sync.permissions(accountId), ['read', 'drafts', 'send']);
-  assert.equal(wa.sync.progress(accountId).status, 'idle');
+  assert.equal(wa.sync.progress(accountId).status, 'syncing', 'isLatest seul ne prouve pas la fin de l’historique');
   const contact = db.prepare('SELECT * FROM contacts WHERE account_id = ?').get(accountId);
   assert.equal(contact.name, 'Claire Dubois');
   assert.equal(contact.title, '+33698765432');

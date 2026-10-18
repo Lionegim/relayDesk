@@ -10,18 +10,18 @@ Le connecteur de Relay Desk utilise [Baileys](https://github.com/WhiskeySockets/
 2. Dans Relay Desk, **Ajouter un canal → WhatsApp**, choisir le profil et le nom du compte.
 3. Lire les accès et limites, puis **Afficher le QR code**.
 4. Dans WhatsApp sur le téléphone, **Réglages → Appareils connectés → Connecter un appareil**, puis scanner le QR en direct sur le Mac. Il se renouvelle et expire : ne pas utiliser une ancienne capture.
-5. La liaison vérifie l’identité du téléphone, puis ouvre la boîte du profil choisi. L’historique peut continuer à arriver après l’ouverture. Sa disponibilité dépend de WhatsApp ; l’interface affiche les comptes et messages effectivement importés.
+5. La liaison vérifie l’identité du téléphone, puis ouvre la boîte du profil choisi. L’historique arrive par lots après l’ouverture. Le compte connecté ne signifie pas que l’import est terminé. Sa disponibilité dépend du téléphone et de WhatsApp ; l’interface affiche les conversations et messages effectivement importés.
 
 Le QR crée un accès en lecture et envoi pour ce Mac. L’application n’envoie qu’après aperçu exact et confirmation à usage unique. Il n’y a ni envoi automatique par l’IA, ni synchronisation du courrier vers Dex ou un agrégateur tiers.
 
 ## Portée de cette version
 
-- Conversations individuelles en texte sur les sept derniers jours disponibles, puis réception des nouveaux messages. L’ordre et la quantité de l’historique reçu dépendent de WhatsApp.
-- Groupes, statuts, diffusions, chaînes, médias et légendes exclus. Les messages à vue unique et éphémères ne sont pas conservés ; les politiques de discussion reçues sont mémorisées et les contenus déjà importés sont retirés si la discussion est identifiée comme éphémère.
-- Limites : 500 discussions avec messages, 200 messages conservés par discussion, fil IA limité aux 50 messages précédant le dernier, texte importé limité à 8 000 caractères par message.
+- Conversations individuelles et groupes en texte sur les sept derniers jours disponibles, puis réception des nouveaux messages. L’ordre et la quantité de l’historique reçu dépendent de WhatsApp.
+- Statuts, diffusions, chaînes, médias et légendes exclus. Les messages à vue unique et éphémères ne sont pas conservés ; les politiques de discussion reçues sont mémorisées et les contenus déjà importés sont retirés si la discussion est identifiée comme éphémère.
+- La fenêtre de sept jours ne comporte plus de plafond silencieux de 500 discussions ou de 200 messages par discussion. Tous les textes importés de cette fenêtre sont consultables ; le texte importé reste limité à 8 000 caractères par message. Le contexte transmis à l’IA est borné à 24 000 caractères, en conservant les échanges les plus récents.
 - Contacts des discussions importées : nom disponible, numéro lorsqu’il est connu et dernière interaction. Les identifiants privés `@lid` ne sont pas affichés comme des numéros de téléphone.
 - Lu/non lu, drapeau, archivage, dossiers et brouillons restent **locaux**. Aucun accusé de lecture n’est envoyé par un clic de lecture dans Relay.
-- Réponse texte dans une discussion existante, au plus 4 096 caractères. Pas de nouveau destinataire WhatsApp, réponse à tous, transfert, médias ou groupes dans cette version. **Nouveau message** reste réservé aux comptes email.
+- Réponse texte dans une discussion existante, au plus 4 096 caractères. Les groupes sont disponibles en lecture et pour l’IA, avec les auteurs fournis par WhatsApp ; leur envoi n’est pas activé. Pas de nouveau destinataire WhatsApp, réponse à tous, transfert ou médias. **Nouveau message** reste réservé aux comptes email.
 - Résumé, classement et proposition de réponse via l’assistant commun. L’IA n’est appelée qu’à la demande de l’utilisateur ; le panneau indique que le fil sélectionné est transmis à Mistral. Le classement WhatsApp reste local.
 
 ## Envoi
@@ -41,3 +41,9 @@ Le redémarrage reprend les sessions déjà appairées. Fermer une fenêtre avan
 ## Vérification
 
 Les tests utilisent des sockets fictifs : authentification, chiffrement, import filtré, politiques éphémères, reconnexion, isolation des profils, brouillons, aperçu exact et usage unique. Aucun compte réel n’est nécessaire pour ces tests. Une véritable connexion doit être vérifiée avec le scan du propriétaire ; aucun message de test réel n’est envoyé sans validation distincte.
+
+## Récupérer les autres conversations
+
+Dans la boîte WhatsApp du profil concerné, **Actualiser l’historique** demande au téléphone l’historique des sept derniers jours via la session déjà liée. Cette demande technique ne publie aucun message dans les conversations. Garder WhatsApp ouvert et le téléphone connecté facilite la récupération. Les lots d’historique sont fusionnés et dédupliqués ; les filtres de date et de confidentialité restent appliqués avant stockage.
+
+Les compteurs indiquent uniquement ce qui est reçu sur le Mac. Une attente, une erreur ou une réception partielle ne doit pas être présentée comme une synchronisation complète. Si WhatsApp refuse la récupération avec la session existante, la reconnexion éventuelle se fera explicitement par le parcours QR, avec le même compte, sans effacer les conversations du téléphone.

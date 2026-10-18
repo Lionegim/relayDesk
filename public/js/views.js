@@ -611,7 +611,7 @@ function connectWizard(s) {
             </div>
             ${when(d.auth === 'qr', () => html`
               ${when(!c.linkId, () => html`<p class="muted" style="margin:0">${d.scopesNote}</p>`)}
-              ${when(!c.linkId, () => html`<p class="muted" style="margin:0">Discussions individuelles en texte, sur les 7 derniers jours disponibles. Groupes, médias, messages éphémères et vue unique exclus. L’historique disponible dépend de WhatsApp.</p>`)}
+              ${when(!c.linkId, () => html`<p class="muted" style="margin:0">Discussions individuelles et groupes en texte, sur les 7 derniers jours disponibles. Groupes en lecture et analyse ; envoi réservé aux discussions individuelles. Médias, messages éphémères et vue unique exclus. L’historique disponible dépend de WhatsApp.</p>`)}
               <p class="muted" style="font-size:12px;margin:0">Connecteur communautaire non officiel : la liaison peut être interrompue ou limitée par WhatsApp.</p>
               <div class="whatsapp-link">
                 ${when(c.busy || (c.linkId && !c.link?.qrDataUrl && !c.error && c.link?.status !== 'connected'), () => html`<span class="spinner"></span><span>${c.link?.status === 'syncing' ? 'Liaison reçue, synchronisation en cours…' : 'Préparation de la liaison…'}</span>`)}

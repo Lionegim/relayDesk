@@ -1,5 +1,5 @@
-// Filtrage des messages WhatsApp : conversations directes seulement, texte seulement.
-// Groupes, statuts, diffusions et chaînes sont ignorés en V1, comme les messages éphémères et à vue unique.
+// Filtrage des messages WhatsApp : discussions individuelles et groupes, texte seulement.
+// Statuts, diffusions, chaînes, messages éphémères et vue unique restent exclus.
 import { createHash } from 'node:crypto';
 import { initialsOf } from '../gmail/parse.js';
 
