@@ -79,3 +79,44 @@ test('déconnexion : attend l’action en cours du même compte', async () => {
   await done;
   assert.deepEqual(order, ['action', 'suppression']);
 });
+
+test('migration 001 → 002 : dossier importé, enfant local et second lien survivent à la déconnexion', async () => {
+  const { DatabaseSync } = await import('node:sqlite');
+  const { mkdtempSync, readFileSync, rmSync } = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+  const { openDatabase } = await import('../src/db/index.js');
+  const { createStore } = await import('../src/store.js');
+  const dir = mkdtempSync(join(tmpdir(), 'relay-mig-'));
+  const path = join(dir, 'relay.db');
+  try {
+    // Base au format 001, avec un dossier importé porté par folders.account_id.
+    const old = new DatabaseSync(path);
+    old.exec(readFileSync(new URL('../src/db/migrations/001_init.sql', import.meta.url), 'utf8'));
+    old.exec(`PRAGMA user_version = 1;
+      INSERT INTO profiles (id, name, kind, initials) VALUES ('perso', 'Personnel', 'Profil personnel', 'JH');
+      INSERT INTO accounts (id, profile_id, name, channel, svc, status, c) VALUES (1, 'perso', 'Gmail A', 'email', 'gmail', 'Connecté', 'ok'), (2, 'perso', 'Gmail B', 'email', 'gmail', 'Connecté', 'ok');
+      INSERT INTO folders (id, profile_id, name, parent_id, account_id, external_id) VALUES ('g1_Label_7', 'perso', 'Clients', NULL, 1, 'Label_7');
+      INSERT INTO folders (id, profile_id, name, parent_id) VALUES ('fLocal', 'perso', 'Atlas', 'g1_Label_7');`);
+    old.close();
+
+    const db = openDatabase(path);
+    assert.ok(db.prepare('PRAGMA user_version').get().user_version >= 2);
+    assert.equal(db.prepare('SELECT label_id FROM folder_labels WHERE folder_id = ? AND account_id = 1').get('g1_Label_7').label_id, 'Label_7');
+    // Second lien : le même dossier correspond aussi à un libellé du compte B.
+    db.prepare("INSERT INTO folder_labels (folder_id, account_id, label_id) VALUES ('g1_Label_7', 2, 'Label_3')").run();
+    const store = createStore(db);
+    const disconnect = createGmailDisconnect({ store, vault: {}, sync: { forget: (id, fn) => fn() }, fetchImpl: async () => new Response('{}'), log: {} });
+    assert.deepEqual(await disconnect(1), { disconnected: true, revoked: true });
+
+    const folders = Object.fromEntries(db.prepare('SELECT id, name, parent_id, account_id FROM folders').all().map(f => [f.id, { ...f }]));
+    assert.deepEqual(folders.g1_Label_7, { id: 'g1_Label_7', name: 'Clients', parent_id: null, account_id: null });
+    assert.equal(folders.fLocal.parent_id, 'g1_Label_7', 'l’enfant local garde son parent');
+    assert.deepEqual(db.prepare('SELECT folder_id, account_id, label_id FROM folder_labels').all().map(r => ({ ...r })), [{ folder_id: 'g1_Label_7', account_id: 2, label_id: 'Label_3' }]);
+    assert.equal(store.folderPath('fLocal'), 'Clients/Atlas', 'chemin toujours valide pour le compte B');
+    assert.equal(store.folderLabel('g1_Label_7', 2), 'Label_3');
+    db.close();
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});

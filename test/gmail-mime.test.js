@@ -96,3 +96,38 @@ test('en-tête References long replié', () => {
   assert.ok(lines.every(l => l.length <= 78));
   assert.equal(headersOf(mime).References, refs);
 });
+
+test('revue P1 : un nom encodé ne peut pas introduire de destinataire', () => {
+  const raw = '=?UTF-8?B?ZXh0cmFAZXhhbXBsZS50ZXN0LCBTdXBwb3J0?= <sender@example.test>';
+  assert.deepEqual(parseAddressList(raw), [{ name: 'extra@example.test, Support', email: 'sender@example.test' }]);
+  const e = envelope({ mode: 'replyAll', own, original: { ...original, from: raw, to: 'jh@gmail.com', cc: '', replyTo: '' } });
+  assert.deepEqual([...e.to, ...e.cc].map(a => a.email), ['sender@example.test']);
+  // Même chose dans un nom entre guillemets et dans un commentaire.
+  assert.deepEqual(parseAddressList('"x@evil.test, y" <s@example.test>').map(a => a.email), ['s@example.test']);
+  assert.deepEqual(parseAddressList('s@example.test (=?UTF-8?B?ZXh0cmFAZXhhbXBsZS50ZXN0LCBTdXBwb3J0?=)').map(a => a.email), ['s@example.test']);
+});
+
+test('revue : commentaires, échappements, groupes', () => {
+  assert.deepEqual(parseAddressList('alice@example.test (Alice), bob@example.test'), [
+    { name: 'Alice', email: 'alice@example.test' }, { name: '', email: 'bob@example.test' },
+  ]);
+  assert.deepEqual(parseAddressList('"Le \\"chef\\", lui" <c@a.fr>'), [{ name: 'Le "chef", lui', email: 'c@a.fr' }]);
+  assert.deepEqual(parseAddressList('a@x.fr (Alice (travail))'), [{ name: 'Alice (travail)', email: 'a@x.fr' }]);
+  assert.deepEqual(parseAddressList('Bob (bureau) <b@x.fr>'), [{ name: 'Bob', email: 'b@x.fr' }]);
+  assert.deepEqual(parseAddressList('Équipe: a@x.fr, B <b@x.fr>;, c@x.fr').map(a => a.email), ['a@x.fr', 'b@x.fr', 'c@x.fr']);
+  assert.deepEqual(parseAddressList('undisclosed-recipients:;'), []);
+  // Un From au format commentaire permet de répondre.
+  const e = envelope({ mode: 'reply', own, original: { ...original, from: 'alice@example.test (Alice)', replyTo: '' } });
+  assert.deepEqual(e.to, [{ name: 'Alice', email: 'alice@example.test' }]);
+});
+
+test('revue : limite de 998 octets par ligne', () => {
+  const longSubject = 'x'.repeat(1100);
+  const mime = buildMessage({ from: own, to: [own], subject: longSubject, body: '' });
+  assert.ok(mime.split('\r\n').every(l => l.length <= 78), 'objet encodé puis replié');
+  assert.equal(decodeWords(headersOf(mime).Subject), longSubject);
+  const longName = buildMessage({ from: own, to: [{ name: 'N'.repeat(300), email: 'n@x.fr' }], subject: 's', body: '' });
+  assert.ok(longName.split('\r\n').every(l => l.length <= 78));
+  assert.throws(() => buildMessage({ from: own, to: [own], subject: 's', references: `<${'a'.repeat(1000)}@x.fr>`, body: '' }), MimeError);
+  assert.throws(() => formatAddress({ email: `${'a'.repeat(250)}@x.fr` }), MimeError);
+});

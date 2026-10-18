@@ -28,51 +28,120 @@ function encodedWords(s) {
   return words.map(w => `=?UTF-8?B?${Buffer.from(w, 'utf8').toString('base64')}?=`).join(' ');
 }
 
+// Texte d'en-tête : encodé en mots RFC 2047 s'il n'est pas ASCII ou s'il contient un mot trop long pour être replié.
+const needsEncoding = s => !isAscii(s) || s.split(' ').some(w => w.length > 60);
+
 export function encodeHeaderText(value, what = 'En-tête') {
   noBreaks(String(value), what);
-  return isAscii(value) ? value : encodedWords(value);
+  return needsEncoding(value) ? encodedWords(value) : value;
 }
 
 export function formatAddress({ name = '', email }) {
   noBreaks(String(email), 'Adresse');
   noBreaks(String(name), 'Nom');
-  if (!EMAIL.test(email)) throw new MimeError(`Adresse invalide : ${email}`);
+  if (email.length > 254 || !EMAIL.test(email)) throw new MimeError(`Adresse invalide : ${email}`);
   if (!name || name === email) return email;
-  const display = isAscii(name)
-    ? (/[()<>@,;:\\".[\]]/.test(name) ? `"${name.replace(/(["\\])/g, '\\$1')}"` : name)
-    : encodedWords(name);
+  const display = needsEncoding(name)
+    ? encodedWords(name)
+    : (/[()<>@,;:\\".[\]]/.test(name) ? `"${name.replace(/(["\\])/g, '\\$1')}"` : name);
   return `${display} <${email}>`;
 }
 
-// Liste d'adresses d'un en-tête (virgules hors guillemets et chevrons). Les entrées sans adresse valide sont ignorées.
-export function parseAddressList(raw) {
-  const s = decodeWords(raw || '');
+// Découpe au premier niveau : virgules hors guillemets, commentaires et chevrons, en respectant les échappements.
+// L'analyse porte sur l'en-tête brut : les mots RFC 2047 ne sont décodés que dans les noms, après coup,
+// pour qu'un nom encodé ne puisse jamais introduire d'adresse.
+function splitTopLevel(s, sep) {
   const parts = [];
-  let cur = '', quoted = false, angle = false;
-  for (const ch of s) {
-    if (ch === '"') quoted = !quoted;
-    else if (ch === '<' && !quoted) angle = true;
-    else if (ch === '>' && !quoted) angle = false;
-    if (ch === ',' && !quoted && !angle) { parts.push(cur); cur = ''; } else cur += ch;
+  let cur = '', quoted = false, depth = 0, angle = false;
+  for (let i = 0; i < s.length; i++) {
+    const ch = s[i];
+    if ((quoted || depth) && ch === '\\' && i + 1 < s.length) { cur += ch + s[++i]; continue; }
+    if (quoted) { if (ch === '"') quoted = false; }
+    else if (depth) { if (ch === '(') depth++; else if (ch === ')') depth--; }
+    else if (ch === '"') quoted = true;
+    else if (ch === '(') depth++;
+    else if (ch === '<') angle = true;
+    else if (ch === '>') angle = false;
+    else if (sep.includes(ch) && !angle) { parts.push(cur); cur = ''; continue; }
+    cur += ch;
   }
   parts.push(cur);
-  return parts.map(p => {
-    const m = p.match(/^\s*(?:"?((?:[^"\\]|\\.)*?)"?\s*)?<([^>]+)>\s*$/);
-    const email = (m ? m[2] : p).trim().toLowerCase();
-    const name = m ? (m[1] || '').replace(/\\(.)/g, '$1').trim() : '';
-    return EMAIL.test(email) ? { name, email } : null;
-  }).filter(Boolean);
+  return parts;
 }
 
-// Repli des en-têtes longs sur les espaces (RFC 5322 §2.2.3).
+// Retire les commentaires (imbriqués) et renvoie le texte restant et le premier commentaire.
+function stripComments(s) {
+  let out = '', depth = 0, quoted = false, comment = '', first = null;
+  for (let i = 0; i < s.length; i++) {
+    const ch = s[i];
+    if ((quoted || depth) && ch === '\\' && i + 1 < s.length) {
+      if (depth) comment += s[i + 1]; else out += ch + s[i + 1];
+      i++; continue;
+    }
+    if (depth) {
+      if (ch === '(') { depth++; comment += ch; }
+      else if (ch === ')') { if (--depth === 0) { if (first === null) first = comment.trim(); comment = ''; } else comment += ch; }
+      else comment += ch;
+      continue;
+    }
+    if (ch === '"') quoted = !quoted;
+    if (ch === '(' && !quoted) { depth = 1; continue; }
+    out += ch;
+  }
+  return { text: out, comment: first };
+}
+
+const unquote = s => {
+  const t = s.trim();
+  return t.startsWith('"') && t.endsWith('"') && t.length > 1 ? t.slice(1, -1).replace(/\\(.)/g, '$1') : t;
+};
+
+function parseMailbox(raw) {
+  const { text, comment } = stripComments(raw);
+  const lt = text.lastIndexOf('<');
+  let email, name;
+  if (lt >= 0) {
+    const gt = text.indexOf('>', lt);
+    if (gt < 0 || text.slice(gt + 1).trim()) return null;
+    email = text.slice(lt + 1, gt);
+    name = unquote(text.slice(0, lt));
+    // Mots encodés seulement hors guillemets (RFC 2047 §5) ; le résultat reste un simple nom.
+    if (!/^\s*"/.test(text.slice(0, lt))) name = decodeWords(name);
+  } else {
+    email = text;
+    name = comment ? decodeWords(comment) : '';
+  }
+  email = email.replace(/\s+/g, '').toLowerCase();
+  if (email.startsWith('@') || email.includes(':')) email = email.slice(email.lastIndexOf(':') + 1); // route source obsolète
+  return EMAIL.test(email) && email.length <= 254 ? { name: name.replace(/\s+/g, ' ').trim(), email } : null;
+}
+
+// Liste d'adresses d'un en-tête (mailboxes et groupes). Les entrées sans adresse valide sont ignorées.
+export function parseAddressList(raw) {
+  const out = [];
+  for (const part of splitTopLevel(String(raw || ''), ',')) {
+    // Groupe « nom: a, b; » : on garde ses membres.
+    const group = splitTopLevel(part, ':');
+    if (group.length > 1 && !part.trim().startsWith('<')) {
+      const inner = group.slice(1).join(':').replace(/;\s*$/, '');
+      out.push(...inner.split(',').map(parseMailbox).filter(Boolean));
+      continue;
+    }
+    const m = parseMailbox(part.replace(/;\s*$/, ''));
+    if (m) out.push(m);
+  }
+  return out;
+}
+
+// Repli des en-têtes longs sur les espaces (RFC 5322 §2.2.3). Un élément indivisible au-delà de 998 octets est refusé.
 function fold(line) {
-  if (line.length <= MAX_LINE) return line;
   const out = [];
   let cur = '';
   for (const word of line.split(' ')) {
     if (cur && (cur + ' ' + word).length > MAX_LINE) { out.push(cur); cur = word; } else cur = cur ? cur + ' ' + word : word;
   }
   out.push(cur);
+  if (out.some(l => Buffer.byteLength(l) > 997)) throw new MimeError(`En-tête ${line.slice(0, line.indexOf(':'))} trop long.`);
   return out.join(CRLF + ' ');
 }
 
