@@ -4,11 +4,19 @@
 import { createHash, timingSafeEqual } from 'node:crypto';
 import { HttpError, badRequest } from '../../http/errors.js';
 import { buildMessage, envelope, forwardBody, formatAddress, parseAddressList, MimeError } from '../gmail/mime.js';
-import { readComposeInput } from '../gmail/outbox.js';
+import { readComposeInput } from '../../mail/input.js';
 import { replyMeta } from './parse.js';
 
 const CONFIRM_TTL_MS = 10 * 60000;
 const digestOf = (mime, threadId) => createHash('sha256').update(`thread:${threadId || ''}\n`).update(mime, 'utf8').digest('hex');
+
+// Clé du rattachement au fil d'un brouillon Outlook : un PATCH ne modifie ni In-Reply-To, ni References, ni
+// l'association à la conversation. Si cette clé change (répondre → transférer, nouveau message dans le fil),
+// le brouillon est recréé à partir du MIME exact.
+const threadKeyOf = (mode, env, threadId) => createHash('sha256').update(JSON.stringify({
+  kind: mode === 'new' ? 'new' : mode === 'forward' ? 'forward' : 'reply',
+  threadId: threadId || null, inReplyTo: env.inReplyTo || null, references: env.references || null,
+})).digest('hex');
 
 const mimeErrors = fn => {
   try {
@@ -87,8 +95,16 @@ export function createOutlookOutbox({ store, sync, ownerName = '' }) {
       if (!can(ctx.accountId, 'drafts') || !hasRecipient({ mode, to })) return sync.queue(ctx.accountId, local);
       return sync.exclusive(ctx.accountId, async ({ graph }) => {
         await ensureReply(graph, messageId);
-        const { mime, env, body, ctx: fresh } = compose(messageId, { text, mode, to, cc, subject });
-        let draftId = fresh.draftExternalId;
+        const { mime, env, body, threadId, ctx: fresh } = compose(messageId, { text, mode, to, cc, subject });
+        const threadKey = threadKeyOf(mode, env, threadId);
+        let draftId = fresh.draftExternalId, previousDraftKept = false;
+        // Clé inconnue (brouillon antérieur ou colonne draft_thread_key absente) : on ne peut pas prouver que les
+        // en-têtes de fil du brouillon distant sont à jour, donc on recrée. L'ancien brouillon distant est conservé
+        // (il a pu être modifié ailleurs ; Graph n'offre pas de suppression conditionnelle).
+        if (draftId && fresh.draftThreadKey !== threadKey) {
+          draftId = null;
+          previousDraftKept = true;
+        }
         if (draftId) {
           try {
             await graph.patchDraft(draftId, {
@@ -101,7 +117,8 @@ export function createOutlookOutbox({ store, sync, ownerName = '' }) {
           }
         }
         if (!draftId) draftId = (await graph.createDraftMime(mime)).id;
-        return store.saveDraft(messageId, text, { mode, to, cc, subject, externalId: draftId, synced: true });
+        const saved = store.saveDraft(messageId, text, { mode, to, cc, subject, externalId: draftId, synced: true, threadKey });
+        return previousDraftKept ? { ...saved, previousDraftKept } : saved;
       });
     },
 
