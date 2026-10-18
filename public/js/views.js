@@ -203,7 +203,7 @@ function reader(s, v) {
         <div class="grow"></div>
       </div>
       ${sel ? messageView(s, v, sel) : html`<div class="no-selection">Aucun message sélectionné</div>`}
-      ${when(s.ai && sel, () => aiPanel(s, sel))}
+      ${when(s.ai && sel && s.ai.forId === sel.id, () => aiPanel(s, sel))}
     </main>`;
 }
 
@@ -217,7 +217,7 @@ function messageView(s, v, sel) {
     <div class="reader-scroll">
       <div class="reader-top">
         <span>${plural(sel.count || 1, 'message')}</span>
-        <button class="link-btn" data-on-click="aiSummary">${icon('sparkle')}Résumer</button>
+        <div style="display:flex;gap:12px"><button class="link-btn" data-on-click="aiClassify">Classer</button><button class="link-btn" data-on-click="aiSummary">${icon('sparkle')}Résumer</button></div>
       </div>
       <div class="msg-head">
         <span class="avatar">${sel.initials}</span>
@@ -270,7 +270,7 @@ function messageView(s, v, sel) {
             ${(() => {
               const acc = v.profile.accounts.find(a => a.id === sel.accountId);
               const allowed = !!acc?.perms?.includes('send');
-              const title = allowed ? 'Vérifier puis envoyer' : 'L’envoi demande un compte Gmail avec la permission Envoi';
+              const title = allowed ? 'Vérifier puis envoyer' : 'L’envoi demande un compte de messagerie avec la permission Envoi';
               return html`<button class="btn btn-brand" data-on-click="sendPreview" title="${title}" ${raw(allowed && draft.trim() && !s.confirm ? '' : 'disabled')}>Envoyer</button>`;
             })()}
           </div>
@@ -279,7 +279,11 @@ function messageView(s, v, sel) {
 }
 
 function aiPanel(s, sel) {
-  const ai = s.ai, draftMode = ai.mode === 'draft';
+  const ai = s.ai, draftMode = ai.mode === 'draft', classifyMode = ai.mode === 'classify';
+  const categories = { action: 'À traiter', waiting: 'En attente', information: 'Information', newsletter: 'Newsletter', spam: 'Indésirable potentiel' };
+  const priorities = { low: 'Basse', normal: 'Normale', high: 'Haute' };
+  const folders = s.data.folders.filter(f => f.p === sel.p);
+  const configured = s.data.ai?.configured;
   const result = ai.forId === sel.id ? ai.result : null;
   const n = sel.count || 1;
   return html`
@@ -293,10 +297,11 @@ function aiPanel(s, sel) {
         <button class="close-btn" data-on-click="aiClose" aria-label="Fermer">×</button>
       </div>
       <div class="ai-tabs">
-        ${[['summary', 'Résumer le fil'], ['draft', 'Rédiger une réponse']].map(([mode, label]) => html`
+        ${[['summary', 'Résumer'], ['classify', 'Classer'], ['draft', 'Répondre']].map(([mode, label]) => html`
           <button class="${cls('ai-tab', ai.mode === mode && 'is-on')}" data-on-click="aiTab" data-mode="${mode}">${label}</button>`)}
       </div>
       <div class="ai-body">
+        <p class="muted" style="font-size:12px;margin:0">${configured ? 'À ta demande, le texte de ce fil est transmis à Mistral. Aucun déplacement ni envoi automatique.' : 'L’IA attend sa configuration. Ajoute MISTRAL_API_KEY au fichier .env sur ton Mac, puis redémarre Relay Desk.'}</p>
         ${when(draftMode, () => html`
           <label class="field">
             <span class="field-label">Intention</span>
@@ -313,15 +318,25 @@ function aiPanel(s, sel) {
             <div class="skeleton" style="width:100%"></div><div class="skeleton" style="width:91.6%"></div><div class="skeleton" style="width:75%"></div>
           </div>`)}
         ${when(ai.error, () => html`<div class="alert">${ai.error}</div>`)}
-        ${when(result, () => html`<div class="ai-result">${result}</div>`)}
+        ${when(result, () => classifyMode ? html`
+          <div class="ai-result"><strong>${categories[result.category]}</strong><br>Priorité : ${priorities[result.priority]}<br>${result.reason}</div>
+          <label class="field"><span class="field-label">Dossier à appliquer</span>
+            <select data-on-change="aiFolder" ${raw(ai.loading || result.appliedAt ? 'disabled' : '')}>
+              <option value="" ${raw(!ai.folderId ? 'selected' : '')}>Garder le dossier actuel</option>
+              ${folders.map(f => html`<option value="${f.id}" ${raw(ai.folderId === f.id ? 'selected' : '')}>${f.name}</option>`)}
+            </select>
+          </label>
+          <p class="muted" style="font-size:12px;margin:0">${result.appliedAt ? 'Classement déjà appliqué.' : 'La catégorie et la priorité restent dans Relay Desk. Le dossier choisi sera synchronisé avec ton compte.'}</p>` : html`<div class="ai-result">${result.text}</div>`)}
+        ${when(result?.createdAt, () => html`<span class="muted" style="font-size:11px">Analyse enregistrée à ${timeOf(result.createdAt)}${result.cached ? ' · réutilisée' : ''}</span>`)}
       </div>
       <div class="ai-foot">
-        ${when(result, () => html`<button class="btn btn-ghost" data-on-click="aiRun">Régénérer</button>`)}
+        ${when(result, () => html`<button class="btn btn-ghost" data-on-click="aiRegenerate" ${raw(ai.loading || !configured ? 'disabled' : '')}>Régénérer</button>`)}
         <div class="grow"></div>
-        ${when(draftMode && result, () => html`<button class="btn btn-brand" data-on-click="aiInsert">Insérer dans la réponse</button>`)}
+        ${when(draftMode && result, () => html`<button class="btn btn-brand" data-on-click="aiInsert" ${raw(ai.loading ? 'disabled' : '')}>Insérer dans la réponse</button>`)}
+        ${when(classifyMode && result && !result.appliedAt, () => html`<button class="btn btn-brand" data-on-click="aiApply" ${raw(ai.loading ? 'disabled' : '')}>Appliquer le classement</button>`)}
         ${when(!result, () => html`
-          <button class="btn btn-brand" data-on-click="aiRun" ${raw(ai.loading ? 'disabled' : '')}>
-            ${when(ai.loading, () => html`<span class="spinner"></span>`)}${ai.mode === 'summary' ? 'Résumer' : 'Générer'}
+          <button class="btn btn-brand" data-on-click="aiRun" ${raw(ai.loading || !configured ? 'disabled' : '')}>
+            ${when(ai.loading, () => html`<span class="spinner"></span>`)}${ai.mode === 'summary' ? 'Résumer' : classifyMode ? 'Analyser le classement' : 'Proposer une réponse'}
           </button>`)}
       </div>
     </div>`;

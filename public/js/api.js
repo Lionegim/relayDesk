@@ -23,6 +23,8 @@ export const api = {
   createFolder: folder => call('POST', '/api/folders', folder),
   updateContact: (id, patch) => call('PATCH', `/api/contacts/${encodeURIComponent(id)}`, patch),
   connectAccount: (profileId, account) => call('POST', `/api/profiles/${encodeURIComponent(profileId)}/accounts`, account),
-  summarize: messageId => call('POST', '/api/ai/summary', { messageId }),
+  summarize: (messageId, regenerate = false) => call('POST', '/api/ai/summary', { messageId, regenerate }),
+  classify: (messageId, regenerate = false) => call('POST', '/api/ai/classify', { messageId, regenerate }),
+  applyClassification: (messageId, proposalId, folderId) => call('POST', '/api/ai/classify/apply', { messageId, proposalId, folderId }),
   draftReply: (messageId, tone, intent) => call('POST', '/api/ai/draft', { messageId, tone, intent }),
 };

@@ -14,7 +14,7 @@ npm test
 
 Node 22.13 ou plus récent (`node:sqlite` sans option). Le plan vise Node 24.
 
-Pour connecter tes comptes : [Gmail](docs/gmail.md), [Outlook / Microsoft 365](docs/outlook.md). Le [parcours de rédaction commun et l’architecture multi-fournisseurs](docs/messagerie.md) décrivent les nouveaux messages et l’IA.
+Pour connecter tes comptes : [Gmail](docs/gmail.md), [Outlook / Microsoft 365](docs/outlook.md). L’[assistant IA](docs/ia.md) décrit sa configuration et les données transmises. Le [parcours de rédaction commun et l’architecture multi-fournisseurs](docs/messagerie.md) décrivent les nouveaux messages et l’IA.
 
 | Variable | Rôle | Défaut |
 | --- | --- | --- |
@@ -33,7 +33,7 @@ Pour connecter tes comptes : [Gmail](docs/gmail.md), [Outlook / Microsoft 365](d
 
 - **Messages** : profils (Anove, Client Atlas, Personnel), favoris (boîte unifiée, non lus, avec drapeau, brouillons), filtres par canal, recherche, liste redimensionnable (280 à 720 px, double-clic pour réinitialiser, largeur mémorisée), lecture du fil, lu/non lu, drapeau, archivage, réponse/réponse à tous/transfert, brouillons enregistrés.
 - **Dossiers et sous-dossiers** : création (Entrée pour valider, Échap pour annuler), repli, déplacement par glisser-déposer ou par le menu « Déplacer ».
-- **Assistant (Mistral)** : résumé du fil et rédaction d’une réponse (intention + ton), insertion dans la réponse. Le navigateur n’envoie que l’identifiant du message ; le serveur construit le fil, le balise comme contenu non fiable et appelle Mistral. La clé ne quitte jamais le serveur.
+- **Assistant (Mistral)** : résumé du fil, suggestion de catégorie/priorité/dossier et rédaction d’une réponse (intention + ton), pour Gmail et Outlook. Résumés et classements conservés localement, invalidés si le fil change. Le classement dans un dossier exige un clic et la permission de classement du compte. Les réponses proposées restent modifiables et passent toujours par l’aperçu exact avant chaque envoi. Le navigateur n’envoie que l’identifiant du message ; le serveur construit le fil, le balise comme contenu non fiable et appelle Mistral. La clé ne quitte jamais le serveur.
 - **Contacts** : groupes, recherche, tri, fréquence de suivi, sélection et « Voir les messages ».
 - **Ajout d’un canal** : assistant en 4 étapes (service, configuration, autorisation, synchronisation).
 - **Gmail (lecture et classement facultatif)** : autorisation OAuth réelle (PKCE, `gmail.readonly`), jeton chiffré, import des conversations de la période choisie avec progression réelle, libellés en dossiers, mise à jour toutes les 60 secondes par `history.list`, reprise après erreur et passage à « À reconnecter » si l’accès est révoqué. Avec **Libellés** (`gmail.modify`), lu/non lu, drapeau, archivage et dossiers sont renvoyés à Gmail avant la mise à jour locale. Le menu du compte permet de synchroniser et de modifier les permissions ; chaque nouvel accès exige une nouvelle autorisation Google et sa déclaration dans Google Auth Platform → Accès aux données.

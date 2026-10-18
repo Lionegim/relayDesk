@@ -69,7 +69,9 @@ function applyData(data) {
     const m = data.messages.find(x => x.id === Number(id));
     return m && before.get(m.id) === m.sortAt + ':' + m.count;
   }));
-  set({ data, details });
+  const a = state.ai, updated = a && data.messages.find(m => m.id === a.forId);
+  const ai = a && (!updated || before.get(updated.id) !== updated.sortAt + ':' + updated.count) ? null : a;
+  set({ data, details, ai });
 }
 
 let toastTimer;
@@ -164,25 +166,31 @@ function commitFolder() {
 
 // ---------- Assistant ----------
 
-async function aiRun() {
+let aiRequest = 0;
+async function aiRun(regenerate = false) {
   const s = state, sel = derive(s).sel;
-  if (!s.ai || !sel) return;
-  const mode = s.ai.mode, forId = sel.id;
+  if (!s.ai || !sel || s.ai.loading || !s.data.ai?.configured) return;
+  const mode = s.ai.mode, forId = sel.id, request = ++aiRequest, version = selectionVersion, profileId = s.profileId;
   set({ ai: { ...s.ai, loading: true, result: null, error: null, forId } });
   let result = null, error = null;
   try {
-    result = (mode === 'summary' ? await api.summarize(forId) : await api.draftReply(forId, s.aiTone, s.aiIntent)).text;
+    result = mode === 'summary' ? await api.summarize(forId, regenerate)
+      : mode === 'classify' ? await api.classify(forId, regenerate) : await api.draftReply(forId, s.aiTone, s.aiIntent);
   } catch (e) {
     error = e.message;
   }
-  if (state.ai && state.ai.forId === forId && state.ai.mode === mode) set({ ai: { ...state.ai, loading: false, result, error } });
+  if (request === aiRequest && version === selectionVersion && profileId === state.profileId && state.selectedId === forId && state.ai?.forId === forId && state.ai.mode === mode) {
+    if (result && state.details[forId] && mode !== 'draft') state.details[forId].aiResults = { ...state.details[forId].aiResults, [mode]: result };
+    set({ ai: { ...state.ai, loading: false, result, error, folderId: result?.folderId ?? null } });
+  }
 }
 
 function aiOpen(mode) {
   const sel = derive(state).sel;
   if (!sel) return;
-  set({ ai: { mode, result: null, error: null, loading: false, forId: sel.id }, moveOpen: false });
-  if (mode === 'summary') aiRun();
+  aiRequest++;
+  const result = state.details[sel.id]?.aiResults?.[mode] || null;
+  set({ ai: { mode, result, folderId: result?.folderId ?? null, error: null, loading: false, forId: sel.id }, moveOpen: false });
 }
 
 // ---------- Assistant de connexion ----------
@@ -390,7 +398,8 @@ const actions = {
     const version = ++selectionVersion, profileId = state.profileId;
     rememberComposition();
     const m = state.data.messages.find(x => x.id === num(id));
-    set({ selectedId: m.id, moveOpen: false, composing: null });
+    aiRequest++;
+    set({ selectedId: m.id, moveOpen: false, composing: null, ai: null });
     if (m.kind === 'new') {
       try {
         const cached = compositionBuffers.get(m.id);
@@ -455,15 +464,30 @@ const actions = {
   // Assistant IA
   aiSummary: () => aiOpen('summary'),
   aiDraft: () => aiOpen('draft'),
+  aiClassify: () => aiOpen('classify'),
   aiTab: ({ mode }) => { if (state.ai?.mode !== mode) aiOpen(mode); },
-  aiClose: () => set({ ai: null }),
-  aiTone: ({ tone }) => set({ aiTone: tone }),
-  aiIntent: (_, e) => set({ aiIntent: e.target.value }),
+  aiClose: () => { aiRequest++; set({ ai: null }); },
+  aiTone: ({ tone }) => { aiRequest++; set({ aiTone: tone, ai: state.ai ? { ...state.ai, loading: false, result: null } : null }); },
+  aiIntent: (_, e) => { aiRequest++; set({ aiIntent: e.target.value, ai: state.ai ? { ...state.ai, loading: false, result: null } : null }); },
   aiRun: () => aiRun(),
+  aiRegenerate: () => aiRun(true),
+  aiFolder: (_, e) => set({ ai: { ...state.ai, folderId: e.target.value || null } }),
+  aiApply: async () => {
+    const a = state.ai, sel = derive(state).sel;
+    if (!sel || !a?.result || a.loading || a.forId !== sel.id) return;
+    set({ ai: { ...a, loading: true, error: null } });
+    try {
+      const applied = await api.applyClassification(sel.id, a.result.proposalId, a.folderId);
+      if (state.details[sel.id]) delete state.details[sel.id];
+      applyData(await api.state());
+      if (state.ai === a || state.ai?.forId === sel.id) set({ ai: null });
+      notify(applied.synced ? 'Classement synchronisé avec le compte de messagerie.' : 'Classement enregistré dans Relay Desk.');
+    } catch (e) { if (state.ai?.forId === sel.id) set({ ai: { ...state.ai, loading: false, error: e.message } }); }
+  },
   aiInsert: () => {
-    const id = state.ai?.forId, text = state.ai?.result;
-    if (id == null || !text) return;
-    set(s => ({ drafts: { ...s.drafts, [id]: text }, ai: null, composing: s.composing || 'reply' }));
+    const id = state.ai?.forId, text = state.ai?.result?.text;
+    if (id == null || !text || state.selectedId !== id || state.ai?.mode !== 'draft' || state.ai.loading) return;
+    set(s => ({ drafts: { ...s.drafts, [id]: text }, ai: null, composing: 'reply' }));
   },
 
   // Contacts

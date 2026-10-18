@@ -60,6 +60,19 @@ Le modèle répond par un objet JSON :
 - `folderId` est l'identifiant exact (chaîne) du dossier `Dn` de la liste fournie, ou `null` pour toute autre valeur : clé hors liste, identifiant réel, nom de dossier, autre type. Ni un message ni le modèle ne peuvent donc désigner un dossier qui n'a pas été proposé ;
 - le JSON peut être entouré de texte ou d'un bloc de code ; un tableau ou un JSON invalide est refusé.
 
-## Ce qui reste au socle
+## Utilisation dans Relay Desk
 
-Routes, cache des résultats (avec empreinte du fil), interface et application d'un classement après clic : hors de `src/ai`.
+1. Renseigner `MISTRAL_API_KEY` dans `.env` sur le Mac, puis redémarrer l’application. Ne jamais partager ce fichier : il contient aussi les identifiants de connexion. `MISTRAL_MODEL` permet de choisir le modèle.
+2. Ouvrir un message Gmail ou Outlook, puis **Résumer** ou **Classer**. Le panneau indique que le texte du fil sera transmis à Mistral ; chaque analyse demande un clic. Aucun traitement de toute la boîte en arrière-plan.
+3. **Classer** propose une catégorie, une priorité et éventuellement un dossier existant. L’utilisateur peut changer le dossier, ou garder le dossier actuel, puis cliquer **Appliquer le classement**. Catégorie et priorité restent locales ; le déplacement choisi passe par le fournisseur du compte et exige la permission Classement. Aucun archivage, drapeau, effacement ou déplacement automatique.
+4. **Répondre** permet de préciser une intention et un ton. **Insérer dans la réponse** place un texte modifiable dans le compositeur, sans l’enregistrer chez le fournisseur ni l’envoyer. **Envoyer** ouvre toujours l’aperçu exact, suivi de la confirmation à usage unique. Toute modification exige un nouvel aperçu.
+
+## Conservation et limites
+
+La table locale `ai_results` conserve les résumés et classements avec le modèle et une empreinte du contenu, du compte et du profil. Une nouvelle réponse invalide l’analyse. **Régénérer** relance l’IA ; sinon une analyse valide est réutilisée. Les résultats sont supprimés avec le compte ou le message. Les réponses proposées ne sont pas enregistrées automatiquement. La clé Mistral n’est jamais renvoyée au navigateur.
+
+Le modèle reçoit au maximum 200 dossiers du profil ; le sélecteur permet de choisir manuellement les autres dossiers. Les textes sont traités comme données non fiables et la réponse de classement est validée côté serveur. Ces garde-fous réduisent les risques d’instructions malveillantes sans garantir l’exactitude des propositions : l’utilisateur relit les résultats.
+
+Les suggestions ne constituent pas une analyse des pièces jointes, ni une recherche sur l’intégralité de l’historique. Les tests utilisent des messages et réponses fictifs ; un essai réel nécessite une clé valide et envoie le fil sélectionné à Mistral.
+
+Implémentation : `src/mail/assistant-service.js`, routes `/api/ai/summary`, `/api/ai/classify`, `/api/ai/classify/apply`, `/api/ai/draft`.

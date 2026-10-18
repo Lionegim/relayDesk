@@ -4,7 +4,7 @@ import { extname, join, normalize, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { HttpError, badRequest, notFound } from './errors.js';
 import { SERVICES, PERMISSIONS } from '../connectors.js';
-import { summaryPrompt, draftPrompt } from '../ai/assistant.js';
+import { createAssistantService } from '../mail/assistant-service.js';
 import { emailFromIdToken } from '../providers/gmail/oauth.js';
 import { createMailService } from '../mail/service.js';
 
@@ -73,6 +73,7 @@ const accountId = raw => {
 export function createApp({ store, ai, ownerName, gmail = null, providers = {}, allowedHosts = null }) {
   providers = { ...providers, ...(gmail ? { gmail } : {}) };
   const mail = createMailService({ store, providers });
+  const assistant = createAssistantService({ store, ai, mail, ownerName });
   // Autorisation Google : navigation pleine page, puis retour vers l'interface avec le résultat dans l'URL.
   async function oauthRoute(pathname, url, res) {
     if (!['/oauth/google/start', '/oauth/google/callback', '/oauth/microsoft/start', '/oauth/microsoft/callback'].includes(pathname)) throw notFound();
@@ -131,7 +132,7 @@ export function createApp({ store, ai, ownerName, gmail = null, providers = {}, 
     ['POST', /^\/api\/accounts\/([^/]+)\/disconnect$/, ([id]) => {
       return mail.providerFor(accountId(id)).disconnect(accountId(id));
     }],
-    ['GET', /^\/api\/messages\/([^/]+)$/, ([id]) => store.getMessage(messageId(id))],
+    ['GET', /^\/api\/messages\/([^/]+)$/, ([id]) => ({ ...store.getMessage(messageId(id)), aiResults: assistant.results(messageId(id)) })],
     ['PATCH', /^\/api\/messages\/([^/]+)$/, ([id], body) => mail.updateMessage(messageId(id), body)],
     ['POST', /^\/api\/drafts$/, (_, body) => mail.createComposition(body.accountId)],
     ['PUT', /^\/api\/messages\/([^/]+)\/draft$/, ([id], body) => mail.saveDraft(messageId(id), body)],
@@ -145,13 +146,13 @@ export function createApp({ store, ai, ownerName, gmail = null, providers = {}, 
     ['PATCH', /^\/api\/contacts\/([^/]+)$/, ([id], body) => store.updateContact(id, body)],
     ['POST', /^\/api\/profiles\/([^/]+)\/accounts$/, ([id], body) => store.connectAccount(id, body)],
     ['POST', /^\/api\/ai\/summary$/, async (_, body) => {
-      const m = store.getMessage(messageId(body.messageId));
-      return { text: await ai.complete(summaryPrompt(m, ownerName), { maxTokens: 300 }) };
+      return assistant.run('summary', messageId(body.messageId), body);
     }],
     ['POST', /^\/api\/ai\/draft$/, async (_, body) => {
-      const m = store.getMessage(messageId(body.messageId));
-      return { text: await ai.complete(draftPrompt(m, ownerName, body), { temperature: 0.5 }) };
+      return assistant.run('draft', messageId(body.messageId), body);
     }],
+    ['POST', /^\/api\/ai\/classify$/, (_, body) => assistant.run('classify', messageId(body.messageId), body)],
+    ['POST', /^\/api\/ai\/classify\/apply$/, (_, body) => assistant.apply(messageId(body.messageId), body)],
   ];
 
   return http.createServer(async (req, res) => {

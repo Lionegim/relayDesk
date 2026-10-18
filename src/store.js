@@ -54,6 +54,31 @@ export function createStore(db) {
     hasProfile: id => !!q('SELECT 1 FROM profiles WHERE id = ?').get(id),
     getMessage: id => toMessage(row(id), true),
 
+    aiFolders(profileId) {
+      return q('SELECT id, name FROM folders WHERE profile_id = ? ORDER BY position, id').all(profileId)
+        .map(f => ({ id: f.id, name: this.folderPath(f.id) }));
+    },
+    getAIResult(id, kind) {
+      row(id);
+      const r = q('SELECT * FROM ai_results WHERE message_id = ? AND kind = ?').get(id, kind);
+      return r ? { ...JSON.parse(r.result), fingerprint: r.fingerprint, proposalId: r.proposal_id, createdAt: r.created_at, appliedAt: r.applied_at } : null;
+    },
+    saveAIResult(id, kind, fingerprint, result, proposalId) {
+      row(id);
+      q(`INSERT INTO ai_results (message_id, kind, fingerprint, result, proposal_id, created_at) VALUES (?, ?, ?, ?, ?, ?)
+        ON CONFLICT (message_id, kind) DO UPDATE SET fingerprint = excluded.fingerprint, result = excluded.result,
+        proposal_id = excluded.proposal_id, created_at = excluded.created_at, applied_at = NULL`)
+        .run(id, kind, fingerprint, JSON.stringify(result), proposalId, new Date().toISOString());
+      return this.getAIResult(id, kind);
+    },
+    markAIClassified(id, proposalId, folderId) {
+      const result = this.getAIResult(id, 'classify');
+      if (!result || result.proposalId !== proposalId) return;
+      const { fingerprint, proposalId: ignored, createdAt, appliedAt, ...value } = result;
+      q("UPDATE ai_results SET applied_at = ?, result = ? WHERE message_id = ? AND kind = 'classify' AND proposal_id = ?")
+        .run(new Date().toISOString(), JSON.stringify({ ...value, suggestedFolderId: value.folderId, folderId }), id, proposalId);
+    },
+
     // Validation partagée : aucun appel fournisseur ne précède ces contrôles.
     validateMessagePatch(id, patch) {
       const m = row(id), fields = {};
