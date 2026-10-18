@@ -444,22 +444,30 @@ const actions = {
     const c = state.confirm;
     if (c?.kind !== 'send' || c.busy || !c.preview) return;
     set({ confirm: { ...c, busy: true, error: null } });
+    let r;
     try {
-      const r = await api.send(c.messageId, { ...c.input, digest: c.preview.digest });
-      const id = c.messageId;
-      set(s => {
-        const drafts = { ...s.drafts }, composeTo = { ...s.composeTo }, details = { ...s.details };
-        delete drafts[id]; delete composeTo[id]; delete details[id];
-        return { confirm: null, composing: null, drafts, composeTo, details };
-      });
-      const m = state.data.messages.find(x => x.id === id);
-      if (m) m.draft = null;
-      notify(r.draftRemoved === false ? 'Message envoyé. Son brouillon est resté dans Gmail : tu peux l’y supprimer.' : 'Message envoyé.');
-      applyData(await api.state());
+      r = await api.send(c.messageId, { ...c.input, digest: c.preview.digest });
     } catch (e) {
       // 409 : le contenu ou le fil a changé, il faut revérifier ; le bouton de confirmation est désactivé.
       // Une erreur Gmail incertaine (réseau, 5xx) consomme aussi la validation : vérifier à nouveau avant tout nouvel essai.
       set({ confirm: { ...c, busy: false, stale: !/^Erreur Gmail/.test(e.message), error: e.message } });
+      return;
+    }
+    // Envoi confirmé par le serveur : plus rien ici ne doit inviter à renvoyer.
+    const id = c.messageId;
+    set(s => {
+      const drafts = { ...s.drafts }, composeTo = { ...s.composeTo }, details = { ...s.details };
+      delete drafts[id]; delete composeTo[id]; delete details[id];
+      return { confirm: null, composing: null, drafts, composeTo, details };
+    });
+    const m = state.data.messages.find(x => x.id === id);
+    if (m) m.draft = null;
+    const sent = r.draftRemoved === false ? 'Message envoyé. Le brouillon local est effacé ; son brouillon Gmail est conservé, supprime-le dans Gmail si besoin.' : 'Message envoyé.';
+    notify(sent);
+    try {
+      applyData(await api.state());
+    } catch {
+      notify(`${sent} La liste sera actualisée au prochain passage.`);
     }
   },
   confirmDisconnect: async () => {

@@ -42,7 +42,7 @@ test('envoi : seulement avec l’empreinte validée, dans le fil, puis brouillon
   assert.equal(g.sent.length, 0);
 
   store.saveDraft(msg.id, 'brouillon local', { mode: 'reply' });
-  assert.deepEqual(await outbox.send(msg.id, { ...input, digest: p.digest }), { sent: true, draftRemoved: true });
+  assert.deepEqual(await outbox.send(msg.id, { ...input, digest: p.digest }), { sent: true, draftRemoved: true }, 'aucun brouillon Gmail lié');
   assert.equal(g.sent.length, 1);
   assert.equal(g.sent[0].threadId, 't1');
   const mime = decode(g.sent[0].raw);
@@ -55,18 +55,38 @@ test('envoi : seulement avec l’empreinte validée, dans le fil, puis brouillon
   await assert.rejects(outbox.send(msg.id, { text: 'autre', mode: 'reply', digest: (await outbox.preview(msg.id, { text: 'autre', mode: 'reply' })).digest.replace(/^./, c => c === 'a' ? 'b' : 'a') }), e => e.code === 'digest_mismatch');
 });
 
-test('brouillon Gmail existant, même modifié dans Gmail : seul le MIME validé part, puis le brouillon est supprimé', async () => {
-  const { outbox, msg, g } = await ready();
+test('brouillon Gmail lié, même modifié hors de Relay : seul le MIME validé part, le brouillon Gmail est conservé', async () => {
+  const { outbox, msg, g, store } = await ready();
   await outbox.saveDraft(msg.id, { text: 'ancienne version', mode: 'reply' });
-  g.drafts.d1 = { raw: Buffer.from('To: autre@x.fr\r\n\r\nmodifié dans Gmail').toString('base64url'), threadId: 't1' };
+  const external = { raw: Buffer.from('To: autre@x.fr\r\n\r\nmodifié dans Gmail').toString('base64url'), threadId: 't1' };
+  g.drafts.d1 = external; // modification faite dans Gmail
   const input = { text: 'version validée', mode: 'reply' };
   const p = await outbox.preview(msg.id, input);
-  await outbox.send(msg.id, { ...input, digest: p.digest });
+  assert.deepEqual(await outbox.send(msg.id, { ...input, digest: p.digest }), { sent: true, draftRemoved: false });
   assert.equal(g.sent.length, 1);
-  assert.equal(g.sent[0].draftId, undefined, 'pas de drafts/send');
-  assert.ok(!g.calls.some(c => c.path.endsWith('drafts/send')));
+  assert.ok(!g.calls.some(c => c.path.endsWith('drafts/send')), 'pas de drafts/send');
+  assert.ok(!g.calls.some(c => c.method === 'DELETE'), 'aucune suppression distante');
   assert.equal(createHash('sha256').update('thread:t1\n').update(decode(g.sent[0].raw)).digest('hex'), p.digest);
-  assert.deepEqual(g.drafts, {}, 'brouillon Gmail supprimé après l’envoi');
+  assert.deepEqual(g.drafts.d1, external, 'le brouillon Gmail reste intact');
+  assert.equal(store.getMessage(msg.id).draft, null, 'brouillon local nettoyé');
+});
+
+test('revue P2 : aperçu → déconnexion → reconnexion (identifiants réutilisés) → ancienne empreinte refusée', async () => {
+  const { createGmailDisconnect } = await import('../src/providers/gmail/disconnect.js');
+  const ctx = await ready();
+  const input = { text: 'ok', mode: 'reply' };
+  const p = await ctx.outbox.preview(ctx.msg.id, input);
+  await createGmailDisconnect({ store: ctx.store, vault: ctx.vault, sync: ctx.sync, fetchImpl: ctx.g.fetch, log: {} })(ctx.account.id);
+  const again = await connected(ctx, ALL);
+  const msg2 = ctx.store.snapshot().messages.find(m => m.accountId === again.id);
+  assert.equal(again.id, ctx.account.id, 'compte recréé avec le même identifiant');
+  assert.equal(msg2.id, ctx.msg.id, 'message recréé avec le même identifiant');
+  await assert.rejects(ctx.outbox.send(msg2.id, { ...input, digest: p.digest }), e => e.code === 'confirmation_invalid');
+  assert.equal(ctx.g.sent.length, 0);
+  // Une nouvelle vérification après la reconnexion permet l'envoi.
+  const fresh = await ctx.outbox.preview(msg2.id, input);
+  await ctx.outbox.send(msg2.id, { ...input, digest: fresh.digest });
+  assert.equal(ctx.g.sent.length, 1);
 });
 
 test('double clic : un seul envoi', async () => {
@@ -126,17 +146,6 @@ test('échec Gmail à l’envoi : brouillon conservé ; refus net réutilisable,
   g.fail = null;
   await outbox.send(msg.id, { ...input, digest: p.digest });
   assert.equal(g.sent.length, 1);
-});
-
-test('envoi accepté puis suppression du brouillon Gmail en échec : envoyé, signalé, brouillon local effacé', async () => {
-  const { outbox, msg, g, store } = await ready();
-  await outbox.saveDraft(msg.id, { text: 'ok', mode: 'reply' });
-  const p = await outbox.preview(msg.id, { text: 'ok', mode: 'reply' });
-  g.fail = method => method === 'DELETE';
-  assert.deepEqual(await outbox.send(msg.id, { text: 'ok', mode: 'reply', digest: p.digest }), { sent: true, draftRemoved: false });
-  assert.equal(g.sent.length, 1);
-  assert.equal(store.getMessage(msg.id).draft, null);
-  assert.deepEqual(Object.keys(g.drafts), ['d1'], 'le brouillon reste visible dans Gmail');
 });
 
 test('requêtes concurrentes depuis deux aperçus identiques : un seul envoi', async () => {

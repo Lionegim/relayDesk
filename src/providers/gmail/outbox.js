@@ -113,7 +113,7 @@ export function createGmailOutbox({ store, sync, ownerName = '' }) {
         const { own, env, body, mime, threadId } = compose(messageId, { text, mode, to });
         const digest = digestOf(mime, threadId);
         sweep();
-        confirmations.set(digest, { messageId, accountId, expires: Date.now() + CONFIRM_TTL_MS });
+        confirmations.set(digest, { messageId, accountId, generation: sync.generation(accountId), expires: Date.now() + CONFIRM_TTL_MS });
         return {
           from: formatAddress(own), to: env.to.map(formatAddress), cc: env.cc.map(formatAddress),
           subject: env.subject, body, digest,
@@ -141,7 +141,10 @@ export function createGmailOutbox({ store, sync, ownerName = '' }) {
           }
           sweep();
           const confirmation = confirmations.get(digest);
-          if (!confirmation || confirmation.messageId !== messageId || confirmation.accountId !== accountId) {
+          // La génération exclut une validation émise avant une déconnexion, même si compte et message ont été recréés
+          // avec les mêmes identifiants.
+          if (!confirmation || confirmation.messageId !== messageId || confirmation.accountId !== accountId
+            || confirmation.generation !== sync.generation(accountId)) {
             throw new HttpError(409, 'Validation absente, expirée ou déjà utilisée : vérifie le message à nouveau.', 'confirmation_invalid');
           }
           // Consommée avant l'appel : une requête concurrente ou rejouée ne peut pas envoyer une seconde fois.
@@ -156,16 +159,9 @@ export function createGmailOutbox({ store, sync, ownerName = '' }) {
             throw e;
           }
           store.clearDraft(messageId);
-          // Le brouillon Gmail correspondant est supprimé ensuite, au mieux : l'envoi a déjà eu lieu.
-          let draftRemoved = true;
-          if (ctx.draftExternalId && can(accountId, 'drafts')) {
-            try {
-              await gmail.delete(`drafts/${encodeURIComponent(ctx.draftExternalId)}`);
-            } catch (e) {
-              draftRemoved = e.code === 'not_found';
-            }
-          }
-          return draftRemoved;
+          // Le brouillon Gmail lié n'est jamais supprimé : Gmail n'offre pas de suppression conditionnelle à une version,
+          // et il a pu être modifié ailleurs. Seul le brouillon local est nettoyé ; le distant est signalé.
+          return !ctx.draftExternalId;
         }).then(draftRemoved => { result = { sent: true, draftRemoved }; });
       } finally {
         sending.delete(messageId);

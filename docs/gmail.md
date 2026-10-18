@@ -78,7 +78,10 @@ Avec la permission **Envoi** (`gmail.send`), le bouton **Envoyer** du compositeu
 3. La validation est à usage unique et expire après 10 minutes. Un double clic ou une requête rejouée n'envoie qu'une fois.
 
 Points de sécurité :
-- C'est toujours le message validé qui part (`messages.send`), jamais le contenu d'un brouillon Gmail, même si ce brouillon a été modifié dans Gmail. Le brouillon Gmail est supprimé ensuite ; si cette suppression échoue, l'envoi est confirmé et Relay signale que le brouillon reste dans Gmail.
+- C'est toujours le message validé qui part (`messages.send`), jamais le contenu d'un brouillon Gmail, même si ce brouillon a été modifié dans Gmail.
+- Après l'envoi, le brouillon local est effacé. Le brouillon Gmail lié, s'il existe, est **conservé** : Gmail n'offre pas de suppression conditionnelle à une version, et ce brouillon a pu être modifié ailleurs. Relay l'indique (`draftRemoved: false`) ; supprime-le dans Gmail si besoin.
+- Une validation émise avant une déconnexion est refusée après reconnexion, même si le compte et le message retrouvent les mêmes identifiants.
+- Si l'envoi réussit mais que la liste ne peut pas être actualisée, Relay confirme l'envoi et n'invite pas à renvoyer.
 - Si le fil a changé entre l'aperçu et la confirmation (nouveau message, autre destinataire), l'envoi est refusé et il faut vérifier à nouveau.
 - Si Gmail refuse nettement l'envoi (erreur 4xx), la même validation peut resservir. Après une erreur réseau ou 5xx, rien ne prouve que le message n'est pas parti : la validation est consommée et Relay demande une nouvelle vérification, pour éviter un double envoi.
 - Aucun corps de message ni jeton n'est écrit dans les journaux.
