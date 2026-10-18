@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { setupOutlook, connectedOutlook, withThreadKey, G } from './outlook-helpers.js';
+import { setupOutlook, connectedOutlook, G } from './outlook-helpers.js';
 import { createOutlookOutbox } from '../src/providers/outlook/outbox.js';
 import { createOutlookDisconnect } from '../src/providers/outlook/disconnect.js';
 import { decodeWords } from '../src/providers/gmail/parse.js';
@@ -11,11 +11,10 @@ const header = (mime, name) => decodeWords(mime.split('\r\n\r\n')[0].replace(/\r
 const bodyOf = mime => Buffer.from(mime.split('\r\n\r\n').slice(1).join('').replace(/\r\n/g, ''), 'base64').toString('utf8');
 const sha = (mime, thread = '') => createHash('sha256').update(`thread:${thread}\n`).update(mime).digest('hex');
 
-async function ready(scopes = ALL, { threadKeyColumn = true } = {}) {
+async function ready(scopes = ALL) {
   const ctx = setupOutlook();
   ctx.ms.add({ conversationId: 'C1', ccRecipients: [{ emailAddress: { name: 'Hugo', address: 'hugo@atlas.fr' } }], receivedDateTime: new Date(Date.now() - 3600000).toISOString() });
   const account = await connectedOutlook(ctx, scopes);
-  if (threadKeyColumn) ctx.store = withThreadKey(ctx.store);
   const outbox = createOutlookOutbox({ store: ctx.store, sync: ctx.sync, ownerName: 'Jean-Hugues' });
   const msg = ctx.store.snapshot().messages.find(m => m.accountId === account.id);
   ctx.ms.calls.length = 0;
@@ -146,10 +145,54 @@ test('revue P2 : nouveau message dans le fil → brouillon de réponse recréé 
   assert.equal(header(created, 'References'), `${reply.messageId} <nouveau@atlas.fr>`);
 });
 
-test('revue P2 : sans colonne draft_thread_key, chaque enregistrement recrée depuis le MIME exact (jamais de PATCH)', async () => {
-  const { outbox, msg, ms } = await ready(ALL, { threadKeyColumn: false });
-  await outbox.saveDraft(msg.id, { text: 'v1', mode: 'reply' });
-  await outbox.saveDraft(msg.id, { text: 'v2', mode: 'reply' });
-  assert.ok(!ms.calls.some(c => c.method === 'PATCH'));
-  assert.equal(drafts(ms).length, 2);
+test('revue P2 : clé de rattachement persistée (migration 005) et relue après redémarrage', async () => {
+  const { mkdtempSync, rmSync } = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+  const { randomBytes } = await import('node:crypto');
+  const { openDatabase } = await import('../src/db/index.js');
+  const { createStore } = await import('../src/store.js');
+  const { createVault } = await import('../src/secrets.js');
+  const { createMicrosoftOAuth } = await import('../src/providers/outlook/oauth.js');
+  const { createOutlookSync } = await import('../src/providers/outlook/sync.js');
+  const { seedIfEmpty } = await import('../src/db/seed.js');
+  const { fakeMicrosoft } = await import('./outlook-helpers.js');
+  const dir = mkdtempSync(join(tmpdir(), 'relay-ol-'));
+  const path = join(dir, 'relay.db');
+  const ms = fakeMicrosoft();
+  ms.add({ conversationId: 'C1', receivedDateTime: new Date(Date.now() - 3600000).toISOString() });
+  const key = randomBytes(32);
+  const boot = () => {
+    const db = openDatabase(path);
+    seedIfEmpty(db);
+    const store = createStore(db);
+    const oauth = createMicrosoftOAuth({ clientId: 'c', fetchImpl: ms.fetch });
+    const sync = createOutlookSync({ store, vault: createVault(key), oauth, fetchImpl: ms.fetch, log: {} });
+    return { db, store, sync, outbox: createOutlookOutbox({ store, sync, ownerName: 'JH' }) };
+  };
+  try {
+    let app = boot();
+    assert.ok(app.db.prepare('PRAGMA user_version').get().user_version >= 5);
+    const { account, job } = app.sync.connect({ profileId: 'perso', name: 'Outlook JH', windowDays: 30, refreshToken: 'rt', email: 'jh@outlook.fr', scopes: ALL });
+    await job;
+    const id = app.store.snapshot().messages.find(m => m.accountId === account.id).id;
+    await app.outbox.saveDraft(id, { text: 'v1', mode: 'reply' });
+    // Enregistrement local : la clé du brouillon distant reste celle de la réponse.
+    await app.outbox.saveDraft(id, { text: 'transfert', mode: 'forward', to: '' });
+    const savedKey = app.store.composeContext(id).draftThreadKey;
+    assert.match(savedKey, /^[0-9a-f]{64}$/);
+    app.db.close();
+
+    app = boot(); // redémarrage
+    assert.equal(app.store.composeContext(id).draftThreadKey, savedKey);
+    ms.calls.length = 0;
+    await app.outbox.saveDraft(id, { text: 'v2', mode: 'reply' });
+    assert.ok(ms.calls.some(c => c.method === 'PATCH'), 'même rattachement après redémarrage : mise à jour');
+    assert.equal(drafts(ms).length, 1);
+    app.store.clearDraft(id);
+    assert.equal(app.store.composeContext(id).draftThreadKey, null);
+    app.db.close();
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });

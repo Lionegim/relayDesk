@@ -98,7 +98,7 @@ export function createOutlookOutbox({ store, sync, ownerName = '' }) {
         const { mime, env, body, threadId, ctx: fresh } = compose(messageId, { text, mode, to, cc, subject });
         const threadKey = threadKeyOf(mode, env, threadId);
         let draftId = fresh.draftExternalId, previousDraftKept = false;
-        // Clé inconnue (brouillon antérieur ou colonne draft_thread_key absente) : on ne peut pas prouver que les
+        // Clé inconnue (brouillon écrit avant la migration 005) : on ne peut pas prouver que les
         // en-têtes de fil du brouillon distant sont à jour, donc on recrée. L'ancien brouillon distant est conservé
         // (il a pu être modifié ailleurs ; Graph n'offre pas de suppression conditionnelle).
         if (draftId && fresh.draftThreadKey !== threadKey) {
