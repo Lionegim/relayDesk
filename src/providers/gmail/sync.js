@@ -224,6 +224,13 @@ export function createGmailSync({ store, vault, oauth, fetchImpl = globalThis.fe
       timer = setInterval(tick, intervalMs);
       timer.unref?.();
     },
+    pause() { clearInterval(timer); },
+    async drain() {
+      while(queues.size || running.size || connecting.size) {
+        await Promise.allSettled([...queues.values()]);
+        await new Promise(resolve=>setImmediate(resolve));
+      }
+    },
     stop() { clearInterval(timer); },
   };
 }

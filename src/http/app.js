@@ -70,7 +70,7 @@ const accountId = raw => {
 };
 
 // gmail : { oauth, sync, redirectUri, disconnect, outbox } (facultatif). allowedHosts : protège contre le DNS rebinding.
-export function createApp({ store, ai, ownerName, gmail = null, providers = {}, allowedHosts = null }) {
+export function createApp({ store, ai, ownerName, gmail = null, providers = {}, allowedHosts = null, health = null }) {
   providers = { ...providers, ...(gmail ? { gmail } : {}) };
   const mail = createMailService({ store, providers });
   const assistant = createAssistantService({ store, ai, mail, ownerName });
@@ -115,7 +115,7 @@ export function createApp({ store, ai, ownerName, gmail = null, providers = {}, 
 
   // [méthode, motif, gestionnaire(params, body)]
   const routes = [
-    ['GET', /^\/api\/health$/, () => ({ ok: true, ai: { provider: 'mistral', configured: ai.configured, model: ai.model } })],
+    ['GET', /^\/api\/health$/, () => health ? health() : ({ ok: true, ai: { provider: 'mistral', configured: ai.configured, model: ai.model } })],
     ['GET', /^\/api\/state$/, () => {
       const snapshot = store.snapshot();
       for (const profile of snapshot.profiles) for (const account of profile.accounts) {

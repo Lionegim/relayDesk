@@ -32,3 +32,13 @@ test('reliaison tardive : un compte remplacé ne perd jamais sa nouvelle authent
  assert.equal(c.store.getAccount(accountId).profileId,'anove');assert.ok(c.store.waAuthGet(accountId,'creds',''));
  assert.equal(c.store.getAccount(accountId).status,'Connecté');
 });
+
+
+test('arrêt : vérification détachée du registre des sessions reste drainée',async t=>{
+ const c=await setupWhatsApp();t.after(()=>{c.wa.sync.stop();c.db.close();});
+ await c.wa.startLink({profileId:'perso',name:'Identité fictive',windowDays:7});await tick();
+ const sock=c.sockets.last();let release;sock.logout=()=>new Promise(r=>{release=r;});
+ sock.emit('connection.update',{connection:'open'});await tick();assert.equal(typeof release,'function');
+ c.wa.sync.pause();let done=false;const draining=c.wa.sync.drain().then(()=>{done=true;});await tick();assert.equal(done,false);assert.equal(sock.ended,false);
+ release();await draining;c.wa.sync.stop();await c.wa.sync.drain();assert.equal(sock.ended,true);
+});

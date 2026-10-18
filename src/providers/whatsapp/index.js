@@ -21,6 +21,8 @@ export async function createWhatsAppProvider({ store, vault, makeSocket = makeBa
       updateMessage: (id, patch) => sync.updateMessage(id, patch),
       generation: id => sync.generation(id),
       start: () => sync.start(),
+      pause: () => sync.pause(),
+      drain: () => sync.drain(),
       stop: () => sync.stop(),
     },
     outbox: {

@@ -26,7 +26,7 @@ COPY public ./public
 COPY test ./test
 USER node
 ENV RELAY_CONNECTORS_ENABLED=false RELAY_AI_ENABLED=false DEMO_DATA=1
-RUN npm test
+RUN --network=none npm test
 
 FROM ${NODE_IMAGE} AS runtime
 ENV NODE_ENV=production \

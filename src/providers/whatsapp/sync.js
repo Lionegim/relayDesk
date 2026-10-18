@@ -57,7 +57,11 @@ export function createWhatsAppSync({ store, vault, lib, makeSocket, log = consol
   const histories = new Map();  // accountId -> suivi de l'historique (aucun JID exposé)
   const requestOnOpen = new Set();
   const epoch = id => epochs.get(id) || 0;
-  let stopped = false, generationCounter = 0;
+  const openings=new Set(), openingAuth=new Set(), background=new Set();
+  function track(job) {
+    background.add(job);job.then(()=>background.delete(job),()=>background.delete(job));return job;
+  }
+  let stopped = false, paused=false, generationCounter = 0;
   const advance = accountId => {
     epochs.set(accountId, ++generationCounter);
     for (const fn of forgetHooks) fn(accountId);
@@ -137,14 +141,20 @@ export function createWhatsAppSync({ store, vault, lib, makeSocket, log = consol
 
   async function openSession(accountId, link = null) {
     const at = epoch(accountId);
-    const auth = createAuthState({ store, vault, accountId, lib: await lib() });
-    if (epoch(accountId) !== at || !store.hasAccount(accountId) || stopped || (link && link.done)) { auth.close(); return; }
+    const protocol=await lib();
+    if(stopped || paused || epoch(accountId)!==at || !store.hasAccount(accountId)) return;
+    const auth = createAuthState({ store, vault, accountId, lib: protocol });
+    openingAuth.add(auth);
+    if (stopped || paused || epoch(accountId) !== at || !store.hasAccount(accountId) || (link && link.done)) { openingAuth.delete(auth); auth.close(); return; }
     // Ce choix est conservé avec les identifiants chiffrés : les reprises gardent le profil de l'appairage.
     if (link) auth.state.creds.relayHistoryProfile = 'chrome-full';
     const historyProfile = auth.state.creds.relayHistoryProfile || (auth.state.creds.relayDesktop ? 'desktop-full' : null);
-    const sock = await makeSocket({ auth, historyProfile });
+    let sock;
+    try {sock=await makeSocket({auth,historyProfile});}
+    catch(error){openingAuth.delete(auth);auth.close();throw error;}
+    openingAuth.delete(auth);
     const s = { sock, auth, at, link, open: false, verified: false, closed: false, pending: [], ephemeral: new Set(store.waEphemeralChats(accountId)), settle: null };
-    if (epoch(accountId) !== at || !store.hasAccount(accountId) || stopped || (link && link.done)) { endSocket(s); return; }
+    if (stopped || paused || epoch(accountId) !== at || !store.hasAccount(accountId) || (link && link.done)) { endSocket(s); return; }
     dropSession(accountId, { resetRetry: false });
     sessions.set(accountId, s);
 
@@ -200,7 +210,7 @@ export function createWhatsAppSync({ store, vault, lib, makeSocket, log = consol
       }
       showQr(s.link, qr);
     }
-    if (connection === 'open') verify(accountId, s).catch(() => { if (current(accountId, s)) { dropSession(accountId); scheduleRetry(accountId, s.link); } });
+    if (connection === 'open') track(verify(accountId, s)).catch(() => { if (current(accountId, s)) { dropSession(accountId); scheduleRetry(accountId, s.link); } });
     if (connection === 'close') {
       const code = lastDisconnect?.error?.output?.statusCode;
       warn(`transport fermé pour le compte ${accountId} (code ${Number.isInteger(code) ? code : 'inconnu'})`);
@@ -219,15 +229,20 @@ export function createWhatsAppSync({ store, vault, lib, makeSocket, log = consol
     }
   }
 
+  function launchOpen(accountId,link,onError) {
+    if(stopped || paused) return;
+    const job=openSession(accountId,link);openings.add(job);
+    job.catch(()=>{if(!stopped && !paused) onError();}).finally(()=>openings.delete(job));
+  }
   function reopen(accountId, link) {
-    openSession(accountId, link).catch(() => {
+    launchOpen(accountId,link,()=>{
       if (link && !link.done && !link.opened) failLink(link, 'Impossible de poursuivre la liaison.');
       else scheduleRetry(accountId, link);
     });
   }
 
   function scheduleRetry(accountId, link = null) {
-    if (stopped || !store.hasAccount(accountId) || !hasSession({ store, vault, accountId })) return;
+    if (stopped || paused || !store.hasAccount(accountId) || !hasSession({ store, vault, accountId })) return;
     const r = retries.get(accountId) || { n: 0 };
     clearTimeout(r.timer);
     const delay = Math.min(T.retryBaseMs * 2 ** r.n, T.retryMaxMs);
@@ -294,7 +309,7 @@ export function createWhatsAppSync({ store, vault, lib, makeSocket, log = consol
     pruneAndRebuild(accountId);
     if (s.droppedPending) lostHistory(accountId, 'Une partie des lots reçus avant la vérification a été ignorée.');
     for (const [kind, data, notify] of s.pending.splice(0)) enqueue(accountId, s, kind, data, notify);
-    if (requestOnOpen.delete(accountId)) requestHistory(accountId, s).catch(() => {});
+    if (requestOnOpen.delete(accountId)) track(requestHistory(accountId, s)).catch(() => {});
   }
 
   // Connexion établie : la fenêtre de liaison peut se fermer. L'historique, lui, continue d'arriver et a son propre suivi.
@@ -396,6 +411,7 @@ export function createWhatsAppSync({ store, vault, lib, makeSocket, log = consol
       }
       finish(job);
     }).catch(failed);
+    track(s.ingest);
     const tail = s.ingest;
     tail.then(() => { if (s.ingest === tail) s.ingest = null; });
   }
@@ -488,6 +504,7 @@ export function createWhatsAppSync({ store, vault, lib, makeSocket, log = consol
 
   function armIdle(accountId, h) {
     clearTimeout(h.idle);
+    if(stopped || paused) return;
     h.idle = setTimeout(() => {
       if (histories.get(accountId) !== h || terminal(h.state)) return;
       finishHistory(accountId, h, 'partial', h.batches
@@ -610,7 +627,7 @@ export function createWhatsAppSync({ store, vault, lib, makeSocket, log = consol
       return finishHistory(accountId, h, h.batches ? 'partial' : 'unavailable',
         h.reason || 'Aucune discussion connue à compléter : une nouvelle liaison est nécessaire pour importer les autres discussions.');
     }
-    askChats(accountId, s, h, targets).catch(() => {});
+    track(askChats(accountId, s, h, targets)).catch(() => {});
   }
 
   async function askChats(accountId, s, h, targets) {
@@ -618,7 +635,7 @@ export function createWhatsAppSync({ store, vault, lib, makeSocket, log = consol
       return finishHistory(accountId, h, 'unavailable', 'Historique à la demande indisponible avec cette version du connecteur.');
     }
     for (const { jid, oldest } of targets) {
-      if (!current(accountId, s) || histories.get(accountId) !== h || terminal(h.state)) return;
+      if (paused || stopped || !current(accountId, s) || histories.get(accountId) !== h || terminal(h.state)) return;
       const rounds = (h.rounds.get(jid) || 0) + 1;
       if (rounds > T.onDemandRounds) continue;
       h.rounds.set(jid, rounds);
@@ -638,7 +655,7 @@ export function createWhatsAppSync({ store, vault, lib, makeSocket, log = consol
     if (!h || h.mode !== 'chats' || terminal(h.state)) return;
     const next = [];
     for (const [jid, c] of perChat) if (c.n >= T.onDemandCount && c.oldest.ts >= since) next.push({ jid, oldest: c.oldest });
-    if (next.length) askChats(accountId, s, h, next).catch(() => {});
+    if (next.length) track(askChats(accountId, s, h, next)).catch(() => {});
   }
 
   function historyView(accountId) {
@@ -724,7 +741,7 @@ export function createWhatsAppSync({ store, vault, lib, makeSocket, log = consol
       linkOf.set(accountId, link);
       link.timer = setTimeout(() => { if (!link.opened && !link.paired) failLink(link, 'Délai de liaison dépassé : relance-la.'); }, T.linkTtlMs);
       link.timer.unref?.();
-      openSession(accountId, link).catch(() => failLink(link, 'Impossible de démarrer la liaison WhatsApp.'));
+      launchOpen(accountId,link,()=>failLink(link,'Impossible de démarrer la liaison WhatsApp.'));
       return { linkId: link.id, accountId };
     },
 
@@ -787,7 +804,7 @@ export function createWhatsAppSync({ store, vault, lib, makeSocket, log = consol
 
     // Au démarrage du serveur : reprend seulement les sessions enregistrées et appairées.
     async start() {
-      stopped = false;
+      stopped = false;paused=false;
       for (const accountId of store.accountsBySvc('whatsapp')) {
         if (sessions.has(accountId) || linkOf.has(accountId)) continue;
         if (!hasSession({ store, vault, accountId })) {
@@ -798,8 +815,23 @@ export function createWhatsAppSync({ store, vault, lib, makeSocket, log = consol
         reopen(accountId, null);
       }
     },
+    pause() {
+      paused=true;
+      for(const r of retries.values()) clearTimeout(r.timer);
+      for(const h of histories.values()) clearTimeout(h.idle);
+      for(const link of links.values()) clearTimeout(link.timer);
+    },
+    async drain() {
+      while(background.size || openings.size || queues.size || [...sessions.values()].some(s=>s.ingest)) {
+        await Promise.allSettled([...background,...openings,...queues.values(),...[...sessions.values()].map(s=>s.ingest).filter(Boolean)]);
+        await new Promise(resolve=>setImmediate(resolve));
+      }
+    },
     stop() {
-      stopped = true;
+      stopped = true;paused=true;
+      for(const auth of openingAuth) auth.close();
+      for(const h of histories.values()) clearTimeout(h.idle);
+      for(const link of links.values()) clearTimeout(link.timer);
       for (const id of [...sessions.keys()]) dropSession(id);
       for (const r of retries.values()) clearTimeout(r.timer);
       retries.clear();

@@ -3,7 +3,7 @@
 Image Docker unique (Node 24, Debian slim) et deux fichiers Compose :
 
 - `compose.dev.yaml` : mode local de **test**, données fictives, connecteurs et IA désactivés, accessible seulement sur `http://127.0.0.1:4311` ;
-- `compose.yaml` : mode **hébergé, préparatoire et bloqué**. Le serveur refuse `RELAY_MODE=hosted` tant que l'authentification (lot 3) n'existe pas, et ce fichier ne démarre rien sans profil ni configuration explicites.
+- `compose.yaml` : mode **hébergé, préparatoire et bloqué**. Le proxy attend une application saine. Le serveur refuse `RELAY_MODE=hosted` tant que l'authentification (lot 3) n'existe pas, et ce fichier ne démarre rien sans profil ni configuration explicites.
 
 Aucun de ces fichiers ne lit le `.env` réel, ni les données ou secrets du Mac.
 
@@ -54,7 +54,7 @@ docker build --secret id=build_ca,src=/chemin/vers/ca.pem --target test .
 | Contexte de construction propre | Faux `.env`, `data/relay.db`, `*.key`, `*.zip`, `*.sqlite` placés dans le dépôt puis construits : absents du contexte | test manuel |
 | Port local seulement | `127.0.0.1:4311:4310` | port lié à la boucle locale |
 | Clé du coffre séparée des données | Volume de secrets monté en lecture seule (`/run/relay-secrets`), fichier `0400` propriété de l'uid 1000 | permissions vérifiées |
-| Arrêt propre | `init: true` (tini relaie SIGTERM), `stop_grace_period: 30s` | arrêt en moins d'une seconde, code 0 |
+| Arrêt propre | `init: true` (tini relaie SIGTERM), `stop_grace_period: 45s` | arrêt en moins d'une seconde, code 0 |
 | Une seule instance | `container_name` fixe : Compose refuse une seconde copie. Le verrou d'écrivain unique sur `/data` (lot 1) complète cette protection. | |
 | Hébergé bloqué | Profil `hosted`, variables obligatoires sans valeur par défaut, refus applicatif de `RELAY_MODE=hosted` | `up` sans profil : aucun service ; sans variables : arrêt de Compose |
 
@@ -67,15 +67,46 @@ Sur la VM, plus tard et sur autorisation :
 - variables : `RELAY_IMAGE_TAG`, `PUBLIC_BASE_URL` (https), `RELAY_DOMAIN`, `ACME_EMAIL`, `RELAY_SECRETS_DIR` ;
 - Caddy obtient le certificat, ajoute HSTS et quelques en-têtes, sans journal d'accès (les retours OAuth portent `code` et `state`). Son cœur ne fournit pas de limite de débit : elle relève de l'application (lot 3) ou d'un module choisi explicitement.
 
-## Contrat attendu du runtime (lot 1)
+## Contrat du runtime intégré (lots 1 et 2)
 
-Ces fichiers supposent que le runtime :
+Le runtime :
 
-1. lit `RELAY_SECRET_KEY_FILE` en retirant le saut de ligne final, et ne génère **jamais** de clé dans `/data` en mode hébergé ;
-2. dérive les hôtes autorisés de `PUBLIC_BASE_URL` (ici `127.0.0.1:4311` et `localhost:4311`). La sonde envoie ce Host, le même que le navigateur ;
-3. répond `200` sur `GET /api/health`, sans authentification ni donnée, en local comme en hébergé ;
-4. n'écrit que dans `DATA_DIR` (base, WAL, verrou) et `/tmp` ;
-5. termine proprement sur SIGTERM, sans `logout()` WhatsApp ;
-6. en hébergé, considère la requête comme HTTPS d'après `PUBLIC_BASE_URL`, sans faire confiance à un `X-Forwarded-*` venant d'ailleurs que du proxy.
+1. lit les secrets `*_FILE` en retirant les espaces et sauts de ligne de bord, refuse une valeur directe et un fichier simultanés, ainsi que les fichiers absents ou vides ; le mode local de test utilise uniquement la clé du volume dédié et ne crée pas `/data/secret.key` ;
+2. dérive les URL de retour OAuth et l'hôte public autorisé de `PUBLIC_BASE_URL`. Ici, le navigateur et la sonde utilisent `127.0.0.1:4311` ; les alias locaux du port public (dont `localhost:4311`) et du port interne 4310 restent également autorisés ;
+3. répond `200` avec seulement `{ "ok": true }` sur `GET /api/health` lorsque le runtime local fonctionne ;
+4. conserve la base, son WAL et une base SQLite distincte pour le verrou de processus dans `DATA_DIR`. Le verrou reste détenu pendant toute la vie du runtime et le noyau le libère après un crash ;
+5. ferme l'entrée HTTP sur SIGTERM, attend les traitements HTTP et les tâches des connecteurs, puis ferme le stockage et libère le verrou, sans déconnecter l'appareil WhatsApp. Si le délai d'arrêt est dépassé, la commande termine en erreur sans relancer automatiquement un envoi ;
+6. refuse le mode hébergé avant toute création de données, écoute HTTP ou construction de connecteur tant que l'authentification du lot 3 n'est pas implémentée. Aucun drapeau d'environnement ne lève ce refus.
 
-Avant l'intégration du lot 1, le serveur actuel ignore `RELAY_SECRET_KEY_FILE` (il crée `/data/secret.key`), n'a pas de `/api/health` et n'autorise que le port 4310 : le conteneur démarre, mais la sonde reste « unhealthy » et le navigateur reçoit 403 sur le port 4311.
+Le mode local de test désactive la construction des connecteurs et laisse Mistral non configuré. Les accès réels aux fournisseurs et le déploiement hébergé restent hors de cette recette.
+
+
+## Recette reproductible sur données fictives
+
+```sh
+npm run test:docker
+```
+
+Cette commande construit le stage de tests sans réseau sortant, construit l’image finale puis exécute `scripts/check-docker.mjs`. La recette utilise des noms de volumes et conteneurs aléatoires, une clé de test aléatoire et `--network none`, sans port publié. Elle ne charge aucun `.env` et nettoie uniquement ses propres conteneurs et volumes en fin de test.
+
+Elle vérifie les droits non-root, la lecture seule, l’absence de capacités, la clé externe non modifiable, les connecteurs/IA désactivés, le refus d’une seconde instance sur le même stockage, l’arrêt SIGTERM avec code 0, la reprise après SIGKILL, puis la persistance et la restauration d’un brouillon, d’une identité de mémoire et de jetons OAuth et identifiants WhatsApp entièrement fictifs. La copie de restauration se fait à froid, après arrêt et checkpoint SQLite ; les connecteurs restent désactivés pendant toute la recette.
+
+Validation du 19 octobre 2026 : **191 tests réussis sur Mac et dans le stage Linux Node 24**, puis recette Docker réussie. Un audit du contexte de construction (97 fichiers autorisés) a aussi confirmé l’exclusion de faux fichiers `.env`, clés, archives, bases, sauvegardes et exports placés sous un répertoire source de test. Le contexte réel n’inclut que les sources et ressources autorisées.
+
+La conservation d’identifiants WhatsApp est vérifiée avec de fausses valeurs chiffrées et de faux sockets. Aucune session WhatsApp réelle n’a été reprise dans Docker. Les lots 3 à 7, l’authentification distante, le déploiement et la migration restent à réaliser.
+
+
+## Configuration locale
+
+| Variable | Comportement |
+| --- | --- |
+| `RELAY_MODE` | `local` par défaut ; `hosted` validé puis refusé jusqu’au lot 3. |
+| `HOST`, `PORT` | `127.0.0.1:4310` par défaut ; dans Docker, `0.0.0.0:4310` derrière le port publié localement. |
+| `PUBLIC_BASE_URL` | Origine explicite sans chemin ; locale en mode local. Fixe les retours OAuth et les hôtes autorisés, indépendamment des en-têtes transmis. |
+| `DATA_DIR` | Répertoire de stockage, `data/` par défaut, `/data` dans Docker. Un seul runtime, disque local uniquement. |
+| `RELAY_SECRET_KEY_FILE` | Clé de 32 octets encodée en base64 canonique ou en 64 caractères hexadécimaux. La clé existante est obligatoire si une base existe ; clé incorrecte refusée avant migration. |
+| `RELAY_CONNECTORS_ENABLED`, `RELAY_AI_ENABLED` | `true` en local historique ; `false` pour tous les tests Docker. |
+| `DEMO_DATA` | Données fictives si `1` sur une base vide ; aucun ajout de démonstration à une base existante. |
+| `SHUTDOWN_TIMEOUT_MS` | 30 000 par défaut ; délai Docker 45 s pour laisser l’arrêt applicatif terminer ou signaler une issue incertaine. |
+
+Les secrets pris en charge sous forme directe ou `*_FILE` sont `RELAY_SECRET_KEY`, `MISTRAL_API_KEY`, `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` et `MICROSOFT_CLIENT_ID`. Ne pas fournir les deux formes simultanément. Les commandes Docker n’utilisent pas `npm start` et ne chargent jamais le `.env` local. Le démarrage local historique reste disponible avec `npm start`.

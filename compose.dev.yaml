@@ -60,7 +60,7 @@ services:
     volumes:
       - relay-dev-data:/data
       - relay-dev-secrets:/run/relay-secrets:ro
-    stop_grace_period: 30s
+    stop_grace_period: 45s
     logging:
       driver: json-file
       options: { max-size: "5m", max-file: "2" }
