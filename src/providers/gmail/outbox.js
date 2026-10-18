@@ -1,12 +1,18 @@
-// Lot C : brouillons Gmail. Les messages sont construits côté serveur à partir des en-têtes stockés du fil ;
+// Lots C et D : brouillons et envoi Gmail. Les messages sont construits côté serveur à partir des en-têtes stockés du fil ;
 // le navigateur n'envoie que le texte, le mode et, pour un transfert, les destinataires.
+import { createHash, timingSafeEqual } from 'node:crypto';
 import { HttpError, badRequest } from '../../http/errors.js';
-import { buildMessage, envelope, forwardBody, toRaw, MimeError } from './mime.js';
+import { buildMessage, envelope, forwardBody, formatAddress, toRaw, MimeError } from './mime.js';
 import { replyMeta } from './parse.js';
 
 const MODES = ['reply', 'replyAll', 'forward'];
 const MAX_TEXT = 20000;
 const MAX_TO = 2000;
+const CONFIRM_TTL_MS = 10 * 60000;
+
+// L'empreinte couvre le message exact et le fil Gmail visé.
+const digestOf = (mime, threadId) => createHash('sha256').update(`thread:${threadId || ''}\n`).update(mime, 'utf8').digest('hex');
+
 export function readComposeInput(body) {
   const { text, mode = 'reply', to = null } = body || {};
   if (typeof text !== 'string' || text.length > MAX_TEXT) throw badRequest('Texte invalide');
@@ -25,6 +31,10 @@ const mimeErrors = fn => {
 };
 
 export function createGmailOutbox({ store, sync, ownerName = '' }) {
+  const sending = new Set();
+  // Validations émises par l'aperçu : usage unique, liées au message, au compte et (via l'empreinte) au fil.
+  const confirmations = new Map(); // empreinte -> { messageId, accountId, expires }
+  const sweep = () => { const now = Date.now(); for (const [d, c] of confirmations) if (c.expires < now) confirmations.delete(d); };
   const isGmail = accountId => accountId != null && store.hasAccount(accountId) && store.getAccount(accountId).svc === 'gmail';
   const can = (accountId, perm) => isGmail(accountId) && sync.permissions(accountId).includes(perm);
 
@@ -90,6 +100,78 @@ export function createGmailOutbox({ store, sync, ownerName = '' }) {
         if (!draftId) draftId = (await gmail.post('drafts', { message })).id;
         return store.saveDraft(messageId, text, { mode, to, externalId: draftId, synced: true });
       });
+    },
+
+    // Lot D, étape 1 : construit le message final et renvoie son contenu exact et son empreinte SHA-256.
+    async preview(messageId, input) {
+      const { text, mode, to } = readComposeInput(input);
+      const { accountId } = store.composeContext(messageId);
+      if (!can(accountId, 'send')) throw new HttpError(403, 'La permission Envoi n’est pas accordée pour ce compte.', 'send_forbidden');
+      if (!text.trim()) throw badRequest('Le message est vide.');
+      return sync.exclusive(accountId, async ({ gmail }) => {
+        await ensureReply(gmail, messageId);
+        const { own, env, body, mime, threadId } = compose(messageId, { text, mode, to });
+        const digest = digestOf(mime, threadId);
+        sweep();
+        confirmations.set(digest, { messageId, accountId, expires: Date.now() + CONFIRM_TTL_MS });
+        return {
+          from: formatAddress(own), to: env.to.map(formatAddress), cc: env.cc.map(formatAddress),
+          subject: env.subject, body, digest,
+        };
+      });
+    },
+
+    // Lot D, étape 2 : reconstruit le message et n'envoie que si son empreinte est celle qui a été validée.
+    async send(messageId, input) {
+      const { text, mode, to } = readComposeInput(input);
+      const digest = input?.digest;
+      if (typeof digest !== 'string' || !/^[0-9a-f]{64}$/.test(digest)) throw badRequest('Empreinte de validation manquante.');
+      const { accountId } = store.composeContext(messageId);
+      if (!can(accountId, 'send')) throw new HttpError(403, 'La permission Envoi n’est pas accordée pour ce compte.', 'send_forbidden');
+      if (sending.has(messageId)) throw new HttpError(409, 'Un envoi est déjà en cours pour ce message.', 'send_in_progress');
+      sending.add(messageId);
+      let result;
+      try {
+        await sync.exclusive(accountId, async ({ gmail }) => {
+          await ensureReply(gmail, messageId);
+          const { mime, threadId, ctx } = compose(messageId, { text, mode, to });
+          const actual = digestOf(mime, threadId);
+          if (!timingSafeEqual(Buffer.from(actual), Buffer.from(digest))) {
+            throw new HttpError(409, 'Le message a changé depuis sa validation : vérifie-le à nouveau avant d’envoyer.', 'digest_mismatch');
+          }
+          sweep();
+          const confirmation = confirmations.get(digest);
+          if (!confirmation || confirmation.messageId !== messageId || confirmation.accountId !== accountId) {
+            throw new HttpError(409, 'Validation absente, expirée ou déjà utilisée : vérifie le message à nouveau.', 'confirmation_invalid');
+          }
+          // Consommée avant l'appel : une requête concurrente ou rejouée ne peut pas envoyer une seconde fois.
+          confirmations.delete(digest);
+          try {
+            // Toujours le MIME validé lui-même : jamais le contenu d'un brouillon Gmail (qui a pu être modifié ailleurs).
+            await gmail.post('messages/send', { raw: toRaw(mime), ...(threadId ? { threadId } : {}) });
+          } catch (e) {
+            // Refus net de Gmail (aucun envoi) : la validation redevient utilisable pour un nouvel essai.
+            // Une erreur réseau ou 5xx ne prouve pas l'absence d'envoi : on exige alors une nouvelle vérification.
+            if (e.code === 'gmail') confirmations.set(digest, confirmation);
+            throw e;
+          }
+          store.clearDraft(messageId);
+          // Le brouillon Gmail correspondant est supprimé ensuite, au mieux : l'envoi a déjà eu lieu.
+          let draftRemoved = true;
+          if (ctx.draftExternalId && can(accountId, 'drafts')) {
+            try {
+              await gmail.delete(`drafts/${encodeURIComponent(ctx.draftExternalId)}`);
+            } catch (e) {
+              draftRemoved = e.code === 'not_found';
+            }
+          }
+          return draftRemoved;
+        }).then(draftRemoved => { result = { sent: true, draftRemoved }; });
+      } finally {
+        sending.delete(messageId);
+      }
+      sync.syncNow(accountId);
+      return result;
     },
   };
 }

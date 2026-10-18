@@ -26,7 +26,8 @@ export function renderApp(s, v) {
     </div>
     ${when(s.c, () => connectWizard(s))}
     ${when(s.confirm?.kind === 'disconnect', () => disconnectDialog(s.confirm))}
-    ${when(s.toast, () => html`<div class="toast" role="status">${s.toast}</div>`)}`;
+    ${when(s.confirm?.kind === 'send' && s.confirm.preview, () => sendDialog(s.confirm))}
+    ${when(s.toast, () => html`<div class="${cls('toast', s.toastOk && 'toast-ok')}" role="status">${s.toast}</div>`)}`;
 }
 
 // ---------- Barre latérale ----------
@@ -265,7 +266,12 @@ function messageView(s, v, sel) {
             <button class="btn btn-ghost" data-on-click="aiDraft">✳ Aider à rédiger</button>
             <span class="composer-status ellipsis">${sel.draft ? `${sel.draft.gmail ? 'Brouillon Gmail' : 'Brouillon'} enregistré à ${timeOf(sel.draft.savedAt)}` : 'Brouillon local'}</span>
             <button class="btn btn-ghost" data-on-click="saveDraft">Enregistrer</button>
-            <button class="btn btn-brand" disabled title="L’envoi nécessite un compte connecté et ta validation">Envoyer</button>
+            ${(() => {
+              const acc = v.profile.accounts.find(a => a.id === sel.accountId);
+              const allowed = !!acc?.perms?.includes('send');
+              const title = allowed ? 'Vérifier puis envoyer' : 'L’envoi demande un compte Gmail avec la permission Envoi';
+              return html`<button class="btn btn-brand" data-on-click="sendPreview" title="${title}" ${raw(allowed && draft.trim() && !s.confirm ? '' : 'disabled')}>Envoyer</button>`;
+            })()}
           </div>
         </div>`)}
     </div>`;
@@ -551,6 +557,36 @@ function disconnectDialog(c) {
           <button class="btn btn-ghost" data-on-click="confirmCancel" ${raw(c.busy ? 'disabled' : '')}>Annuler</button>
           <button class="btn btn-danger" data-on-click="confirmDisconnect" ${raw(c.busy ? 'disabled' : '')}>
             ${when(c.busy, () => html`<span class="spinner"></span>`)}Déconnecter
+          </button>
+        </div>
+      </div>
+    </div>`;
+}
+
+// ---------- Validation de l'envoi ----------
+
+function sendDialog(c) {
+  const p = c.preview;
+  return html`
+    <div class="overlay" data-on-click="confirmCancel">
+      <div class="dialog" role="alertdialog" aria-modal="true" aria-label="Vérifier le message avant l’envoi" data-on-click="noop">
+        <div class="dialog-body">
+          <h3>Vérifier avant d’envoyer</h3>
+          <div class="recap">
+            <span class="muted">De</span><span>${p.from}</span>
+            <span class="muted">À</span><span>${p.to.join(', ')}</span>
+            ${when(p.cc.length, () => html`<span class="muted">Cc</span><span>${p.cc.join(', ')}</span>`)}
+            <span class="muted">Objet</span><span style="font-weight:600">${p.subject}</span>
+          </div>
+          <div class="send-body">${p.body}</div>
+          <p class="muted" style="margin:0;font-size:12px">Ce texte est exactement celui qui sera envoyé. Toute modification demande une nouvelle vérification.</p>
+          ${when(c.error, () => html`<div class="alert">${c.error}</div>`)}
+        </div>
+        <div class="dialog-foot">
+          <div class="grow"></div>
+          <button class="btn btn-ghost" data-on-click="confirmCancel" ${raw(c.busy ? 'disabled' : '')}>Annuler</button>
+          <button class="btn btn-brand" data-on-click="confirmSend" ${raw(c.busy || c.stale ? 'disabled' : '')}>
+            ${when(c.busy, () => html`<span class="spinner"></span>`)}Confirmer l’envoi
           </button>
         </div>
       </div>

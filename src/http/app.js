@@ -132,6 +132,14 @@ export function createApp({ store, ai, ownerName, gmail = null, allowedHosts = n
     ['PUT', /^\/api\/messages\/([^/]+)\/draft$/, ([id], body) => gmail?.outbox
       ? gmail.outbox.saveDraft(messageId(id), body)
       : store.saveDraft(messageId(id), readComposeInput(body).text, readComposeInput(body))],
+    ['POST', /^\/api\/messages\/([^/]+)\/send\/preview$/, ([id], body) => {
+      if (!gmail?.outbox) throw badRequest('Envoi indisponible');
+      return gmail.outbox.preview(messageId(id), body);
+    }],
+    ['POST', /^\/api\/messages\/([^/]+)\/send$/, ([id], body) => {
+      if (!gmail?.outbox) throw badRequest('Envoi indisponible');
+      return gmail.outbox.send(messageId(id), body);
+    }],
     ['POST', /^\/api\/folders$/, (_, body) => store.createFolder(body)],
     ['PATCH', /^\/api\/contacts\/([^/]+)$/, ([id], body) => store.updateContact(id, body)],
     ['POST', /^\/api\/profiles\/([^/]+)\/accounts$/, ([id], body) => store.connectAccount(id, body)],

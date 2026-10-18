@@ -68,8 +68,14 @@ function applyData(data) {
 }
 
 let toastTimer;
+function notify(text) {
+  clearTimeout(toastTimer);
+  set({ toast: text, toastOk: true });
+  toastTimer = setTimeout(() => set({ toast: null, toastOk: false }), 4000);
+}
 function fail(err) {
   clearTimeout(toastTimer);
+  state.toastOk = false;
   set({ toast: err.message || String(err) });
   toastTimer = setTimeout(() => set({ toast: null }), 5000);
 }
@@ -414,6 +420,48 @@ const actions = {
     if (acc) set({ confirm: { kind: 'disconnect', accountId: acc.id, name: acc.name, busy: false, error: null }, menu: false, accountMenu: null });
   },
   confirmCancel: () => { if (!state.confirm?.busy) set({ confirm: null }); },
+
+  // Envoi : aperçu exact calculé par le serveur, puis envoi avec son empreinte.
+  sendPreview: async () => {
+    const sel = derive(state).sel;
+    if (!sel || state.confirm) return;
+    const mode = state.composing || 'reply';
+    const input = {
+      text: state.drafts[sel.id] ?? state.details[sel.id]?.draft?.text ?? '',
+      mode,
+      to: mode === 'forward' ? (state.composeTo[sel.id] ?? state.details[sel.id]?.draft?.to ?? '') : null,
+    };
+    set({ confirm: { kind: 'send', messageId: sel.id, input, preview: null, busy: true, error: null } });
+    try {
+      const preview = await api.previewSend(sel.id, input);
+      set({ confirm: { kind: 'send', messageId: sel.id, input, preview, busy: false, error: null } });
+    } catch (e) {
+      set({ confirm: null });
+      fail(e);
+    }
+  },
+  confirmSend: async () => {
+    const c = state.confirm;
+    if (c?.kind !== 'send' || c.busy || !c.preview) return;
+    set({ confirm: { ...c, busy: true, error: null } });
+    try {
+      const r = await api.send(c.messageId, { ...c.input, digest: c.preview.digest });
+      const id = c.messageId;
+      set(s => {
+        const drafts = { ...s.drafts }, composeTo = { ...s.composeTo }, details = { ...s.details };
+        delete drafts[id]; delete composeTo[id]; delete details[id];
+        return { confirm: null, composing: null, drafts, composeTo, details };
+      });
+      const m = state.data.messages.find(x => x.id === id);
+      if (m) m.draft = null;
+      notify(r.draftRemoved === false ? 'Message envoyé. Son brouillon est resté dans Gmail : tu peux l’y supprimer.' : 'Message envoyé.');
+      applyData(await api.state());
+    } catch (e) {
+      // 409 : le contenu ou le fil a changé, il faut revérifier ; le bouton de confirmation est désactivé.
+      // Une erreur Gmail incertaine (réseau, 5xx) consomme aussi la validation : vérifier à nouveau avant tout nouvel essai.
+      set({ confirm: { ...c, busy: false, stale: !/^Erreur Gmail/.test(e.message), error: e.message } });
+    }
+  },
   confirmDisconnect: async () => {
     const c = state.confirm;
     if (!c || c.busy) return;

@@ -36,7 +36,8 @@ export function createGmailClient({ refreshToken, oauth, fetchImpl = globalThis.
     if (res.status === 409) throw new HttpError(409, 'Ce libellé existe déjà dans Gmail.', 'conflict');
     if (res.status === 429 || res.status >= 500) throw new HttpError(503, `Gmail indisponible (${res.status}).`, 'retryable');
     if (!res.ok) throw new HttpError(502, `Erreur Gmail (${res.status}).`, 'gmail');
-    return res.json();
+    const text = await res.text();
+    return text ? JSON.parse(text) : {};
   }
 
   const get = (path, params) => request('GET', path, params);
@@ -44,6 +45,7 @@ export function createGmailClient({ refreshToken, oauth, fetchImpl = globalThis.
   return {
     post: (path, body) => request('POST', path, {}, body),
     put: (path, body) => request('PUT', path, {}, body),
+    delete: path => request('DELETE', path),
     profile: () => get('profile'),
     labels: () => get('labels'),
     listThreads: (q, pageToken) => get('threads', { q, pageToken, maxResults: 100 }),

@@ -43,7 +43,8 @@ Pour connecter un vrai compte Gmail : [docs/gmail.md](docs/gmail.md).
 - Les comptes d’exemple (`src/demo-data.js`) restent présents si `DEMO_DATA` vaut `1`.
 - Outlook, Proton, WhatsApp et Instagram : la connexion ne contacte aucun fournisseur ; la progression est simulée.
 - Gmail sans la permission **Libellés** reste en lecture seule ; seuls ces comptes conservent les changements de classement localement. Sans la permission **Brouillons**, les brouillons restent dans Relay.
-- « Envoyer » reste désactivé : l’envoi exigera un compte réellement connecté et la validation du contenu exact.
+- « Envoyer » n’est actif que pour un compte Gmail ayant la permission **Envoi** ; ailleurs (comptes d’exemple, autres services, Gmail sans cette permission) il reste désactivé.
+- Pas encore pris en charge : pièces jointes, rendu HTML, réponse citant le message d’origine (seul le transfert le cite).
 
 ## Structure
 
@@ -70,7 +71,10 @@ test/                  tests node:test (API et client Mistral)
 | GET, POST | `/api/accounts/:id/sync` | (progression ; POST relance) |
 | GET | `/oauth/google/start`, `/oauth/google/callback` | navigation |
 | PATCH | `/api/messages/:id` | `{ unread?, flagged?, archived?, folderId? }` |
-| PUT | `/api/messages/:id/draft` | `{ text }` |
+| PUT | `/api/messages/:id/draft` | `{ text, mode, to? }` |
+| POST | `/api/messages/:id/send/preview` | `{ text, mode, to? }` → contenu exact et `digest` |
+| POST | `/api/messages/:id/send` | `{ text, mode, to?, digest }` |
+| POST | `/api/accounts/:id/disconnect` | |
 | POST | `/api/folders` | `{ profileId, name, parentId }` |
 | PATCH | `/api/contacts/:id` | `{ freq }` |
 | POST | `/api/profiles/:id/accounts` | `{ name, svc }` |

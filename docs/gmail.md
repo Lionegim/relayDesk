@@ -69,6 +69,20 @@ Avec la permission **Brouillons** (`gmail.compose`), **Enregistrer** crée le br
 - Quand un enregistrement reste local (transfert sans adresse, permission absente), le statut indique « Brouillon enregistré », sans « Gmail » : le brouillon Gmail garde la version précédente jusqu'au prochain enregistrement synchronisé, qui le met à jour.
 - Les enregistrements d'un même compte passent dans la même file que la synchronisation et les actions : une sauvegarde plus ancienne ne peut pas écraser une plus récente.
 
+## Envoyer (permission « Envoi »)
+
+Avec la permission **Envoi** (`gmail.send`), le bouton **Envoyer** du compositeur s'active dès que le message n'est pas vide.
+
+1. **Envoyer** demande au serveur de construire le message final et affiche son contenu exact : De, À, Cc, Objet et texte.
+2. **Confirmer l'envoi** renvoie ce contenu avec son empreinte SHA-256. Le serveur reconstruit le message et n'envoie que si l'empreinte est identique et qu'elle correspond à une validation émise par l'aperçu pour ce message et ce compte. L'empreinte couvre aussi le fil Gmail visé.
+3. La validation est à usage unique et expire après 10 minutes. Un double clic ou une requête rejouée n'envoie qu'une fois.
+
+Points de sécurité :
+- C'est toujours le message validé qui part (`messages.send`), jamais le contenu d'un brouillon Gmail, même si ce brouillon a été modifié dans Gmail. Le brouillon Gmail est supprimé ensuite ; si cette suppression échoue, l'envoi est confirmé et Relay signale que le brouillon reste dans Gmail.
+- Si le fil a changé entre l'aperçu et la confirmation (nouveau message, autre destinataire), l'envoi est refusé et il faut vérifier à nouveau.
+- Si Gmail refuse nettement l'envoi (erreur 4xx), la même validation peut resservir. Après une erreur réseau ou 5xx, rien ne prouve que le message n'est pas parti : la validation est consommée et Relay demande une nouvelle vérification, pour éviter un double envoi.
+- Aucun corps de message ni jeton n'est écrit dans les journaux.
+
 ## Déconnecter un compte
 
 Menu du compte → **Déconnecter**, puis confirmation. Relay attend la fin de la synchronisation ou de l'action en cours sur ce compte, révoque l'accès chez Google, puis supprime le compte, son jeton, son état de synchronisation, ses messages importés et ses liens de libellés. Tous les dossiers restent, y compris ceux créés à partir de ses libellés. Les messages restent dans Gmail. Si Google est injoignable, la suppression a lieu quand même : retire alors l'accès depuis [ton compte Google](https://myaccount.google.com/permissions).
@@ -82,4 +96,5 @@ Menu du compte → **Déconnecter**, puis confirmation. Relay attend la fin de l
 
 ## Étapes suivantes
 
-1. `gmail.send` : envoi, après un écran de validation du contenu exact.
+1. Pièces jointes et rendu HTML.
+2. Réponse citant le message d'origine.

@@ -34,7 +34,7 @@ export function fakeGoogle({ threads = { t1: thread('t1') }, labels = [] } = {})
       return json({ access_token: 'at', expires_in: 3600 });
     }
     const path = u.pathname.replace('/gmail/v1/users/me/', '');
-    if (g.fail?.(method, path)) return json({ error: { message: 'boom' } }, 500);
+    if (g.fail?.(method, path)) return json({ error: { message: 'boom' } }, g.failStatus || 500);
     if (method === 'GET') {
       if (path === 'profile') return json({ emailAddress: 'jh@gmail.com', historyId: '10' });
       if (path === 'labels') return json({ labels });
@@ -52,6 +52,12 @@ export function fakeGoogle({ threads = { t1: thread('t1') }, labels = [] } = {})
       if (!g.drafts[id]) return json({}, 404);
       g.drafts[id] = body.message;
       return json({ id, message: { id: `dm-${id}`, threadId: body.message.threadId } });
+    }
+    if (method === 'DELETE' && path.startsWith('drafts/')) {
+      const id = path.slice(7);
+      if (!g.drafts[id]) return json({}, 404);
+      delete g.drafts[id];
+      return new Response(null, { status: 204 });
     }
     if (method === 'POST' && path === 'messages/send') { g.sent.push(body); return json({ id: 'sent1', threadId: body.threadId }); }
     if (method === 'POST' && path === 'drafts/send') {
