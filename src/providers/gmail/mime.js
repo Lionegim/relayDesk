@@ -50,9 +50,10 @@ export function formatAddress({ name = '', email }) {
 // Découpe au premier niveau : virgules hors guillemets, commentaires et chevrons, en respectant les échappements.
 // L'analyse porte sur l'en-tête brut : les mots RFC 2047 ne sont décodés que dans les noms, après coup,
 // pour qu'un nom encodé ne puisse jamais introduire d'adresse.
-function splitTopLevel(s, sep) {
+// Avec `groups`, les virgules entre « nom: » et « ; » d'un groupe ne séparent pas (le groupe reste entier).
+function splitTopLevel(s, sep, { groups = false } = {}) {
   const parts = [];
-  let cur = '', quoted = false, depth = 0, angle = false;
+  let cur = '', quoted = false, depth = 0, angle = false, group = false;
   for (let i = 0; i < s.length; i++) {
     const ch = s[i];
     if ((quoted || depth) && ch === '\\' && i + 1 < s.length) { cur += ch + s[++i]; continue; }
@@ -62,7 +63,9 @@ function splitTopLevel(s, sep) {
     else if (ch === '(') depth++;
     else if (ch === '<') angle = true;
     else if (ch === '>') angle = false;
-    else if (sep.includes(ch) && !angle) { parts.push(cur); cur = ''; continue; }
+    else if (groups && ch === ':' && !angle) group = true;
+    else if (groups && ch === ';' && !angle) group = false;
+    else if (sep.includes(ch) && !angle && !group) { parts.push(cur); cur = ''; continue; }
     cur += ch;
   }
   parts.push(cur);
@@ -119,12 +122,12 @@ function parseMailbox(raw) {
 // Liste d'adresses d'un en-tête (mailboxes et groupes). Les entrées sans adresse valide sont ignorées.
 export function parseAddressList(raw) {
   const out = [];
-  for (const part of splitTopLevel(String(raw || ''), ',')) {
-    // Groupe « nom: a, b; » : on garde ses membres.
+  for (const part of splitTopLevel(String(raw || ''), ',', { groups: true })) {
+    // Groupe « nom: a, b; » : ses membres sont découpés avec la même analyse structurelle.
     const group = splitTopLevel(part, ':');
     if (group.length > 1 && !part.trim().startsWith('<')) {
       const inner = group.slice(1).join(':').replace(/;\s*$/, '');
-      out.push(...inner.split(',').map(parseMailbox).filter(Boolean));
+      out.push(...splitTopLevel(inner, ',').map(parseMailbox).filter(Boolean));
       continue;
     }
     const m = parseMailbox(part.replace(/;\s*$/, ''));

@@ -131,3 +131,11 @@ test('revue : limite de 998 octets par ligne', () => {
   assert.throws(() => buildMessage({ from: own, to: [own], subject: 's', references: `<${'a'.repeat(1000)}@x.fr>`, body: '' }), MimeError);
   assert.throws(() => formatAddress({ email: `${'a'.repeat(250)}@x.fr` }), MimeError);
 });
+
+test('revue P1 : groupes, aucune adresse injectée par un nom ou un commentaire', () => {
+  assert.deepEqual(parseAddressList('Group: "Support, extra@example.test, Team" <sender@example.test>;').map(a => a.email), ['sender@example.test']);
+  assert.deepEqual(parseAddressList('Group: sender@example.test (Support, extra@example.test, Team);').map(a => a.email), ['sender@example.test']);
+  assert.deepEqual(parseAddressList('Group: =?UTF-8?B?ZXh0cmFAZXhhbXBsZS50ZXN0LCBTdXBwb3J0?= <sender@example.test>;').map(a => a.email), ['sender@example.test']);
+  // Frontières de groupe conservées, membres et adresses hors groupe.
+  assert.deepEqual(parseAddressList('A: a@x.fr, "B, b" <b@x.fr>;, c@x.fr, Vide:;, d@x.fr').map(a => a.email), ['a@x.fr', 'b@x.fr', 'c@x.fr', 'd@x.fr']);
+});
