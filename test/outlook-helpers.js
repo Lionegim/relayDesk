@@ -47,6 +47,8 @@ export function fakeMicrosoft({ scope = `openid email offline_access ${G}User.Re
     return msg;
   };
   m.change = (msg, fields) => { Object.assign(msg, fields); ev(msg.parentFolderId, msg); };
+  // Suppression définitive : seul l'identifiant apparaît dans le delta (@removed).
+  m.hardDelete = msg => { m.messages.splice(m.messages.indexOf(msg), 1); ev(msg.parentFolderId, msg, true); };
   const json = (body, status = 200) => new Response(body === null ? null : JSON.stringify(body), { status });
   const view = x => ({
     id: x.id, conversationId: x.conversationId, parentFolderId: x.parentFolderId, subject: x.subject, bodyPreview: String(x.body).slice(0, 80),
@@ -63,7 +65,7 @@ export function fakeMicrosoft({ scope = `openid email offline_access ${G}User.Re
       m.tokenCalls.push(Object.fromEntries(p));
       if (p.get('client_secret')) return json({ error: 'invalid_client' }, 400);
       if (p.get('grant_type') === 'refresh_token' && p.get('refresh_token') === 'revoked') return json({ error: 'invalid_grant' }, 400);
-      const idToken = `x.${Buffer.from(JSON.stringify({ preferred_username: m.me.mail })).toString('base64url')}.y`;
+      const idToken = `x.${Buffer.from(JSON.stringify({ preferred_username: m.idUser || m.me.mail })).toString('base64url')}.y`;
       // Rotation : chaque rafraîchissement renvoie un nouveau jeton.
       return json({ access_token: `at${m.rt}`, expires_in: 3600, refresh_token: `rt-rot-${++m.rt}`, scope: m.scope, id_token: idToken });
     }
@@ -76,7 +78,13 @@ export function fakeMicrosoft({ scope = `openid email offline_access ${G}User.Re
     if (m.fail?.(method, path)) return json({ error: { message: 'contenu secret' } }, m.failStatus);
     let r;
     if (method === 'GET' && path === 'me') return json(m.me);
-    if (method === 'GET' && path === 'me/mailFolders') return json({ value: m.folders.filter(f => f.parentFolderId === 'root').map(f => ({ ...f, childFolderCount: m.folders.filter(c => c.parentFolderId === f.id).length })) });
+    if (method === 'GET' && path === 'me/mailFolders') {
+      // Pagination réelle : m.pageSize éléments par page, suite via @odata.nextLink.
+      const list = m.folders.filter(f => f.parentFolderId === 'root').map(f => ({ ...f, childFolderCount: m.folders.filter(c => c.parentFolderId === f.id).length }));
+      const skip = Number(u.searchParams.get('$skip') || 0), size = m.pageSize || 100;
+      const next = skip + size < list.length ? `https://graph.microsoft.com/v1.0/me/mailFolders?$skip=${skip + size}` : undefined;
+      return json({ value: list.slice(skip, skip + size), ...(next ? { '@odata.nextLink': next } : {}) });
+    }
     if ((r = path.match(/^me\/mailFolders\/([^/]+)\/childFolders$/))) {
       const parent = folderOf(decodeURIComponent(r[1]));
       if (method === 'POST') {

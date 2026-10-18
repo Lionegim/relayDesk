@@ -40,7 +40,7 @@ const visible = (messages, skipFolders) => (messages || [])
   .filter(m => !m.isDraft && !skipFolders.has(m.parentFolderId))
   .sort((a, b) => at(a) - at(b));
 
-// folders : { inbox, skip:Set (corbeille, courrier indésirable, brouillons), user: { id → nom } }.
+// folders : { inbox, skip:Set (corbeille, courrier indésirable, brouillons, boîte d'envoi), user: { id → chemin } }.
 export function conversationToRecord(conversationId, messages, { ownEmail, folders, preferredLabelId = null }) {
   const msgs = visible(messages, folders.skip);
   if (!msgs.length) return null;
@@ -65,7 +65,9 @@ export function conversationToRecord(conversationId, messages, { ownEmail, folde
     sortAt: at(last) || Date.now(),
     unread: labels.has('UNREAD'),
     flagged: msgs.some(m => m.flag?.flagStatus === 'flagged'),
-    archived: !msgs.some(m => m.parentFolderId === folders.inbox),
+    // Visible tant qu'un message est dans la boîte de réception ou dans un dossier personnel ; sinon archivée
+    // (messages seulement dans Archive ou Éléments envoyés, comme un fil Gmail hors boîte de réception).
+    archived: !msgs.some(m => m.parentFolderId === folders.inbox || folders.user[m.parentFolderId]),
     subject: clean(msgs[0].subject || last.subject) || '(Sans objet)',
     preview: clean(last.bodyPreview),
     body: bodyText(last),

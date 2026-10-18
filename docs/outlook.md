@@ -8,7 +8,7 @@ Sans client Microsoft configuré, aucune connexion n'est tentée : l'autorisatio
 
 1. Ouvre le [centre d'administration Microsoft Entra](https://entra.microsoft.com/) → **Applications → Inscriptions d'applications → Nouvelle inscription**.
 2. **Types de comptes pris en charge** : « Comptes dans un annuaire d'organisation et comptes Microsoft personnels ».
-3. **URI de redirection** : plateforme **Applications mobiles et de bureau**, valeur `http://localhost`. Pour `localhost`, Microsoft ignore le port : `http://localhost:4310/oauth/microsoft/callback` est accepté.
+3. **URI de redirection** : plateforme **Applications mobiles et de bureau**, valeur exacte `http://localhost:4310/oauth/microsoft/callback` (adapte le port si `PORT` change). Microsoft ignore le port d'une adresse `localhost`, mais pas le chemin : il doit être identique. Voir [Restrictions des URI de redirection](https://learn.microsoft.com/fr-fr/entra/identity-platform/reply-url).
 4. **Authentification → Paramètres avancés** : « Autoriser les flux clients publics » sur **Oui**. Ne crée pas de secret client.
 5. **Autorisations d'API → Microsoft Graph → Autorisations déléguées** : `User.Read`, `Mail.Read`, et selon les besoins `Mail.ReadWrite` (classement et brouillons) et `Mail.Send` (envoi). `openid`, `email` et `offline_access` sont demandés automatiquement.
 6. Copie l'**ID d'application (client)**.
@@ -38,9 +38,12 @@ Les permissions réellement accordées, lues sur la réponse du point de jeton, 
 
 - **Import** : conversations (regroupées par `conversationId`) reçues dans la période choisie, dans la boîte de réception, l'archive, les éléments envoyés et les dossiers personnels (jusqu'à 4 niveaux), 1 000 conversations au maximum. Les messages dans Éléments supprimés, Courrier indésirable, Brouillons et Boîte d'envoi ne sont pas affichés. Une conversation sans message dans la boîte de réception apparaît comme archivée.
 - **Synchronisation** : requêtes delta Graph par dossier, toutes les 60 secondes. La corbeille et les indésirables sont suivis pour voir les messages supprimés ou déplacés. Les nouveaux dossiers sont pris en compte au passage suivant. Si un curseur expire, la période est réimportée.
+- **Archivage** : une conversation reste visible tant qu'un de ses messages est dans la boîte de réception ou dans un dossier personnel (sous-dossiers de la boîte de réception compris). Elle est archivée quand ses messages ne sont plus que dans Archive ou Éléments envoyés. Archiver depuis un dossier personnel déplace ses messages vers Archive.
 - **Corps** : demandés en texte brut à Graph ; rien n'est rendu en HTML. Les citations du message précédent sont retirées.
 - **Jetons** : Microsoft renouvelle le jeton de rafraîchissement à chaque utilisation ; le nouveau est rechiffré aussitôt. Le jeton n'est envoyé qu'à `graph.microsoft.com` et n'apparaît ni dans l'API, ni dans les journaux.
-- **Classement** (Mail.ReadWrite) : non lu marque le dernier message ; lu marque tous les messages non lus. Drapeau sur le dernier message ; retrait sur tous. Archiver déplace vers le dossier Archive les messages de la boîte de réception. Un dossier Relay sans équivalent Outlook est créé segment par segment (`Parent/Enfant`) à son premier usage, puis lié au compte.
+- **Suppressions** : une entrée supprimée du delta ne porte souvent que l'identifiant du message ; Relay garde, avec les curseurs, la correspondance message → conversation des messages importés, ce qui permet d'appliquer aussi les suppressions définitives, y compris après un redémarrage.
+- **Adresse du compte** : l'adresse de la boîte (`/me` → `mail`) est préférée au nom de connexion, qui peut en différer ; repli sur le nom de connexion (UPN), puis sur l'id_token.
+- **Classement** (Mail.ReadWrite) : non lu marque le dernier message ; lu marque tous les messages non lus. Drapeau sur le dernier message ; retrait sur tous. Archiver déplace vers le dossier Archive les messages visibles (boîte de réception, dossiers personnels). Les messages de la corbeille, des indésirables, des brouillons et de la boîte d'envoi ne sont jamais modifiés. Graph n'offre pas d'écriture atomique sur plusieurs messages : si une erreur survient en cours de route, une partie peut déjà être appliquée dans Outlook ; Relay ne change rien localement et la synchronisation suivante reflète l'état réel. Un dossier Relay sans équivalent Outlook est créé segment par segment (`Parent/Enfant`) à son premier usage, puis lié au compte.
 - **Brouillons** (Mail.ReadWrite) : créés à partir du message MIME exact (en-têtes de fil compris), puis mis à jour (objet, corps, destinataires). Un brouillon supprimé dans Outlook est recréé. Un transfert ou un nouveau message sans destinataire reste local.
 - **Envoi** (Mail.Send) : aperçu exact (De, À, Cc, Objet, corps), puis envoi du MIME validé par `/me/sendMail` après contrôle de l'empreinte SHA-256 et d'une validation à usage unique liée au message, au compte et à sa génération. Jamais d'envoi d'un brouillon existant, qui a pu être modifié ailleurs. Après un envoi réussi, toutes les validations de ce message sont annulées. Le brouillon Outlook lié est conservé (`draftRemoved: false`).
 - **Nouveaux messages** (`kind: 'new'`) : aucune lecture distante ; destinataires saisis, sans doublon ni ta propre adresse en copie.
@@ -54,7 +57,6 @@ La plateforme d'identité Microsoft ne permet pas de révoquer un seul jeton d'a
 
 ## 5. Limites connues
 
-- Une suppression définitive (sans passage par Éléments supprimés) n'est vue qu'au prochain réimport complet.
 - Une conversation dont les messages sont dans plusieurs dossiers personnels est rangée dans le dossier du message le plus récent.
 - Pièces jointes et rendu HTML : non pris en charge.
 
@@ -74,7 +76,7 @@ const outlook = {
   oauth, sync,
   outbox: createOutlookOutbox({ store, sync, ownerName }),
   disconnect: createOutlookDisconnect({ store, sync }),
-  redirectUri: `http://localhost:${port}/oauth/microsoft/callback`,
+  redirectUri: `http://localhost:${port}/oauth/microsoft/callback`, // identique à l'URI enregistrée
 };
 // createApp({ providers: { outlook }, gmail, ... }) ; sync.start(intervalMs) au démarrage, sync.stop() à l'arrêt.
 ```

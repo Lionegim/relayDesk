@@ -104,7 +104,9 @@ export function createMicrosoftOAuth({ clientId, tenant = 'common', fetchImpl = 
       // Permissions réellement accordées, telles que renvoyées par le point de jeton (jamais celles demandées).
       const scopes = normalizeScopes(t.scope);
       if (!grantedPermissions(scopes).includes('read')) throw new HttpError(403, 'La lecture des messages Outlook n’a pas été autorisée.', 'oauth_scope');
-      const email = addressFromIdToken(t.id_token) || await meAddress(t.access_token);
+      // Adresse de boîte (SMTP) d'abord : le nom de connexion (UPN, preferred_username) peut en différer et ferait
+      // échouer l'envoi (SendAsDenied). Repli sur l'id_token seulement si /me est illisible.
+      const email = await meAddress(t.access_token) || addressFromIdToken(t.id_token);
       if (!email) throw new HttpError(502, 'Adresse du compte Microsoft introuvable.', 'oauth_no_email');
       return { context: entry.context, email, refreshToken: t.refresh_token, accessToken: t.access_token, expiresIn: t.expires_in, idToken: t.id_token, scopes };
     },
@@ -114,7 +116,8 @@ export function createMicrosoftOAuth({ clientId, tenant = 'common', fetchImpl = 
   };
 }
 
-// Adresse du compte depuis l'id_token reçu directement du point de jeton en TLS (signature non revérifiée).
+// Repli : adresse depuis l'id_token reçu directement du point de jeton en TLS (signature non revérifiée).
+// `preferred_username` est un nom de connexion, pas forcément l'adresse de la boîte.
 export function addressFromIdToken(idToken) {
   try {
     const c = JSON.parse(Buffer.from(String(idToken).split('.')[1], 'base64url').toString('utf8'));
