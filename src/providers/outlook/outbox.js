@@ -3,7 +3,8 @@
 // /me/sendMail avec le MIME validé, jamais par l'envoi d'un brouillon (modifiable ailleurs).
 import { createHash, timingSafeEqual } from 'node:crypto';
 import { HttpError, badRequest } from '../../http/errors.js';
-import { buildMessage, envelope, forwardBody, formatAddress, parseAddressList, MimeError } from '../gmail/mime.js';
+import { buildMessage, envelope, forwardBody, formatAddress, MimeError } from '../../mail/mime.js';
+import { newEnvelope } from '../../mail/envelope.js';
 import { readComposeInput } from '../../mail/input.js';
 import { replyMeta } from './parse.js';
 
@@ -26,16 +27,6 @@ const mimeErrors = fn => {
     throw e;
   }
 };
-
-// Destinataires saisis, sans doublon ni sa propre adresse en copie.
-function newEnvelope({ to, cc, subject }, own) {
-  const seen = new Set();
-  const uniq = list => list.filter(a => !seen.has(a.email) && seen.add(a.email));
-  const toList = uniq(parseAddressList(to));
-  if (!toList.length) throw new MimeError('Indique au moins un destinataire valide.');
-  const ccList = uniq(parseAddressList(cc).filter(a => a.email !== own.email));
-  return { to: toList, cc: ccList, subject };
-}
 
 const recipients = list => list.map(a => ({ emailAddress: { address: a.email, ...(a.name ? { name: a.name } : {}) } }));
 
@@ -62,7 +53,7 @@ export function createOutlookOutbox({ store, sync, ownerName = '' }) {
     const own = { name: ownerName, email: account.address };
     return mimeErrors(() => {
       if (ctx.kind === 'new') {
-        const env = newEnvelope({ to, cc, subject }, own);
+        const env = newEnvelope({ to, cc, subject });
         return { ctx, own, env, body: text, mime: buildMessage({ from: own, ...env, body: text }), threadId: undefined };
       }
       if (!ctx.reply) throw new HttpError(409, 'Les en-têtes de ce fil ne sont pas encore importés : synchronise le compte puis réessaie.', 'compose_unavailable');

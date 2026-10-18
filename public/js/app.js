@@ -51,8 +51,8 @@ function loadDetails(id) {
   if (state.details[id] || loading.has(id)) return;
   loading.add(id);
   api.message(id)
-    .then(full => set(s => ({ details: { ...s.details, [id]: full } })))
-    .catch(err => { set(s => ({ details: { ...s.details, [id]: { failed: true, trail: [] } } })); fail(err); })
+    .then(full => { if (state.data.messages.some(m => m.id === id)) set(s => ({ details: { ...s.details, [id]: full } })); })
+    .catch(err => { if (!state.data.messages.some(m => m.id === id)) return; set(s => ({ details: { ...s.details, [id]: { failed: true, trail: [] } } })); fail(err); })
     .finally(() => loading.delete(id));
 }
 
@@ -239,7 +239,7 @@ function resumeFromRedirect() {
   history.replaceState(null, '', '/');
   const base = { svc: params.get('provider') || params.get('connect') || 'gmail', perms: { read: true }, fields: {}, progress: 0, fromAccount: false };
   if (params.has('connect_error')) {
-    set({ c: { ...base, step: 'auth', profile: state.profileId, name: 'Gmail', win: 30, error: params.get('connect_error') } });
+    set({ c: { ...base, step: 'auth', profile: state.profileId, name: state.data.services[base.svc]?.name || 'Messagerie', win: 30, error: params.get('connect_error') } });
     return;
   }
   const accountId = Number(params.get('account')), profile = params.get('profile');
@@ -282,6 +282,7 @@ async function saveNewMail() {
     }
     const input = { mode: 'new', to: c.to, cc: c.cc, subject: c.subject, text: c.text };
     const draft = await api.saveDraft(c.messageId, input);
+    if (draft.previousDraftKept) notify('Un ancien brouillon est conservé chez le fournisseur.');
     set({ newMail: { ...c, busy: false, savedAt: draft.savedAt, synced: draft.synced ?? draft.gmail, error: null } });
     try { applyData(await api.state()); } catch { /* l'enregistrement est déjà confirmé */ }
     return { c, input };
@@ -434,6 +435,7 @@ const actions = {
     const mode = state.composing || 'reply';
     const to = mode === 'forward' ? (state.composeTo[sel.id] ?? state.details[sel.id]?.draft?.to ?? '') : null;
     api.saveDraft(sel.id, { text, mode, to }).then(draft => {
+      if (draft.previousDraftKept) notify('Un ancien brouillon est conservé chez le fournisseur.');
       sel.draft = { savedAt: draft.savedAt, gmail: draft.gmail, synced: draft.synced ?? draft.gmail };
       if (state.details[sel.id]) state.details[sel.id].draft = draft;
       set({});
@@ -519,7 +521,7 @@ const actions = {
     } catch (e) {
       // 409 : le contenu ou le fil a changé, il faut revérifier ; le bouton de confirmation est désactivé.
       // Une erreur Gmail incertaine (réseau, 5xx) consomme aussi la validation : vérifier à nouveau avant tout nouvel essai.
-      set({ confirm: { ...c, busy: false, stale: !/^Erreur Gmail/.test(e.message), error: e.message } });
+      set({ confirm: { ...c, busy: false, stale: !/^Erreur (Gmail|Outlook)/.test(e.message), error: e.message } });
       return;
     }
     // Envoi confirmé par le serveur : plus rien ici ne doit inviter à renvoyer.
@@ -528,7 +530,7 @@ const actions = {
     set(s => {
       const drafts = { ...s.drafts }, composeTo = { ...s.composeTo }, details = { ...s.details };
       delete drafts[id]; delete composeTo[id]; delete details[id];
-      return { confirm: null, composing: null, drafts, composeTo, details, ...(c.newMail ? { newMail: null, newMailOpen: false } : {}) };
+      return { confirm: null, composing: null, drafts, composeTo, details, ...(c.newMail ? { newMail: null, newMailOpen: false, selectedId: s.selectedId === id ? null : s.selectedId, data: { ...s.data, messages: s.data.messages.filter(m => m.id !== id) } } : {}) };
     });
     const m = state.data.messages.find(x => x.id === id);
     if (m) m.draft = null;

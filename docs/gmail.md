@@ -101,3 +101,7 @@ Menu du compte → **Déconnecter**, puis confirmation. Relay attend la fin de l
 
 1. Pièces jointes et rendu HTML.
 2. Réponse citant le message d'origine.
+
+## Nouveau message
+
+Le bouton **Nouveau message** permet désormais de rédiger sans fil d'origine : compte expéditeur, À, Cc, Objet et corps. L'enregistrement utilise les mêmes permissions Brouillons et l'envoi la même validation exacte que les réponses. Le message n'a ni préfixe de réponse/transfert ni identifiant de fil reçu. Voir le [parcours commun](messagerie.md).

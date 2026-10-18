@@ -437,7 +437,7 @@ function connectWizard(s) {
                     <span style="font-size:14px;font-weight:600">${sv.name}</span>
                     <span class="muted" style="font-size:12px">${sv.note}</span>
                   </span>
-                  ${when(sv.state, () => html`<span class="badge badge-outline">${sv.state}</span>`)}
+                  ${when(sv.state || !sv.real, () => html`<span class="badge badge-outline">${sv.state || 'Démonstration'}</span>`)}
                   <span class="muted">›</span>
                 </button>`)}
             </div>`)}
@@ -452,6 +452,7 @@ function connectWizard(s) {
             </div>`)}
 
           ${when(c.step === 'config', () => html`
+            ${when(c.svc === 'outlook', () => html`<p class="muted">Microsoft regroupe le classement et les brouillons dans la même permission Mail.ReadWrite.</p>`)}
             <div class="field" style="gap:8px">
               <span class="field-label">Profil de destination</span>
               <div style="display:flex;gap:6px;flex-wrap:wrap">

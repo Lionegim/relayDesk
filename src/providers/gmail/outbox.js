@@ -2,7 +2,8 @@
 // le navigateur n'envoie que le texte, le mode et, pour un transfert, les destinataires.
 import { createHash, timingSafeEqual } from 'node:crypto';
 import { HttpError, badRequest } from '../../http/errors.js';
-import { buildMessage, envelope, forwardBody, formatAddress, parseAddressList, toRaw, MimeError } from './mime.js';
+import { buildMessage, envelope, forwardBody, formatAddress, toRaw, MimeError } from '../../mail/mime.js';
+import { newEnvelope } from '../../mail/envelope.js';
 import { readComposeInput } from '../../mail/input.js';
 export { readComposeInput } from '../../mail/input.js';
 import { replyMeta } from './parse.js';
@@ -39,10 +40,7 @@ export function createGmailOutbox({ store, sync, ownerName = '' }) {
       if (!account.address) throw new HttpError(409, 'Adresse du compte inconnue.', 'compose_unavailable');
       const own = { name: ownerName, email: account.address };
       return mimeErrors(() => {
-        const recipients = parseAddressList(to || '');
-        if (!recipients.length) throw new MimeError('Indique au moins un destinataire valide.');
-        const copies = parseAddressList(cc || '').filter(a => !recipients.some(t => t.email === a.email));
-        const env = { to: recipients, cc: copies, subject };
+        const env = newEnvelope({ to, cc, subject });
         const mime = buildMessage({ from: own, ...env, body: text });
         return { ctx, own, env, body: text, mime, threadId: undefined };
       });

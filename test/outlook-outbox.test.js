@@ -46,7 +46,7 @@ test('nouveau message : brouillon, aperçu exact, envoi par sendMail sans aucune
   const input = { mode: 'new', text: 'Bonjour,\nVoici le devis.', to: 'Paul <paul@x.fr>, paul@x.fr', cc: 'jh@outlook.fr, Léa <lea@x.fr>', subject: 'Devis' };
   await outbox.saveDraft(comp.id, input);
   const p = await outbox.preview(comp.id, input);
-  assert.deepEqual([p.to, p.cc, p.subject], [['Paul <paul@x.fr>'], ['=?UTF-8?B?TMOpYQ==?= <lea@x.fr>'], 'Devis']);
+  assert.deepEqual([p.to, p.cc, p.subject], [['Paul <paul@x.fr>'], ['jh@outlook.fr', '=?UTF-8?B?TMOpYQ==?= <lea@x.fr>'], 'Devis']);
   assert.equal(p.from, 'Jean-Hugues <jh@outlook.fr>');
   assert.deepEqual(await outbox.send(comp.id, { ...input, digest: p.digest }), { sent: true, draftRemoved: false });
   assert.equal(ms.sent.length, 1);

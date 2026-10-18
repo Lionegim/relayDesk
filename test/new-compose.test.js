@@ -37,7 +37,7 @@ test('nouveau message : permissions minimales, enregistrement local sans destina
  await assert.rejects(mail.preview(m.id,input),e=>e.status===403);assert.equal(g.calls.length,0);
 });
 test('registre multi-fournisseurs : aucun appel Gmail pour un autre service',async()=>{
- const {store,mail,account,g}=await ready();const other=store.connectAccount('perso',{name:'Microsoft test',svc:'outlook'});
+ const {store,mail,account,g}=await ready();const other=store.upsertAccount('perso',{name:'Microsoft test',svc:'outlook',channel:'email',address:'test@example.test'});
  assert.throws(()=>mail.createComposition(other.id),e=>e.status===503);assert.equal(mail.permissions(other).length,0);
  assert.throws(()=>mail.createComposition('1'),e=>e.status===400);
  const m=mail.createComposition(account.id);await mail.saveDraft(m.id,input);
@@ -56,4 +56,11 @@ test('comptes : un nom ne peut pas remplacer silencieusement le fournisseur ou l
  assert.throws(()=>store.upsertAccount('perso',{name:account.name,channel:'email',svc:'outlook',address:'other@example.test'}),e=>e.status===400);
  assert.throws(()=>store.upsertAccount('perso',{name:account.name,channel:'email',svc:'gmail',address:'other@example.test'}),e=>e.status===400);
  assert.equal(store.getAccount(account.id).address,'jh@gmail.com');
+});
+test('nouveau message : aucune adresse invalide ignorée, copies explicites et doublons communs',async()=>{
+ const {mail,account,g}=await ready();const m=mail.createComposition(account.id);g.calls.length=0;
+ for(const bad of [{to:'valid@example.test, invalide'},{cc:'invalide'}]) await assert.rejects(mail.preview(m.id,{...input,...bad}),e=>e.status===400);
+ assert.equal(g.sent.length,0);
+ const p=await mail.preview(m.id,{...input,to:'moi@example.test, moi@example.test',cc:'jh@gmail.com, moi@example.test'});
+ assert.deepEqual(p.to,['moi@example.test']);assert.deepEqual(p.cc,['jh@gmail.com']);
 });
