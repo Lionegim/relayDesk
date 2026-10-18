@@ -65,3 +65,26 @@ test('client Graph : rotation du jeton de rafraîchissement, jamais d’autre h�
   const revoked = createGraphClient({ refreshToken: 'revoked', oauth, fetchImpl: ms.fetch });
   await assert.rejects(revoked.me(), e => e.code === 'invalid_grant');
 });
+
+test('revue : adresse de boîte /me.mail préférée au nom de connexion de l’id_token', async () => {
+  const ms = fakeMicrosoft({ scope: ALL_SCOPES, me: { mail: 'mailbox@custom.fr', userPrincipalName: 'login@tenant.onmicrosoft.com' } });
+  ms.idUser = 'login@tenant.onmicrosoft.com';
+  const oauth = createMicrosoftOAuth({ clientId: 'c', fetchImpl: ms.fetch });
+  const s1 = new URL(oauth.start({ redirectUri: REDIRECT, context: {} })).searchParams.get('state');
+  assert.equal((await oauth.finish({ state: s1, code: 'x' })).email, 'mailbox@custom.fr');
+  // Sans mail : UPN ; /me illisible : id_token.
+  ms.me = { mail: null, userPrincipalName: 'upn@tenant.fr' };
+  const s2 = new URL(oauth.start({ redirectUri: REDIRECT, context: {} })).searchParams.get('state');
+  assert.equal((await oauth.finish({ state: s2, code: 'x' })).email, 'upn@tenant.fr');
+  ms.fail = (method, path) => path === 'me';
+  const s3 = new URL(oauth.start({ redirectUri: REDIRECT, context: {} })).searchParams.get('state');
+  assert.equal((await oauth.finish({ state: s3, code: 'x' })).email, 'login@tenant.onmicrosoft.com');
+});
+
+test('revue : réponse Graph JSON invalide → erreur générique, sans extrait', async () => {
+  const ms = fakeMicrosoft();
+  const oauth = createMicrosoftOAuth({ clientId: 'c', fetchImpl: ms.fetch });
+  const leaky = async (url, init) => (String(url).includes('graph.microsoft.com') ? new Response('{"mail":"secret@x.fr", tronqué') : ms.fetch(url, init));
+  const graph = createGraphClient({ refreshToken: 'rt', oauth, fetchImpl: leaky });
+  await assert.rejects(graph.me(), e => e.status === 502 && !/secret|tronqué/.test(e.message) && !(e instanceof SyntaxError));
+});

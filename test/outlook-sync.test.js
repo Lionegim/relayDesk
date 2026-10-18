@@ -32,7 +32,7 @@ test('import initial : fenêtre, dossiers, archivage, en-têtes de réponse, rot
   assert.equal(reply.cc, '"Hugo" <hugo@atlas.fr>');
   assert.equal(reply.references, '<m0@outlook.fr>');
   const c2 = list.find(m => m.subject === 'Contrat');
-  assert.equal(c2.archived, true, 'hors boîte de réception');
+  assert.equal(c2.archived, false, 'visible dans son dossier personnel');
   assert.equal(ctx.store.snapshot().folders.find(f => f.id === c2.folderId).name, 'Clients');
   assert.equal(list.find(m => m.subject === 'Promo').label, 'Newsletter');
   // Jeton renouvelé par Microsoft : rechiffré, jamais en clair.
@@ -120,4 +120,63 @@ test('classement avec Mail.ReadWrite : lu, drapeau, archivage, dossier créé pa
   await ro.sync.updateMessage(m2.id, { unread: false });
   assert.equal(ro.ms.calls.filter(c => c.method !== 'GET').length, 0);
   assert.equal(ro.store.getMessage(m2.id).unread, false);
+});
+
+test('revue : suppression définitive (@removed sans conversation) appliquée après redémarrage', async () => {
+  const ctx = setupOutlook();
+  mailbox(ctx.ms);
+  const account = await connectedOutlook(ctx);
+  assert.ok(rows(ctx.store, account.id).some(m => m.subject === 'Contrat'));
+  const { createOutlookSync } = await import('../src/providers/outlook/sync.js');
+  const restarted = createOutlookSync({ store: ctx.store, vault: ctx.vault, oauth: ctx.oauth, fetchImpl: ctx.ms.fetch, log: {} });
+  ctx.ms.hardDelete(ctx.ms.messages.find(m => m.conversationId === 'C2'));
+  await restarted.syncNow(account.id);
+  assert.ok(!rows(ctx.store, account.id).some(m => m.subject === 'Contrat'), 'conversation retirée');
+  // Un message d'une conversation à plusieurs messages : la conversation est mise à jour, pas supprimée.
+  ctx.ms.hardDelete(ctx.ms.messages.find(m => m.conversationId === 'C1' && m.parentFolderId === 'F-sent'));
+  await restarted.syncNow(account.id);
+  assert.equal(rows(ctx.store, account.id).find(m => m.subject === 'Atelier').count, 1);
+});
+
+test('revue : liste de dossiers paginée, sous-dossier de la boîte de réception, aucun doublon créé', async () => {
+  const ctx = setupOutlook();
+  ctx.ms.pageSize = 2;
+  for (let i = 0; i < 5; i++) ctx.ms.folders.push({ id: `F-x${i}`, displayName: `Dossier ${i}`, parentFolderId: 'root' });
+  ctx.ms.folders.push({ id: 'F-proj', displayName: 'Projet', parentFolderId: 'F-inbox' });
+  ctx.ms.add({ conversationId: 'CZ', parentFolderId: 'F-x4', subject: 'Dernière page', receivedDateTime: day(1) });
+  ctx.ms.add({ conversationId: 'CP', parentFolderId: 'F-proj', subject: 'Sous la boîte', receivedDateTime: day(1) });
+  const account = await connectedOutlook(ctx, [`${G}Mail.ReadWrite`]);
+  const list = rows(ctx.store, account.id);
+  const folderName = m => ctx.store.snapshot().folders.find(f => f.id === m.folderId)?.name;
+  const z = list.find(m => m.subject === 'Dernière page'), p = list.find(m => m.subject === 'Sous la boîte');
+  assert.deepEqual([folderName(z), z.archived], ['Dossier 4', false]);
+  assert.deepEqual([folderName(p), p.archived], ['Boîte de réception/Projet', false]);
+  // Dossier Relay au même nom qu'un dossier Outlook de la dernière page : réutilisé, pas recréé.
+  const local = ctx.store.createFolder({ profileId: 'perso', name: 'Dossier 4', parentId: null });
+  const before = ctx.ms.folders.length;
+  await ctx.sync.updateMessage(p.id, { folderId: local.id });
+  assert.equal(ctx.ms.folders.length, before);
+  assert.equal(ctx.ms.messages.find(m => m.conversationId === 'CP').parentFolderId, 'F-x4');
+});
+
+test('revue : déplacé dans un dossier reste visible ; archiver depuis un dossier ; corbeille jamais touchée', async () => {
+  const ctx = setupOutlook();
+  mailbox(ctx.ms);
+  ctx.ms.add({ conversationId: 'C1', parentFolderId: 'F-deleted', subject: 'Atelier', body: 'supprimé', receivedDateTime: day(1.5) });
+  const account = await connectedOutlook(ctx, [`${G}Mail.ReadWrite`]);
+  const inboxMsg = () => ctx.ms.messages.find(m => m.conversationId === 'C1' && m.body.startsWith('Mardi'));
+  ctx.ms.moveTo(inboxMsg(), 'F-clients');
+  await ctx.sync.syncNow(account.id);
+  let c1 = rows(ctx.store, account.id).find(m => m.subject === 'Atelier');
+  assert.equal(c1.archived, false, 'toujours visible dans son dossier');
+  assert.equal(ctx.store.snapshot().folders.find(f => f.id === c1.folderId).name, 'Clients');
+  await ctx.sync.updateMessage(c1.id, { archived: true, unread: false });
+  assert.equal(inboxMsg().parentFolderId, 'F-archive');
+  const trashed = ctx.ms.messages.find(m => m.body === 'supprimé');
+  assert.deepEqual([trashed.parentFolderId, trashed.isRead], ['F-deleted', false], 'corbeille non modifiée');
+  await ctx.sync.syncNow(account.id);
+  c1 = rows(ctx.store, account.id).find(m => m.subject === 'Atelier');
+  assert.deepEqual([c1.archived, c1.folderId], [true, null], 'archivé après synchronisation');
+  await ctx.sync.updateMessage(c1.id, { archived: false });
+  assert.equal(inboxMsg().parentFolderId, 'F-inbox');
 });

@@ -23,9 +23,11 @@ async function pool(items, size, fn) {
   if (failed) throw failed.reason;
 }
 
-// Curseurs delta par dossier, conservés en JSON dans sync_state.history_id (aucune colonne dédiée nécessaire).
+// Curseurs delta par dossier et correspondance message → conversation, conservés en JSON dans sync_state.history_id
+// (aucune colonne dédiée). La correspondance permet d'appliquer les suppressions : une entrée @removed du delta ne
+// porte en général que l'identifiant du message.
 const readCursor = raw => { try { const c = JSON.parse(raw); return c && c.v === 1 && c.links ? c : null; } catch { return null; } };
-const writeCursor = links => JSON.stringify({ v: 1, links });
+const writeCursor = (links, ids) => JSON.stringify({ v: 1, links, ids: Object.fromEntries(ids) });
 
 export function createOutlookSync({ store, vault, oauth, fetchImpl = globalThis.fetch, log = console }) {
   const clients = new Map();
@@ -80,11 +82,14 @@ export function createOutlookSync({ store, vault, oauth, fetchImpl = globalThis.
     }
     const systemIds = new Set(Object.values(known));
     const user = {};
+    // Les dossiers système ne sont jamais des dossiers Relay, mais leurs sous-dossiers personnels le sont
+    // (ex. « Boîte de réception/Projet »), sauf sous les dossiers ignorés (corbeille, indésirables…).
+    const skippedIds = new Set(SKIPPED.map(n => known[n]).filter(Boolean));
     const walk = async (list, prefix, depth) => {
       for (const f of list) {
-        if (systemIds.has(f.id)) continue;
+        if (skippedIds.has(f.id)) continue;
         const path = prefix ? `${prefix}/${f.displayName}` : f.displayName;
-        user[f.id] = path;
+        if (!systemIds.has(f.id)) user[f.id] = path;
         if (depth < MAX_FOLDER_DEPTH && f.childFolderCount) await walk((await graph.childFolders(f.id)).value || [], path, depth + 1);
       }
     };
@@ -97,9 +102,11 @@ export function createOutlookSync({ store, vault, oauth, fetchImpl = globalThis.
     };
   }
 
-  async function applyConversation(accountId, c, folders, conversationId) {
+  async function applyConversation(accountId, c, folders, conversationId, ids) {
     const messages = await c.graph.conversation(conversationId);
     if (!c.live()) throw gone();
+    for (const [id, conv] of ids) if (conv === conversationId) ids.delete(id);
+    for (const m of messages) if (m.id) ids.set(m.id, conversationId);
     const currentFolder = store.getThreadFolder(accountId, conversationId);
     const preferredLabelId = currentFolder && store.folderLabel(currentFolder, accountId);
     const rec = conversationToRecord(conversationId, messages, { ownEmail: c.email, folders, preferredLabelId });
@@ -109,11 +116,15 @@ export function createOutlookSync({ store, vault, oauth, fetchImpl = globalThis.
   }
 
   // Parcourt un delta jusqu'au deltaLink ; renvoie les conversations touchées et le nouveau lien.
-  async function drain(graph, folderId, link, sinceIso, changed) {
+  // Une entrée supprimée sans conversationId est rattachée par la correspondance des identifiants déjà importés.
+  async function drain(graph, folderId, link, sinceIso, changed, ids) {
     let next = link, deltaLink = null;
     do {
       const page = await graph.delta(folderId, next, next ? null : sinceIso);
-      for (const m of page.value || []) if (m.conversationId) changed.add(m.conversationId);
+      for (const m of page.value || []) {
+        const conv = m.conversationId || ids.get(m.id);
+        if (conv) changed.add(conv);
+      }
       next = page['@odata.nextLink'] || null;
       deltaLink = page['@odata.deltaLink'] || deltaLink;
     } while (next);
@@ -131,19 +142,19 @@ export function createOutlookSync({ store, vault, oauth, fetchImpl = globalThis.
     const folders = await folderMap(c.graph);
     const since = new Date(Date.now() - days * 86400000).toISOString();
     // Curseurs pris avant l'import : un changement pendant l'import sera revu au passage suivant.
-    const changed = new Set(), links = {};
-    for (const id of folders.tracked) links[id] = await drain(c.graph, id, null, since, changed);
+    const changed = new Set(), links = {}, ids = new Map();
+    for (const id of folders.tracked) links[id] = await drain(c.graph, id, null, since, changed, ids);
     const todo = [...changed].slice(0, MAX_THREADS);
     if (!c.live()) throw gone();
     store.setSync(accountId, { total: todo.length });
     let done = 0;
     await pool(todo, CONCURRENCY, async id => {
-      await applyConversation(accountId, c, folders, id);
+      await applyConversation(accountId, c, folders, id, ids);
       done++;
       if (done % 5 === 0 || done === todo.length) store.setSync(accountId, { done });
     });
     if (!c.live()) throw gone();
-    store.setSync(accountId, { status: 'ok', history_id: writeCursor(links), done: todo.length, last_sync_at: new Date().toISOString() });
+    store.setSync(accountId, { status: 'ok', history_id: writeCursor(links, ids), done: todo.length, last_sync_at: new Date().toISOString() });
     store.setAccountStatus(accountId, 'Connecté', 'ok');
   }
 
@@ -154,17 +165,17 @@ export function createOutlookSync({ store, vault, oauth, fetchImpl = globalThis.
     const c = client(accountId);
     const folders = await folderMap(c.graph);
     const since = new Date(Date.now() - (state.window_days || 30) * 86400000).toISOString();
-    const changed = new Set(), links = {};
+    const changed = new Set(), links = {}, ids = new Map(Object.entries(cursor.ids || {}));
     try {
-      for (const id of folders.tracked) links[id] = await drain(c.graph, id, cursor.links[id] || null, since, changed);
+      for (const id of folders.tracked) links[id] = await drain(c.graph, id, cursor.links[id] || null, since, changed, ids);
     } catch (e) {
       // Curseur expiré ou dossier disparu : réimport complet de la fenêtre.
       if (e.code === 'gone_cursor' || e.code === 'not_found') return initialSync(accountId);
       throw e;
     }
-    if (changed.size) await pool([...changed], CONCURRENCY, id => applyConversation(accountId, c, folders, id));
+    if (changed.size) await pool([...changed], CONCURRENCY, id => applyConversation(accountId, c, folders, id, ids));
     if (!c.live()) throw gone();
-    store.setSync(accountId, { status: 'ok', history_id: writeCursor(links), error: null, last_sync_at: new Date().toISOString() });
+    store.setSync(accountId, { status: 'ok', history_id: writeCursor(links, ids), error: null, last_sync_at: new Date().toISOString() });
     if (store.getAccount(accountId).c !== 'ok') store.setAccountStatus(accountId, 'Connecté', 'ok');
   }
 

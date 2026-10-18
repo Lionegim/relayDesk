@@ -3,6 +3,8 @@
 import { HttpError } from '../../http/errors.js';
 
 const at = m => Date.parse(m.receivedDateTime || m.sentDateTime || '') || 0;
+// Comme à l'import : les messages de ces dossiers ne font pas partie de la conversation affichée et ne sont jamais modifiés.
+const SKIPPED = ['deleteditems', 'junkemail', 'drafts', 'outbox'];
 
 export function createOutlookActions({ store, client, permissions }) {
   // Dossier Outlook correspondant au chemin du dossier Relay ; créé segment par segment s'il manque.
@@ -37,7 +39,12 @@ export function createOutlookActions({ store, client, permissions }) {
       const graph = client(accountId);
       let newLink = null;
       try {
-        const load = async () => (await graph.conversation(source.externalId)).filter(m => !m.isDraft).sort((a, b) => at(a) - at(b));
+        const skip = new Set();
+        for (const name of SKIPPED) {
+          try { skip.add((await graph.wellKnown(name)).id); } catch (e) { if (e.code !== 'not_found') throw e; }
+        }
+        const load = async () => (await graph.conversation(source.externalId))
+          .filter(m => !m.isDraft && !skip.has(m.parentFolderId)).sort((a, b) => at(a) - at(b));
         let msgs = await load();
         if (!msgs.length) throw new HttpError(404, 'Conversation Outlook introuvable.', 'not_found');
         const inbox = (await graph.wellKnown('inbox')).id;
@@ -51,10 +58,13 @@ export function createOutlookActions({ store, client, permissions }) {
           for (const m of targets) await graph.patchMessage(m.id, { flag: { flagStatus: fields.flagged ? 'flagged' : 'notFlagged' } });
         }
         if ('archived' in fields) {
-          const archive = fields.archived ? (await graph.wellKnown('archive')).id : null;
+          // Visible = au moins un message dans la boîte de réception ou un dossier personnel (même règle qu'à l'import).
+          const archive = (await graph.wellKnown('archive')).id;
+          const sent = (await graph.wellKnown('sentitems').catch(() => ({}))).id;
+          const shown = m => m.parentFolderId !== archive && m.parentFolderId !== sent;
           if (fields.archived) {
-            for (const m of msgs.filter(m => m.parentFolderId === inbox)) await graph.move(m.id, archive);
-          } else if (!msgs.some(m => m.parentFolderId === inbox)) {
+            for (const m of msgs.filter(shown)) await graph.move(m.id, archive);
+          } else if (!msgs.some(shown)) {
             await graph.move(msgs.at(-1).id, inbox);
           }
           msgs = await load(); // un déplacement change l'identifiant des messages
@@ -73,6 +83,8 @@ export function createOutlookActions({ store, client, permissions }) {
           for (const m of msgs.filter(m => from.has(m.parentFolderId) && m.parentFolderId !== dest)) await graph.move(m.id, dest);
         }
       } catch (e) {
+        // Graph n'offre pas d'écriture atomique sur plusieurs messages : en cas d'erreur, une partie peut déjà être
+        // appliquée dans Outlook. Relay ne change rien localement ; la synchronisation suivante reflète l'état réel.
         // Ni réponse Graph, ni jeton, ni contenu dans le message d'erreur.
         throw new HttpError(502, `La modification n’a pas été acceptée par Outlook${e.code === 'invalid_grant' ? ' : reconnecte le compte' : ''}.`, 'outlook_write');
       }
