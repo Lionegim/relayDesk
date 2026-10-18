@@ -3,7 +3,7 @@
 import { createHash, timingSafeEqual } from 'node:crypto';
 import { HttpError, badRequest } from '../../http/errors.js';
 import { readComposeInput } from '../../mail/input.js';
-import { isDirectJid, phoneOf } from './parse.js';
+import { isDirectJid, groupJid, phoneOf } from './parse.js';
 
 const CONFIRM_TTL_MS = 10 * 60000;
 export const MAX_SEND = 4096; // caractères par message envoyé
@@ -24,10 +24,11 @@ export function createWhatsAppOutbox({ store, sync }) {
     return parsed;
   }
   // Discussion WhatsApp reçue (jamais un nouveau message) et son JID enregistré.
-  function target(messageId) {
+  function target(messageId, allowGroup = false) {
     const ctx = store.composeContext(messageId);
     if (!sync.isWhatsApp(ctx.accountId) || ctx.kind === 'new') throw badRequest('Ce message n’est pas une conversation WhatsApp.');
-    if (!isDirectJid(ctx.threadId)) throw new HttpError(409, 'Discussion WhatsApp invalide.', 'compose_unavailable');
+    if (groupJid(ctx.threadId) && !allowGroup) throw new HttpError(409, 'Groupes : lecture et analyse disponibles ; envoi non activé.', 'compose_unavailable');
+    if (!isDirectJid(ctx.threadId) && !(allowGroup && groupJid(ctx.threadId))) throw new HttpError(409, 'Discussion WhatsApp invalide.', 'compose_unavailable');
     return { accountId: ctx.accountId, chatJid: ctx.threadId };
   }
   function checkSend(accountId, text) {
@@ -40,7 +41,7 @@ export function createWhatsAppOutbox({ store, sync }) {
     // Brouillon local uniquement : WhatsApp n'a pas de brouillon partagé entre appareils.
     async saveDraft(messageId, input) {
       const { text } = read(input);
-      const { accountId } = target(messageId);
+      const { accountId } = target(messageId, true);
       return sync.serial(accountId, () => store.saveDraft(messageId, text, { mode: 'reply' }));
     },
 

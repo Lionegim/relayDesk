@@ -366,6 +366,7 @@ svg { display: block; }
 .wa-out:not(.wa-cont) .wa-bubble { border-top-right-radius: 0; }
 .wa-out:not(.wa-cont) .wa-bubble::before { right: -8px; background: var(--wa-out); clip-path: polygon(0 0, 100% 0, 0 100%); }
 .wa-text { white-space: pre-wrap; }
+.wa-author { display: block; margin-bottom: 3px; font-size: 12px; color: #006d59; }
 /* L'heure est en bas à droite ; l'espace réservé en fin de texte évite qu'elle recouvre la dernière ligne. */
 .wa-text::after { content: ""; display: inline-block; width: 46px; }
 .wa-time { position: absolute; right: 8px; bottom: 5px; font-size: 11px; line-height: 1; color: var(--wa-meta); font-variant-numeric: tabular-nums; }

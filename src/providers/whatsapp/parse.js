@@ -12,6 +12,8 @@ export function directJid(jid) {
   return `${m[1]}@${m[2] === 'lid' ? 'lid' : 's.whatsapp.net'}`;
 }
 export const isDirectJid = jid => directJid(jid) !== null && directJid(jid) === jid;
+export const groupJid = jid => typeof jid === 'string' && /^\d{5,30}(?:-\d{1,20})?@g\.us$/.test(jid) ? jid : null;
+export const chatJid = jid => directJid(jid) || groupJid(jid);
 
 // Numéro affichable, seulement pour un JID de numéro (un JID @lid n'est pas un numéro de téléphone).
 export const phoneOf = jid => (/^(\d{5,20})@s\.whatsapp\.net$/.exec(jid || '') || [])[1] ? `+${jid.split('@')[0]}` : null;
@@ -40,15 +42,17 @@ export function tsOf(v) {
 // WAMessage → { chatJid, msgId, fromMe, ts, text, pushName } ou null.
 export function parseMessage(m, { since = 0 } = {}) {
   const key = m?.key;
-  const chatJid = directJid(key?.remoteJid);
-  if (!chatJid || typeof key.id !== 'string' || !key.id || key.id.length > 128) return null;
+  const conversation = chatJid(key?.remoteJid);
+  if (!conversation || typeof key.id !== 'string' || !key.id || key.id.length > 128) return null;
   if (m.messageStubType || m.broadcast) return null;
   const ts = tsOf(m.messageTimestamp);
   if (!ts || ts < since) return null;
   const text = textOf(m.message);
   if (!text) return null;
   const pushName = !key.fromMe && typeof m.pushName === 'string' ? m.pushName.trim().slice(0, 80) : '';
-  return { chatJid, msgId: key.id, fromMe: !!key.fromMe, ts, text, pushName };
+  const participantJid = groupJid(conversation) ? directJid(key.participant || m.participant) : null;
+  const senderName = groupJid(conversation) && !key.fromMe ? pushName || phoneOf(participantJid) || 'Participant' : null;
+  return { chatJid: conversation, msgId: key.id, fromMe: !!key.fromMe, ts, text, pushName, participantJid, senderName };
 }
 
 // Nom d'un contact WhatsApp (carnet, nom public, nom vérifié).
@@ -68,12 +72,13 @@ export const contactId = (accountId, chatJid) => `wa${accountId}_${createHash('s
 // `state` : état local existant (lu, drapeau, archive), conservé ; un nouveau message reçu rend le fil non lu et visible.
 export function chatToRecord(chatJid, msgs, { name, state, incoming = false, trailMax = 50 }) {
   const last = msgs.at(-1);
-  const who = name || phoneOf(chatJid) || 'Contact WhatsApp';
-  const label = m => (m.fromMe ? 'Moi' : who);
+  const group = !!groupJid(chatJid);
+  const who = name || phoneOf(chatJid) || (group ? 'Groupe WhatsApp' : 'Contact WhatsApp');
+  const label = m => (m.fromMe ? 'Moi' : group ? m.senderName || phoneOf(m.participantJid) || 'Participant' : who);
   return {
     externalId: chatJid,
     // L'auteur du dernier message reste exact (l'assistant IA lit `from` comme auteur du corps).
-    from: last.fromMe ? `Moi (à ${who})` : who, initials: initialsOf(who), handle: phoneOf(chatJid) || '',
+    from: last.fromMe ? `Moi (à ${who})` : label(last), initials: initialsOf(who), handle: phoneOf(chatJid) || '',
     sortAt: last.ts,
     unread: incoming || (state?.unread ?? false),
     flagged: state?.flagged ?? false,

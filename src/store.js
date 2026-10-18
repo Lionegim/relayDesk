@@ -55,14 +55,15 @@ export function createStore(db) {
     getMessage(id) {
       const r = row(id), m = toMessage(r, true);
       if (r.channel === 'whatsapp' && r.account_id && r.external_id) {
-        const recent = q('SELECT from_me, ts, text FROM whatsapp_messages WHERE account_id = ? AND chat_jid = ? ORDER BY ts DESC, rowid DESC').all(r.account_id, r.external_id);
+        const recent = q('SELECT from_me, ts, text, author_jid, sender_name FROM whatsapp_messages WHERE account_id = ? AND chat_jid = ? ORDER BY ts DESC, rowid DESC').all(r.account_id, r.external_id);
+        m.group = r.external_id.endsWith('@g.us');
         m.fromMe = recent.length ? !!recent[0].from_me : false;
         m.at = m.sortAt;
         // Relire la source aussi pour les fils importés avant fromMe : un contact peut s'appeler « Moi ».
         if (recent.length) {
           const who = q('SELECT name FROM whatsapp_chats WHERE account_id = ? AND chat_jid = ?').get(r.account_id, r.external_id)?.name || m.subject.replace(/^WhatsApp · /, '');
           m.trail = recent.slice(1).map(t => {
-            const from = t.from_me ? 'Moi' : who;
+            const from = t.from_me ? 'Moi' : m.group ? t.sender_name || 'Participant' : who;
             return { from, initials: from.split(/\s+/).slice(0, 2).map(w => w[0] || '').join('').toUpperCase(), fromMe: !!t.from_me, at: t.ts, body: t.text };
           });
         }
@@ -332,17 +333,17 @@ export function createStore(db) {
     },
     // Messages : { chatJid, msgId, fromMe, ts, text }. Renvoie les discussions qui ont reçu au moins un nouveau message.
     waAddMessages(accountId, list) {
-      const ins = q('INSERT OR IGNORE INTO whatsapp_messages (account_id, chat_jid, msg_id, from_me, ts, text) VALUES (?, ?, ?, ?, ?, ?)');
+      const ins = q('INSERT OR IGNORE INTO whatsapp_messages (account_id, chat_jid, msg_id, from_me, ts, text, author_jid, sender_name) VALUES (?, ?, ?, ?, ?, ?, ?, ?)');
       const changed = new Set();
       transaction(db, () => {
-        for (const m of list) if (ins.run(accountId, m.chatJid, m.msgId, +m.fromMe, m.ts, m.text).changes) changed.add(m.chatJid);
+        for (const m of list) if (ins.run(accountId, m.chatJid, m.msgId, +m.fromMe, m.ts, m.text, m.participantJid || null, m.senderName || null).changes) changed.add(m.chatJid);
       });
       return changed;
     },
     // Tous les textes de la fenêtre importée ; une lecture ne supprime jamais les messages précédents.
     waChatMessages(accountId, chatJid) {
-      return q('SELECT msg_id, from_me, ts, text FROM whatsapp_messages WHERE account_id = ? AND chat_jid = ? ORDER BY ts, rowid').all(accountId, chatJid)
-        .map(r => ({ msgId: r.msg_id, fromMe: !!r.from_me, ts: r.ts, text: r.text }));
+      return q('SELECT msg_id, from_me, ts, text, author_jid, sender_name FROM whatsapp_messages WHERE account_id = ? AND chat_jid = ? ORDER BY ts, rowid').all(accountId, chatJid)
+        .map(r => ({ msgId: r.msg_id, fromMe: !!r.from_me, ts: r.ts, text: r.text, participantJid: r.author_jid, senderName: r.sender_name }));
     },
     waPruneBefore(accountId, since) {
       transaction(db, () => {

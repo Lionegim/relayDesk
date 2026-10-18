@@ -303,8 +303,8 @@ const isMine = m => m.fromMe === true;
 
 // Chronologie ancien → récent : le fil est stocké du plus récent au plus ancien, le dernier message est `full`.
 function waMessages(sel, full) {
-  const older = [...(full.trail || [])].reverse().map(t => ({ mine: isMine(t), at: t.at, body: t.body }));
-  return [...older, { mine: isMine(full), at: full.at ?? sel.sortAt, body: full.failed ? sel.preview : full.body }];
+  const older = [...(full.trail || [])].reverse().map(t => ({ mine: isMine(t), at: t.at, body: t.body, author: full.group && !isMine(t) ? t.from : null }));
+  return [...older, { mine: isMine(full), at: full.at ?? sel.sortAt, body: full.failed ? sel.preview : full.body, author: full.group && !isMine(full) ? full.from : null }];
 }
 
 function waTimeline(msgs) {
@@ -319,6 +319,7 @@ function waTimeline(msgs) {
       ${when(newDay, () => html`<div class="wa-day" role="separator"><span>${dayLabel(at)}</span></div>`)}
       <div class="${cls('wa-msg', m.mine ? 'wa-out' : 'wa-in', grouped && 'wa-cont')}">
         <div class="wa-bubble">
+          ${when(m.author, () => html`<strong class="wa-author">${m.author}</strong>`)}
           <span class="sr-only">${m.mine ? 'Vous' : 'Reçu'} :</span>
           <span class="wa-text">${m.body}</span>
           ${when(at !== null, () => html`<time class="wa-time" datetime="${new Date(at).toISOString()}" title="${fullDate(at)}">${timeOf(at)}</time>`)}
@@ -334,18 +335,18 @@ function whatsappView(s, v, sel) {
   const full = s.details[sel.id];
   const name = waName(sel, full);
   const acc = v.profile.accounts.find(a => a.id === sel.accountId);
-  const canSend = !!acc?.perms?.includes('send');
+  const canSend = !!acc?.perms?.includes('send') && !full?.group;
   const draft = s.drafts[sel.id] ?? full?.draft?.text ?? '';
   const tooLong = draft.length > WA_MAX;
   const folderName = s.data.folders.find(f => f.id === sel.folderId)?.name;
   const status = sel.draft ? `Brouillon local enregistré à ${timeOf(sel.draft.savedAt)}` : 'Brouillon local, sur ce Mac';
-  const hint = !canSend ? 'Envoi non autorisé pour ce compte' : s.confirm ? 'Vérification en cours' : 'Envoi seulement après l’aperçu exact';
+  const hint = full?.group ? 'Groupe : lecture et IA · envoi non activé' : !canSend ? 'Envoi non autorisé pour ce compte' : s.confirm ? 'Vérification en cours' : 'Envoi seulement après l’aperçu exact';
   return html`
     <section class="wa" aria-label="Discussion WhatsApp avec ${name}">
       <header class="wa-head">
         <span class="avatar wa-avatar">${sel.initials}</span>
         <div class="wa-who">
-          <strong class="ellipsis">${name}</strong>
+          <strong class="ellipsis">${name}${full?.group ? ' · Groupe' : ''}</strong>
           <span class="ellipsis"><span class="wa-badge">WhatsApp</span>${sel.account !== 'WhatsApp' ? sel.account : ''}${sel.handle ? ` · ${sel.handle}` : ''}${folderName ? ` · ${folderName}` : ''}</span>
         </div>
         <div class="wa-head-actions">
