@@ -30,7 +30,7 @@ const fullResponse = (sock, code) => ({
 });
 
 test('lot fusionné : tous les messages de la fenêtre importés, sans troncature ni plafond', async () => {
-  const ctx = await setupWhatsApp({ timing: FAST });
+  const ctx = await setupWhatsApp({ timing: { ...FAST, historyIdleMs: 10000 } });
   const { accountId, sock } = await linkedAccount(ctx, { messages: [] });
   // 6 000 messages sur 300 discussions, du plus récent au plus ancien (ordre Baileys), dont 250 dans une seule.
   const messages = [];
@@ -177,7 +177,7 @@ test('déconnexion pendant un gros lot : traitement interrompu, rien de réécri
 
 test('fin honnête : jalon seul, mauvais type, progression d’un autre lot, tranche en échec', async () => {
   // Demande bornée (mode full) : un lot RECENT à 100 % ou un jalon « complete » ne terminent pas le cycle.
-  const ctx = await setupWhatsApp({ timing: { ...FAST, fullResponseMs: 5000 } });
+  const ctx = await setupWhatsApp({ timing: { ...FAST, fullResponseMs: 5000, historyIdleMs: 10000 } });
   const { accountId, sock } = await linkedAccount(ctx);
   spyRequests(sock);
   await endLinkHistory(sock);
