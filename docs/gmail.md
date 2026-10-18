@@ -52,9 +52,13 @@ Clique sur ton compte Gmail dans la barre latérale :
 - **Synchroniser maintenant** relance la lecture de l’historique Gmail.
 - **Modifier les permissions** ouvre la configuration avec les permissions réellement accordées cochées et la période d’import du compte conservée. Active **Libellés**, puis termine la nouvelle autorisation Google avec le même compte.
 
-L’ajout d’une permission demande une nouvelle autorisation Google et sa déclaration préalable dans **Google Auth Platform → Accès aux données**. Les scopes réellement accordés, et non les interrupteurs demandés, déterminent les capacités de Relay. Décocher une permission déjà accordée ne la révoque pas chez Google (autorisation incrémentale). La déconnexion depuis Relay sera ajoutée au lot B ; l’accès peut déjà être révoqué depuis ton compte Google.
+L’ajout d’une permission demande une nouvelle autorisation Google et sa déclaration préalable dans **Google Auth Platform → Accès aux données**. Les scopes réellement accordés, et non les interrupteurs demandés, déterminent les capacités de Relay. Décocher une permission déjà accordée ne la révoque pas chez Google (autorisation incrémentale).
 
 Les opérations du même compte sont exécutées dans l’ordre pour éviter qu’une synchronisation en cours écrase une écriture. Les erreurs de modification ne changent pas SQLite ; si Gmail a créé un libellé avant qu’une modification de conversation échoue, ce libellé peut rester dans Gmail et sera réutilisé au prochain essai.
+
+## Déconnecter un compte
+
+Menu du compte → **Déconnecter**, puis confirmation. Relay attend la fin de la synchronisation ou de l'action en cours sur ce compte, révoque l'accès chez Google, puis supprime le compte, son jeton, son état de synchronisation, ses messages importés et ses liens de libellés. Tous les dossiers restent, y compris ceux créés à partir de ses libellés. Les messages restent dans Gmail. Si Google est injoignable, la suppression a lieu quand même : retire alors l'accès depuis [ton compte Google](https://myaccount.google.com/permissions).
 
 ## Sécurité
 
@@ -67,4 +71,3 @@ Les opérations du même compte sont exécutées dans l’ordre pour éviter qu�
 
 1. `gmail.compose` : brouillons Gmail réels.
 2. `gmail.send` : envoi, après un écran de validation du contenu exact.
-3. Déconnexion depuis Relay (révocation du jeton et suppression des messages importés).

@@ -25,6 +25,7 @@ export function renderApp(s, v) {
       ${mail ? [messageList(s, v), reader(s, v)] : contactsPage(s, v)}
     </div>
     ${when(s.c, () => connectWizard(s))}
+    ${when(s.confirm?.kind === 'disconnect', () => disconnectDialog(s.confirm))}
     ${when(s.toast, () => html`<div class="toast" role="status">${s.toast}</div>`)}`;
 }
 
@@ -102,6 +103,7 @@ function sidebar(s, v) {
             <div class="menu" role="menu" aria-label="Compte Gmail" style="left:0;right:0;top:100%">
               <button class="side-item hov" role="menuitem" data-on-click="accountSync" data-id="${a.id}">Synchroniser maintenant</button>
               <button class="side-item hov" role="menuitem" data-on-click="accountPermissions" data-id="${a.id}">Modifier les permissions</button>
+              <button class="side-item hov" role="menuitem" data-on-click="disconnectAccount" data-id="${a.id}" style="color:var(--destructive)">Déconnecter</button>
             </div>`)}
           </div>`)}
         <button class="side-item hov side-add" data-on-click="openConnect">
@@ -523,6 +525,28 @@ function connectWizard(s) {
           ${when((c.step === 'config' && !c.fromAccount) || c.step === 'auth', () => html`<button class="btn btn-ghost" data-on-click="cBack">Retour</button>`)}
           <div class="grow"></div>
           ${when(next, () => html`<button class="btn btn-brand" data-on-click="cNext" ${raw(nextDisabled ? 'disabled' : '')}>${next}</button>`)}
+        </div>
+      </div>
+    </div>`;
+}
+
+// ---------- Confirmation de déconnexion ----------
+
+function disconnectDialog(c) {
+  return html`
+    <div class="overlay" data-on-click="confirmCancel">
+      <div class="dialog dialog-sm" role="alertdialog" aria-modal="true" aria-label="Déconnecter ${c.name}" data-on-click="noop">
+        <div class="dialog-body">
+          <h3>Déconnecter ${c.name} ?</h3>
+          <p class="muted" style="margin:0;font-size:14px;line-height:1.55">Les messages importés de ce compte seront retirés de Relay. Ils restent dans Gmail. L’accès accordé à Relay sera révoqué chez Google.</p>
+          ${when(c.error, () => html`<div class="alert">${c.error}</div>`)}
+        </div>
+        <div class="dialog-foot">
+          <div class="grow"></div>
+          <button class="btn btn-ghost" data-on-click="confirmCancel" ${raw(c.busy ? 'disabled' : '')}>Annuler</button>
+          <button class="btn btn-danger" data-on-click="confirmDisconnect" ${raw(c.busy ? 'disabled' : '')}>
+            ${when(c.busy, () => html`<span class="spinner"></span>`)}Déconnecter
+          </button>
         </div>
       </div>
     </div>`;

@@ -68,7 +68,7 @@ const accountId = raw => {
   return id;
 };
 
-// gmail : { oauth, sync, redirectUri } (facultatif). allowedHosts : protège contre le DNS rebinding.
+// gmail : { oauth, sync, redirectUri, disconnect, outbox } (facultatif). allowedHosts : protège contre le DNS rebinding.
 export function createApp({ store, ai, ownerName, gmail = null, allowedHosts = null }) {
   // Autorisation Google : navigation pleine page, puis retour vers l'interface avec le résultat dans l'URL.
   async function oauthRoute(pathname, url, res) {
@@ -121,6 +121,10 @@ export function createApp({ store, ai, ownerName, gmail = null, allowedHosts = n
       if (store.getAccount(accountId(id)).svc !== 'gmail' || !gmail) throw badRequest('Compte non synchronisable');
       gmail.sync.syncNow(accountId(id));
       return { started: true };
+    }],
+    ['POST', /^\/api\/accounts\/([^/]+)\/disconnect$/, ([id]) => {
+      if (!gmail?.disconnect) throw badRequest('Déconnexion indisponible');
+      return gmail.disconnect(accountId(id));
     }],
     ['GET', /^\/api\/messages\/([^/]+)$/, ([id]) => store.getMessage(messageId(id))],
     ['PATCH', /^\/api\/messages\/([^/]+)$/, ([id], body) => gmail ? gmail.sync.updateMessage(messageId(id), body) : store.updateMessage(messageId(id), body)],

@@ -14,6 +14,7 @@ export const api = {
   message: id => call('GET', `/api/messages/${id}`),
   syncProgress: accountId => call('GET', `/api/accounts/${accountId}/sync`),
   syncNow: accountId => call('POST', `/api/accounts/${accountId}/sync`, {}),
+  disconnectAccount: accountId => call('POST', `/api/accounts/${accountId}/disconnect`, {}),
   updateMessage: (id, patch) => call('PATCH', `/api/messages/${id}`, patch),
   saveDraft: (id, text) => call('PUT', `/api/messages/${id}/draft`, { text }),
   createFolder: folder => call('POST', '/api/folders', folder),

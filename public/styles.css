@@ -30,6 +30,7 @@
   --muted-foreground: color-mix(in oklab, #f7f4f2 32%, #0f1424);
   --accent: color-mix(in oklab, #f7f4f2 97%, #0f1424);
   --destructive: oklch(0.58 0.18 35);
+  --destructive-hover: #e86a47;
   --brand-hover: #1d2ca0;
   --brand-active: #0d1760;
   --border: color-mix(in oklab, #f7f4f2 88%, #0f1424);
@@ -73,6 +74,8 @@ svg { display: block; }
 .btn-ghost { background: transparent; color: var(--foreground); }
 .btn-ghost:hover { background: color-mix(in oklab, var(--foreground) 6%, transparent); }
 .btn-ghost:active { background: color-mix(in oklab, var(--foreground) 12%, transparent); }
+.btn-danger { background: var(--destructive); color: var(--primary-foreground); }
+.btn-danger:hover { background: var(--destructive-hover); }
 .btn .spinner { width: 12px; height: 12px; border: 1.5px solid currentColor; border-right-color: transparent; border-radius: 999px; animation: spin .7s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
 
@@ -276,6 +279,7 @@ svg { display: block; }
 /* Assistant de connexion */
 .overlay { position: fixed; inset: 0; z-index: 50; display: grid; place-items: center; padding: 24px; background: color-mix(in oklab, var(--foreground) 35%, transparent); }
 .dialog { display: flex; flex-direction: column; width: 100%; max-width: 600px; max-height: calc(100vh - 48px); border-radius: 16px; background: var(--card); box-shadow: var(--shadow-lg); overflow: hidden; }
+.dialog-sm { max-width: 440px; }
 .dialog-steps { display: flex; align-items: center; gap: 16px; padding: 20px 24px; border-bottom: 1px solid var(--border); }
 .step { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--muted-foreground); }
 .step-n { display: grid; place-items: center; width: 22px; height: 22px; border-radius: 999px; background: var(--muted); color: var(--muted-foreground); font-size: 11px; font-weight: 700; }

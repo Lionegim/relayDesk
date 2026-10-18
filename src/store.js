@@ -131,6 +131,16 @@ export function createStore(db) {
       return toAccount(q('SELECT * FROM accounts WHERE profile_id = ? AND name = ?').get(profileId, accountName));
     },
     getAccount: id => ({ ...toAccount(accountOf(id)), profileId: accountOf(id).profile_id }),
+    hasAccount: id => !!q('SELECT 1 FROM accounts WHERE id = ?').get(id),
+    // Supprime le compte ; secret, état de synchronisation, messages importés et liens folder_labels suivent (ON DELETE CASCADE).
+    // Les dossiers restent : ceux importés avant la migration 002 sont d'abord détachés de leur compte d'origine.
+    deleteAccount(id) {
+      accountOf(id);
+      transaction(db, () => {
+        q('UPDATE folders SET account_id = NULL, external_id = NULL WHERE account_id = ?').run(id);
+        q('DELETE FROM accounts WHERE id = ?').run(id);
+      });
+    },
     accountsBySvc: svc => q('SELECT id FROM accounts WHERE svc = ?').all(svc).map(r => r.id),
     setAccountStatus(id, status, c) {
       q('UPDATE accounts SET status = ?, c = ? WHERE id = ?').run(status, c, id);
@@ -181,12 +191,14 @@ export function createStore(db) {
     ensureLabelFolder(accountId, externalId, labelName) {
       const acc = accountOf(accountId);
       const found = q('SELECT folder_id FROM folder_labels WHERE account_id = ? AND label_id = ?').get(accountId, externalId);
-      const id = `g${accountId}_${externalId}`.replace(/[^\w-]/g, '_');
+      const base = `g${accountId}_${externalId}`.replace(/[^\w-]/g, '_');
+      // Un dossier issu d'un compte déconnecté peut porter le même identifiant (identifiant de compte réutilisé).
+      const id = !found && q('SELECT 1 FROM folders WHERE id = ?').get(base) ? `${base}_${Date.now().toString(36)}` : base;
       if (found) {
         // Seuls les dossiers créés par l'import suivent un renommage externe.
         // Ne jamais remplacer le nom d'un dossier local ou partagé par un chemin Gmail.
         const links = q('SELECT COUNT(*) AS n FROM folder_labels WHERE folder_id = ?').get(found.folder_id).n;
-        if (found.folder_id === id && links === 1) q('UPDATE folders SET name = ? WHERE id = ? AND parent_id IS NULL').run(labelName, id);
+        if ((found.folder_id === base || found.folder_id.startsWith(base + '_')) && links === 1) q('UPDATE folders SET name = ? WHERE id = ? AND parent_id IS NULL').run(labelName, found.folder_id);
         return found.folder_id;
       }
       q(`INSERT INTO folders (id, profile_id, name, parent_id, position)

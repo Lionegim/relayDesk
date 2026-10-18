@@ -20,6 +20,7 @@ const state = {
   group: 'all', picked: {}, focusId: null, contactQuery: '', contactSearch: false, sort: 'recent',
   c: null,
   details: {},
+  confirm: null,
 };
 
 const root = document.getElementById('root');
@@ -403,6 +404,26 @@ const actions = {
     api.updateContact(id, { freq: c.freq }).catch(err => { c.freq = before; fail(err); });
   },
 
+  // Déconnexion d'un compte réel, depuis le menu du compte
+  disconnectAccount: ({ id }) => {
+    const acc = state.data.profiles.flatMap(p => p.accounts).find(a => a.id === Number(id));
+    if (acc) set({ confirm: { kind: 'disconnect', accountId: acc.id, name: acc.name, busy: false, error: null }, menu: false, accountMenu: null });
+  },
+  confirmCancel: () => { if (!state.confirm?.busy) set({ confirm: null }); },
+  confirmDisconnect: async () => {
+    const c = state.confirm;
+    if (!c || c.busy) return;
+    set({ confirm: { ...c, busy: true, error: null } });
+    try {
+      await api.disconnectAccount(c.accountId);
+      applyData(await api.state());
+      const v = derive(state);
+      set({ confirm: null, selectedId: v.sel ? state.selectedId : firstOf(state.profileId), folder: null });
+    } catch (e) {
+      set({ confirm: { ...c, busy: false, error: e.message } });
+    }
+  },
+
   // Assistant de connexion
   closeConnect: () => closeWizard(),
   pickService: ({ svc }) => { if (!state.data.services[svc].disabled) setC(svcInit(svc)); },
@@ -431,7 +452,8 @@ delegate(document, {
 
 document.addEventListener('keydown', e => {
   if (e.key !== 'Escape') return;
-  if (state.c) closeWizard();
+  if (state.confirm) actions.confirmCancel();
+  else if (state.c) closeWizard();
   else if (state.ai) set({ ai: null });
   else if (state.menu || state.moveOpen || state.accountMenu) set({ menu: false, moveOpen: false, accountMenu: null });
 });
