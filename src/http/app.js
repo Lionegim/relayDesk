@@ -87,26 +87,26 @@ export function createApp({ store, ai, ownerName, gmail = null, providers = {}, 
         return back({ connect_error: 'Paramètres de connexion invalides.' });
       }
       const perms = url.searchParams.has('perms') ? url.searchParams.get('perms').split(',') : ['read'];
-      if (perms.some(p => !def.available.includes(p))) return back({ connect_error: 'Permission Gmail invalide ou indisponible.' });
+      if (perms.some(p => !def.available.includes(p))) return back({ connect_error: 'Permission de messagerie invalide ou indisponible.' });
       const existingId = url.searchParams.get('account');
       let account = null;
       if (existingId !== null) {
         account = store.getAccount(accountId(existingId));
-        if (account.svc !== service || account.profileId !== profileId || account.name !== name) throw badRequest('Compte Gmail invalide');
+        if (account.svc !== service || account.profileId !== profileId || account.name !== name) throw badRequest('Compte de messagerie invalide');
       }
       return redirect(res, provider.oauth.start({ redirectUri: provider.redirectUri, perms, context: { profileId, name, win, address: account?.address } }));
     }
     if (pathname.endsWith('/callback')) {
-      if (url.searchParams.get('error')) return back({ connect_error: 'Autorisation refusée dans Google.' });
+      if (url.searchParams.get('error')) return back({ connect_error: `Autorisation refusée dans ${def.provider}.` });
       try {
         const r = await provider.oauth.finish({ state: url.searchParams.get('state'), code: url.searchParams.get('code') });
         const email = r.email || emailFromIdToken(r.idToken);
-        if (r.context.address && r.context.address !== email) throw badRequest('Choisis le compte Google déjà connecté pour modifier ses permissions.');
+        if (r.context.address && r.context.address !== email) throw badRequest('Choisis le compte déjà connecté pour modifier ses permissions.');
         const { account } = provider.sync.connect({ profileId: r.context.profileId, name: r.context.name, windowDays: r.context.win, refreshToken: r.refreshToken, email, scopes: r.scopes, ...(r.homeAccountId ? { homeAccountId: r.homeAccountId } : {}) });
         return back({ connect: service, account: account.id, profile: r.context.profileId, win: r.context.win });
       } catch (e) {
         if (!(e instanceof HttpError)) console.error(e);
-        return back({ connect_error: e instanceof HttpError ? e.message : 'La connexion à Gmail a échoué.' });
+        return back({ connect_error: e instanceof HttpError ? e.message : `La connexion à ${def.name} a échoué.` });
       }
     }
     throw notFound();
