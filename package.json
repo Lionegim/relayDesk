@@ -12,5 +12,10 @@
     "start": "node --disable-warning=ExperimentalWarning --env-file-if-exists=.env server.js",
     "dev": "node --disable-warning=ExperimentalWarning --watch --env-file-if-exists=.env server.js",
     "test": "node --disable-warning=ExperimentalWarning --test"
+  },
+  "dependencies": {
+    "@whiskeysockets/baileys": "7.0.0-rc14",
+    "pino": "10.4.0",
+    "qrcode": "1.5.4"
   }
 }

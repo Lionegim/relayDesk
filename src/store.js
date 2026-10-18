@@ -293,6 +293,74 @@ export function createStore(db) {
     removeThread(accountId, externalId) {
       q('DELETE FROM messages WHERE account_id = ? AND external_id = ?').run(accountId, externalId);
     },
+    // État local d'un fil (lu, drapeau, archive) : les fournisseurs sans état distant le conservent à la réécriture.
+    threadState(accountId, externalId) {
+      const r = q('SELECT id, unread, flagged, archived, folder_id FROM messages WHERE account_id = ? AND external_id = ?').get(accountId, externalId);
+      return r ? { id: r.id, unread: !!r.unread, flagged: !!r.flagged, archived: !!r.archived, folderId: r.folder_id } : null;
+    },
+
+    // ---------- WhatsApp ----------
+
+    // Valeurs chiffrées par le coffre ; ce dépôt ne voit que { iv, tag, ciphertext }.
+    waAuthGet(accountId, kind, keyId) {
+      return q('SELECT iv, tag, ciphertext FROM whatsapp_auth WHERE account_id = ? AND kind = ? AND key_id = ?').get(accountId, kind, keyId) || null;
+    },
+    waAuthSet(accountId, kind, keyId, sealed) {
+      if (!sealed) { q('DELETE FROM whatsapp_auth WHERE account_id = ? AND kind = ? AND key_id = ?').run(accountId, kind, keyId); return; }
+      q(`INSERT INTO whatsapp_auth (account_id, kind, key_id, iv, tag, ciphertext) VALUES (?, ?, ?, ?, ?, ?)
+         ON CONFLICT (account_id, kind, key_id) DO UPDATE SET iv = excluded.iv, tag = excluded.tag, ciphertext = excluded.ciphertext`)
+        .run(accountId, kind, keyId, sealed.iv, sealed.tag, sealed.ciphertext);
+    },
+    waAuthClear(accountId) {
+      q('DELETE FROM whatsapp_auth WHERE account_id = ?').run(accountId);
+    },
+    // Messages : { chatJid, msgId, fromMe, ts, text }. Renvoie les discussions qui ont reçu au moins un nouveau message.
+    waAddMessages(accountId, list) {
+      const ins = q('INSERT OR IGNORE INTO whatsapp_messages (account_id, chat_jid, msg_id, from_me, ts, text) VALUES (?, ?, ?, ?, ?, ?)');
+      const changed = new Set();
+      transaction(db, () => {
+        for (const m of list) if (ins.run(accountId, m.chatJid, m.msgId, +m.fromMe, m.ts, m.text).changes) changed.add(m.chatJid);
+      });
+      return changed;
+    },
+    // Les `limit` messages les plus récents de la discussion, du plus ancien au plus récent ; les autres sont supprimés.
+    waChatMessages(accountId, chatJid, limit) {
+      q(`DELETE FROM whatsapp_messages WHERE account_id = ? AND chat_jid = ? AND msg_id NOT IN
+         (SELECT msg_id FROM whatsapp_messages WHERE account_id = ? AND chat_jid = ? ORDER BY ts DESC, rowid DESC LIMIT ?)`)
+        .run(accountId, chatJid, accountId, chatJid, limit);
+      return q('SELECT msg_id, from_me, ts, text FROM whatsapp_messages WHERE account_id = ? AND chat_jid = ? ORDER BY ts, rowid').all(accountId, chatJid)
+        .map(r => ({ msgId: r.msg_id, fromMe: !!r.from_me, ts: r.ts, text: r.text }));
+    },
+    waChats(accountId) {
+      return q('SELECT DISTINCT chat_jid FROM whatsapp_messages WHERE account_id = ?').all(accountId).map(r => r.chat_jid);
+    },
+    waChatCount(accountId) {
+      return q('SELECT COUNT(DISTINCT chat_jid) AS n FROM whatsapp_messages WHERE account_id = ?').get(accountId).n;
+    },
+    waChatName(accountId, chatJid) {
+      return q('SELECT name FROM whatsapp_chats WHERE account_id = ? AND chat_jid = ?').get(accountId, chatJid)?.name ?? null;
+    },
+    // Un nom vide ne remplace jamais un nom connu.
+    waSetChatName(accountId, chatJid, name) {
+      q(`INSERT INTO whatsapp_chats (account_id, chat_jid, name) VALUES (?, ?, ?)
+         ON CONFLICT (account_id, chat_jid) DO UPDATE SET name = COALESCE(excluded.name, whatsapp_chats.name)`).run(accountId, chatJid, name || null);
+    },
+    waClearMessages(accountId) {
+      transaction(db, () => {
+        q('DELETE FROM whatsapp_messages WHERE account_id = ?').run(accountId);
+        q('DELETE FROM whatsapp_chats WHERE account_id = ?').run(accountId);
+      });
+    },
+
+    // Contact rattaché à un compte (dernière interaction). Fréquence, groupes et position choisis par l'utilisateur sont conservés.
+    upsertAccountContact(accountId, externalId, { id, name: contactName, title = '', channel, last }) {
+      const acc = accountOf(accountId);
+      q(`INSERT INTO contacts (id, profile_id, name, title, freq, channels, last, groups, position, account_id, external_id)
+         VALUES (?, ?, ?, ?, 0, ?, ?, '[]', (SELECT COALESCE(MAX(position), 0) + 1 FROM contacts), ?, ?)
+         ON CONFLICT (account_id, external_id) DO UPDATE SET name = excluded.name, title = excluded.title, last = excluded.last`)
+        .run(id, acc.profile_id, contactName, title, JSON.stringify([channel]), last, accountId, externalId);
+    },
+
     countThreads(accountId) {
       return q(`SELECT COUNT(*) AS threads, COALESCE(SUM(message_count), 0) AS messages, COALESCE(SUM(label = 'À traiter'), 0) AS todo
                 FROM messages WHERE account_id = ? AND compose_kind != 'new'`).get(accountId);
