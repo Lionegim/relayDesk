@@ -1,0 +1,21 @@
+async function call(method, url, body) {
+  const res = await fetch(url, {
+    method,
+    headers: body ? { 'content-type': 'application/json' } : undefined,
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data?.error?.message || `Erreur ${res.status}`);
+  return data;
+}
+
+export const api = {
+  state: () => call('GET', '/api/state'),
+  updateMessage: (id, patch) => call('PATCH', `/api/messages/${id}`, patch),
+  saveDraft: (id, text) => call('PUT', `/api/messages/${id}/draft`, { text }),
+  createFolder: folder => call('POST', '/api/folders', folder),
+  updateContact: (id, patch) => call('PATCH', `/api/contacts/${encodeURIComponent(id)}`, patch),
+  connectAccount: (profileId, account) => call('POST', `/api/profiles/${encodeURIComponent(profileId)}/accounts`, account),
+  summarize: messageId => call('POST', '/api/ai/summary', { messageId }),
+  draftReply: (messageId, tone, intent) => call('POST', '/api/ai/draft', { messageId, tone, intent }),
+};

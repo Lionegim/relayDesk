@@ -1,0 +1,16 @@
+{
+  "name": "relay-desk",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Relay Desk: boîte de réception locale multi-profils (Relay Inbox v2)",
+  "type": "module",
+  "main": "server.js",
+  "engines": {
+    "node": ">=22.9"
+  },
+  "scripts": {
+    "start": "node --env-file-if-exists=.env server.js",
+    "dev": "node --watch --env-file-if-exists=.env server.js",
+    "test": "node --test"
+  }
+}
