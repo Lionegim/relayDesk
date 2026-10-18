@@ -3,8 +3,8 @@ import assert from 'node:assert/strict';
 import vm from 'node:vm';
 import { readFileSync } from 'node:fs';
 import { html,raw,when,cls } from '../public/js/dom.js';
-const c=vm.createContext({html,raw,when,cls,ICON:{sparkle:'*'}});
-vm.runInContext(readFileSync(new URL('../public/js/views.js',import.meta.url),'utf8').replace(/^import .*;\n/gm,'').replace(/^export /gm,'')+'\nglobalThis.chat=(s,v,m)=>String(whatsappView(s,v,m));',c);
+const c=vm.createContext({html,raw,when,cls,ICON:{sparkle:'*',lines:'≡'},CH:{whatsapp:{label:'WhatsApp'}}});
+vm.runInContext(readFileSync(new URL('../public/js/views.js',import.meta.url),'utf8').replace(/^import .*;\n/gm,'').replace(/^export /gm,'')+'\nglobalThis.chat=(s,v,m)=>String(whatsappView(s,v,m));globalThis.list=(s,v)=>String(messageList(s,v));',c);
 function render({send=true,text='Réponse locale',confirm=null,full=true}={}) {
  const m={id:9,accountId:3,channel:'whatsapp',from:'Moi (à Claire)',subject:'WhatsApp · Claire',initials:'C',account:'Téléphone',sortAt:Date.UTC(2026,9,18,13)};
  const details={...m,fromMe:true,at:m.sortAt,body:'DERNIER <script>danger()</script>',trail:[{fromMe:false,at:m.sortAt-60000,body:'MILIEU'},{fromMe:true,at:m.sortAt-86400000,body:'PREMIER'}]};
@@ -31,4 +31,14 @@ test('vue WhatsApp : échec de chargement sans direction inventée',()=>{
  assert.match(markup,/Discussion indisponible/);
  assert.doesNotMatch(markup,/wa-msg wa-in|wa-msg wa-out|Reçu :|Vous :/);
  assert.match(markup,/data-ready="false"/);
+});
+
+test('suivi WhatsApp : affiche attente ou erreur avec compteurs reçus, sans annoncer complet',()=>{
+ const state={channel:'whatsapp',query:''};
+ const view={byNav:[],list:[],inProfile:[],profile:{name:'Personnel',accounts:[{id:3,name:'Téléphone',svc:'whatsapp',sync:{status:'syncing',threads:4,messages:29}}]}};
+ let markup=c.list(state,view);
+ assert.match(markup,/Récupération de l’historique/);assert.match(markup,/4 conversations · 29 messages/);
+ assert.match(markup,/data-on-click="accountSync"[^>]*disabled/);
+ view.profile.accounts[0].sync={status:'partial',error:'Historique partiel : téléphone indisponible',threads:4,messages:29};
+ markup=c.list(state,view);assert.match(markup,/Historique partiel/);assert.doesNotMatch(markup,/Synchronisation complète/);
 });

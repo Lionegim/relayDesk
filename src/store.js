@@ -55,7 +55,7 @@ export function createStore(db) {
     getMessage(id) {
       const r = row(id), m = toMessage(r, true);
       if (r.channel === 'whatsapp' && r.account_id && r.external_id) {
-        const recent = q('SELECT from_me, ts, text FROM whatsapp_messages WHERE account_id = ? AND chat_jid = ? ORDER BY ts DESC, rowid DESC LIMIT 51').all(r.account_id, r.external_id);
+        const recent = q('SELECT from_me, ts, text FROM whatsapp_messages WHERE account_id = ? AND chat_jid = ? ORDER BY ts DESC, rowid DESC').all(r.account_id, r.external_id);
         m.fromMe = recent.length ? !!recent[0].from_me : false;
         m.at = m.sortAt;
         // Relire la source aussi pour les fils importés avant fromMe : un contact peut s'appeler « Moi ».

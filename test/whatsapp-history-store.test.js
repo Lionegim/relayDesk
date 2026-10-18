@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { openDatabase } from '../src/db/index.js';
 import { seedIfEmpty } from '../src/db/seed.js';
 import { createStore } from '../src/store.js';
+import { chatToRecord } from '../src/providers/whatsapp/parse.js';
 
 test('historique WhatsApp : lecture au-delà de 200 sans suppression, déduplication et purge isolée à sept jours',t=>{
  const db=openDatabase(':memory:');t.after(()=>db.close());seedIfEmpty(db,{demo:false});const store=createStore(db);
@@ -17,5 +18,8 @@ test('historique WhatsApp : lecture au-delà de 200 sans suppression, déduplica
  store.waAddMessages(a.id,[expired]);store.waAddMessages(b.id,[expired]);
  store.waPruneBefore(a.id,since);
  assert.equal(store.waChatMessages(a.id,jid).length,501);
+ const source=store.waChatMessages(a.id,jid);
+ const thread=store.upsertThread(a.id,chatToRecord(jid,source,{name:'Contact test'}));
+ assert.equal(store.getMessage(thread).trail.length,500,'toute la fenêtre importée est consultable');
  assert.equal(store.waChatMessages(b.id,jid).length,1,'aucun changement dans un autre profil');
 });
