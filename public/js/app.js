@@ -21,7 +21,7 @@ const state = {
   c: null,
   details: {},
   confirm: null,
-  composeTo: {},
+  composeTo: {}, newMail: null, newMailOpen: false,
 };
 
 const root = document.getElementById('root');
@@ -54,7 +54,7 @@ function loadDetails(id) {
 // Rafraîchit la liste quand un compte réel est synchronisé en arrière-plan.
 const REFRESH_MS = 30000;
 setInterval(async () => {
-  if (!state.data || state.c || !state.data.profiles.some(p => p.accounts.some(a => a.svc === 'gmail'))) return;
+  if (!state.data || state.c || !state.data.profiles.some(p => p.accounts.some(a => ['gmail', 'outlook'].includes(a.svc)))) return;
   try { applyData(await api.state()); } catch { /* nouvel essai au prochain passage */ }
 }, REFRESH_MS);
 
@@ -198,14 +198,14 @@ const setC = f => set(s => ({ c: { ...s.c, ...(typeof f === 'function' ? f(s.c) 
 function closeWizard() { clearInterval(syncTimer); set({ c: null }); }
 
 // Gmail : autorisation réelle dans Google (pleine page), puis suivi de l'import côté serveur.
-function startGoogleAuth() {
+function startProviderAuth() {
   const c = state.c;
-  if (!state.data.integrations?.gmail?.configured) {
-    setC({ error: 'Connexion Gmail non configurée : renseigne GOOGLE_CLIENT_ID et GOOGLE_CLIENT_SECRET dans .env, puis redémarre Relay.' });
+  if (!state.data.integrations?.[c.svc]?.configured) {
+    setC({ error: `Connexion ${state.data.services[c.svc].name} non configurée : consulte sa documentation de connexion.` });
     return;
   }
-  const perms = state.data.services.gmail.available.filter(p => c.perms[p]);
-  location.href = '/oauth/google/start?' + new URLSearchParams({ profile: c.profile, name: c.name.trim(), win: c.win, perms: perms.join(','), ...(c.accountId ? { account: c.accountId } : {}) });
+  const perms = state.data.services[c.svc].available.filter(p => c.perms[p]);
+  location.href = (c.svc === 'outlook' ? '/oauth/microsoft/start?' : '/oauth/google/start?') + new URLSearchParams({ profile: c.profile, name: c.name.trim(), win: c.win, perms: perms.join(','), ...(c.accountId ? { account: c.accountId } : {}) });
 }
 function trackImport(accountId) {
   clearInterval(syncTimer);
@@ -232,7 +232,7 @@ function resumeFromRedirect() {
   const params = new URLSearchParams(location.search);
   if (!params.has('connect') && !params.has('connect_error')) return;
   history.replaceState(null, '', '/');
-  const base = { svc: 'gmail', perms: { read: true }, fields: {}, progress: 0, fromAccount: false };
+  const base = { svc: params.get('provider') || params.get('connect') || 'gmail', perms: { read: true }, fields: {}, progress: 0, fromAccount: false };
   if (params.has('connect_error')) {
     set({ c: { ...base, step: 'auth', profile: state.profileId, name: 'Gmail', win: 30, error: params.get('connect_error') } });
     return;
@@ -264,6 +264,28 @@ function startSync() {
   }, 90);
 }
 
+// Un même compositeur pour tous les comptes email pris en charge.
+async function saveNewMail() {
+  let c = state.newMail;
+  if (!c || c.busy || !c.accountId) return null;
+  set({ newMail: { ...c, busy: true, error: null } });
+  try {
+    if (!c.messageId) {
+      const m = await api.createComposition(c.accountId);
+      c = { ...c, messageId: m.id };
+      set({ newMail: { ...c, busy: true } });
+    }
+    const input = { mode: 'new', to: c.to, cc: c.cc, subject: c.subject, text: c.text };
+    const draft = await api.saveDraft(c.messageId, input);
+    set({ newMail: { ...c, busy: false, savedAt: draft.savedAt, synced: draft.synced ?? draft.gmail, error: null } });
+    try { applyData(await api.state()); } catch { /* l'enregistrement est déjà confirmé */ }
+    return { c, input };
+  } catch (e) {
+    set({ newMail: { ...state.newMail, busy: false, error: e.message } });
+    return null;
+  }
+}
+
 // ---------- Actions ----------
 
 const num = v => Number(v);
@@ -271,6 +293,36 @@ const firstOf = profileId => state.data.messages.find(m => m.p === profileId && 
 
 const actions = {
   noop: () => {},
+  newMessage: () => {
+    const accounts = derive(state).profile.accounts.filter(a => a.channel === 'email' && a.perms?.includes('read'));
+    if (state.newMail?.accountId && accounts.some(a => a.id === state.newMail.accountId)) return set({ newMailOpen: true });
+    const accountId = accounts.find(a => a.id === derive(state).sel?.accountId)?.id ?? accounts[0]?.id ?? null;
+    set({ newMailOpen: true, newMail: { accountId, to: '', cc: '', subject: '', text: '', busy: false } });
+  },
+  newMailField: ({ field }, e) => { if (!state.newMail?.busy) set({ newMail: { ...state.newMail, [field]: field === 'accountId' ? Number(e.target.value) : e.target.value, savedAt: null, error: null } }); },
+  closeNewMail: () => { if (!state.newMail?.busy) set({ newMailOpen: false }); },
+  newMailConnect: () => { set({ newMailOpen: false }); openWizard(); },
+  saveNewMail: () => saveNewMail(),
+  previewNewMail: async () => {
+    if (state.confirm) return;
+    const saved = await saveNewMail();
+    if (!saved) return;
+    const { c, input } = saved;
+    set({ newMail: { ...state.newMail, busy: true } });
+    try {
+      const preview = await api.previewSend(c.messageId, input);
+      set({ newMailOpen: false, newMail: { ...state.newMail, busy: false }, confirm: { kind: 'send', newMail: true, messageId: c.messageId, input, preview, busy: false, error: null } });
+    } catch (e) { set({ newMail: { ...state.newMail, busy: false, error: e.message } }); }
+  },
+  aiNewMail: async () => {
+    const saved = await saveNewMail();
+    if (!saved) return;
+    set({ newMail: { ...state.newMail, busy: true } });
+    try {
+      const r = await api.draftReply(saved.c.messageId, 'Cordial', 'Améliore ce nouveau message sans inventer de faits.');
+      set({ newMail: { ...state.newMail, busy: false, text: r.text, savedAt: null } });
+    } catch (e) { set({ newMail: { ...state.newMail, busy: false, error: e.message } }); }
+  },
   toggleProfileMenu: () => set({ menu: !state.menu, accountMenu: null }),
   selectProfile: ({ id }) => set({ profileId: id, menu: false, accountMenu: null, picked: {}, group: 'all', channel: 'all', query: '', selectedId: firstOf(id), folder: null, ai: null, moveOpen: false, creating: false, composing: null }),
   selectApp: ({ app }) => set({ app, ai: null, moveOpen: false }),
@@ -307,7 +359,7 @@ const actions = {
   // Comptes
   openAccount: ({ name }) => {
     const acc = derive(state).profile.accounts.find(a => a.name === name);
-    if (acc?.svc === 'gmail') return set({ accountMenu: state.accountMenu === acc.id ? null : acc.id, menu: false });
+    if (acc && state.data.services[acc.svc]?.real) return set({ accountMenu: state.accountMenu === acc.id ? null : acc.id, menu: false });
     if (!acc || acc.c === 'ok' || !acc.svc) return;
     const def = state.data.services[acc.svc];
     if (def.disabled) openWizard(); else openWizard(acc.svc, acc.name);
@@ -320,7 +372,7 @@ const actions = {
     set({ accountMenu: null });
     try {
       await api.syncNow(Number(id));
-      set({ toast: 'Synchronisation Gmail demandée.' });
+      set({ toast: 'Synchronisation demandée.' });
     } catch (e) { fail(e); }
   },
   openConnect: () => openWizard(),
@@ -328,9 +380,16 @@ const actions = {
   // Liste
   search: (_, e) => set({ query: e.target.value }),
   selectChannel: ({ id }) => set({ channel: id }),
-  selectThread: ({ id }) => {
+  selectThread: async ({ id }) => {
     const m = state.data.messages.find(x => x.id === num(id));
     set({ selectedId: m.id, moveOpen: false, composing: null });
+    if (m.kind === 'new') {
+      try {
+        const full = await api.message(m.id);
+        set({ newMailOpen: true, newMail: { messageId: full.id, accountId: full.accountId, to: full.draft?.to || '', cc: full.draft?.cc || '', subject: full.subject, text: full.draft?.text || '', savedAt: full.draft?.savedAt, synced: full.draft?.synced, busy: false } });
+      } catch (e) { fail(e); }
+      return;
+    }
     if (m.unread) patchMessage(m.id, { unread: false });
   },
   startResize: (_, e) => {
@@ -365,7 +424,7 @@ const actions = {
     const mode = state.composing || 'reply';
     const to = mode === 'forward' ? (state.composeTo[sel.id] ?? state.details[sel.id]?.draft?.to ?? '') : null;
     api.saveDraft(sel.id, { text, mode, to }).then(draft => {
-      sel.draft = { savedAt: draft.savedAt, gmail: draft.gmail };
+      sel.draft = { savedAt: draft.savedAt, gmail: draft.gmail, synced: draft.synced ?? draft.gmail };
       if (state.details[sel.id]) state.details[sel.id].draft = draft;
       set({});
     }).catch(fail);
@@ -419,7 +478,7 @@ const actions = {
     const acc = state.data.profiles.flatMap(p => p.accounts).find(a => a.id === Number(id));
     if (acc) set({ confirm: { kind: 'disconnect', accountId: acc.id, name: acc.name, busy: false, error: null }, menu: false, accountMenu: null });
   },
-  confirmCancel: () => { if (!state.confirm?.busy) set({ confirm: null }); },
+  confirmCancel: () => { if (!state.confirm?.busy) set({ newMailOpen: !!state.confirm?.newMail, confirm: null }); },
 
   // Envoi : aperçu exact calculé par le serveur, puis envoi avec son empreinte.
   sendPreview: async () => {
@@ -458,11 +517,11 @@ const actions = {
     set(s => {
       const drafts = { ...s.drafts }, composeTo = { ...s.composeTo }, details = { ...s.details };
       delete drafts[id]; delete composeTo[id]; delete details[id];
-      return { confirm: null, composing: null, drafts, composeTo, details };
+      return { confirm: null, composing: null, drafts, composeTo, details, ...(c.newMail ? { newMail: null, newMailOpen: false } : {}) };
     });
     const m = state.data.messages.find(x => x.id === id);
     if (m) m.draft = null;
-    const sent = r.draftRemoved === false ? 'Message envoyé. Le brouillon local est effacé ; son brouillon Gmail est conservé, supprime-le dans Gmail si besoin.' : 'Message envoyé.';
+    const sent = r.draftRemoved === false ? 'Message envoyé. Le brouillon local est effacé ; son brouillon chez le fournisseur est conservé, supprime-le si besoin.' : 'Message envoyé.';
     notify(sent);
     try {
       applyData(await api.state());
@@ -500,19 +559,20 @@ const actions = {
   cNext: () => {
     const c = state.c;
     if (c.step === 'config') setC({ step: 'auth', error: null });
-    else if (c.step === 'auth') state.data.services[c.svc].real ? startGoogleAuth() : startSync();
+    else if (c.step === 'auth') state.data.services[c.svc].real ? startProviderAuth() : startSync();
     else if (c.step === 'done') { clearInterval(syncTimer); set({ c: null, app: 'mail', profileId: c.profile, selectedId: c.profile === state.profileId ? state.selectedId : firstOf(c.profile), folder: null }); }
   },
 };
 
 delegate(document, {
-  click: 'click', dblclick: 'dblclick', input: 'input', keydown: 'keydown', focusout: 'blur',
+  change: 'change', click: 'click', dblclick: 'dblclick', input: 'input', keydown: 'keydown', focusout: 'blur',
   dragstart: 'dragstart', dragover: 'dragover', dragleave: 'dragleave', drop: 'drop', pointerdown: 'pointerdown',
 }, actions);
 
 document.addEventListener('keydown', e => {
   if (e.key !== 'Escape') return;
   if (state.confirm) actions.confirmCancel();
+  else if (state.newMailOpen) actions.closeNewMail();
   else if (state.c) closeWizard();
   else if (state.ai) set({ ai: null });
   else if (state.menu || state.moveOpen || state.accountMenu) set({ menu: false, moveOpen: false, accountMenu: null });

@@ -10,6 +10,7 @@ async function call(method, url, body) {
 }
 
 export const api = {
+  createComposition: accountId => call('POST', '/api/drafts', { accountId }),
   state: () => call('GET', '/api/state'),
   message: id => call('GET', `/api/messages/${id}`),
   syncProgress: accountId => call('GET', `/api/accounts/${accountId}/sync`),

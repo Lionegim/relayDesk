@@ -10,10 +10,10 @@ const FREQ_COUNT = 4;
 const bool = v => !!v;
 const toMessage = (r, full) => {
   const m = {
-    id: r.id, p: r.profile_id, accountId: r.account_id, from: r.from_name, initials: r.initials, handle: r.handle, channel: r.channel,
+    id: r.id, kind: r.compose_kind, p: r.profile_id, accountId: r.account_id, from: r.from_name, initials: r.initials, handle: r.handle, channel: r.channel,
     account: r.account, time: r.time_label, sortAt: r.sort_at, unread: bool(r.unread), flagged: bool(r.flagged), archived: bool(r.archived),
     folderId: r.folder_id, label: r.label, subject: r.subject, preview: r.preview, triage: r.triage, count: r.message_count,
-    draft: r.draft_saved_at ? { savedAt: r.draft_saved_at, gmail: !!r.draft_synced, ...(full ? { text: r.draft_text, mode: r.draft_mode, to: r.draft_to } : {}) } : null,
+    draft: r.draft_saved_at ? { savedAt: r.draft_saved_at, gmail: !!r.draft_synced, synced: !!r.draft_synced, ...(full ? { text: r.draft_text, mode: r.draft_mode, to: r.draft_to, cc: r.draft_cc, subject: r.subject } : {}) } : null,
   };
   if (full) Object.assign(m, { body: r.body, trail: JSON.parse(r.trail) });
   return m;
@@ -89,26 +89,41 @@ export function createStore(db) {
 
     // `synced` : le contenu enregistré est aussi celui du brouillon Gmail. Un enregistrement local garde le lien
     // vers le brouillon Gmail existant (pour le mettre à jour ensuite) mais le marque comme non synchronisé.
-    saveDraft(id, text, { mode = null, to = null, externalId, synced = false } = {}) {
+    saveDraft(id, text, { mode = null, to = null, cc = null, subject, externalId, synced = false } = {}) {
       const r = row(id);
       if (typeof text !== 'string' || text.length > MAX_DRAFT) throw badRequest('Brouillon invalide');
+      if (r.compose_kind === 'new') {
+        if (mode !== 'new') throw badRequest('Ce brouillon est un nouveau message');
+        if (typeof subject !== 'string' || subject.length > 998 || /[\r\n\0]/.test(subject)) throw badRequest('Objet invalide');
+      }
       const savedAt = new Date().toISOString();
       const ext = externalId === undefined ? r.draft_external_id : externalId;
       q('UPDATE messages SET draft_text = ?, draft_saved_at = ?, draft_mode = ?, draft_to = ?, draft_external_id = ?, draft_synced = ? WHERE id = ?')
         .run(text, savedAt, mode, to, ext, +(synced && !!ext), id);
-      return { text, savedAt, mode, to, gmail: synced && !!ext };
+      if (r.compose_kind === 'new') q('UPDATE messages SET subject = ?, draft_cc = ?, preview = ?, sort_at = ? WHERE id = ?').run(subject, cc, text.slice(0, 200), Date.now(), id);
+      return { text, savedAt, mode, to, cc, subject: subject ?? r.subject, gmail: synced && !!ext, synced: synced && !!ext };
+    },
+    createComposition(accountId) {
+      const acc = accountOf(accountId);
+      if (acc.channel !== 'email' || !['gmail', 'outlook'].includes(acc.svc)) throw badRequest('Choisis un compte de messagerie compatible');
+      const now = Date.now();
+      const id = Number(q(`INSERT INTO messages (profile_id, account_id, from_name, initials, handle, channel, account, sort_at, label, subject, preview, body, triage, compose_kind, draft_mode, draft_text, draft_saved_at)
+        VALUES (?, ?, 'Moi', 'M', ?, 'email', ?, ?, 'Brouillon', '', '', '', '', 'new', 'new', '', ?)`)
+        .run(acc.profile_id, accountId, acc.address || '', acc.name, now, new Date(now).toISOString()).lastInsertRowid);
+      return toMessage(row(id), true);
     },
     setReplyMeta(id, reply) {
       q('UPDATE messages SET reply_meta = ? WHERE id = ?').run(JSON.stringify(reply), id);
     },
     clearDraft(id) {
+      if (row(id).compose_kind === 'new') { q('DELETE FROM messages WHERE id = ?').run(id); return; }
       q('UPDATE messages SET draft_text = NULL, draft_saved_at = NULL, draft_mode = NULL, draft_to = NULL, draft_external_id = NULL, draft_synced = 0 WHERE id = ?').run(id);
     },
     // Lots C et D : de quoi construire une réponse dans le fil.
     composeContext(id) {
       const r = row(id);
       return {
-        accountId: r.account_id, threadId: r.external_id, subject: r.subject, body: r.body, sortAt: r.sort_at,
+        kind: r.compose_kind, cc: r.draft_cc, to: r.draft_to, accountId: r.account_id, threadId: r.external_id, subject: r.subject, body: r.body, sortAt: r.sort_at,
         reply: r.reply_meta ? JSON.parse(r.reply_meta) : null, draftExternalId: r.draft_external_id,
       };
     },
@@ -249,7 +264,7 @@ export function createStore(db) {
     },
     countThreads(accountId) {
       return q(`SELECT COUNT(*) AS threads, COALESCE(SUM(message_count), 0) AS messages, COALESCE(SUM(label = 'À traiter'), 0) AS todo
-                FROM messages WHERE account_id = ?`).get(accountId);
+                FROM messages WHERE account_id = ? AND compose_kind != 'new'`).get(accountId);
     },
     transaction: fn => transaction(db, fn),
   };

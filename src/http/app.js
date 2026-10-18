@@ -6,6 +6,7 @@ import { HttpError, badRequest, notFound } from './errors.js';
 import { SERVICES, PERMISSIONS } from '../connectors.js';
 import { summaryPrompt, draftPrompt } from '../ai/assistant.js';
 import { emailFromIdToken } from '../providers/gmail/oauth.js';
+import { createMailService } from '../mail/service.js';
 import { readComposeInput } from '../providers/gmail/outbox.js';
 
 const PUBLIC_DIR = fileURLToPath(new URL('../../public/', import.meta.url));
@@ -70,34 +71,40 @@ const accountId = raw => {
 };
 
 // gmail : { oauth, sync, redirectUri, disconnect, outbox } (facultatif). allowedHosts : protège contre le DNS rebinding.
-export function createApp({ store, ai, ownerName, gmail = null, allowedHosts = null }) {
+export function createApp({ store, ai, ownerName, gmail = null, providers = {}, allowedHosts = null }) {
+  providers = { ...providers, ...(gmail ? { gmail } : {}) };
+  const mail = createMailService({ store, providers });
   // Autorisation Google : navigation pleine page, puis retour vers l'interface avec le résultat dans l'URL.
   async function oauthRoute(pathname, url, res) {
-    const back = params => redirect(res, '/?' + new URLSearchParams(params));
-    if (pathname === '/oauth/google/start') {
-      if (!gmail?.oauth.configured) return back({ connect_error: 'Renseigne GOOGLE_CLIENT_ID et GOOGLE_CLIENT_SECRET dans .env, puis redémarre Relay.' });
+    if (!['/oauth/google/start', '/oauth/google/callback', '/oauth/microsoft/start', '/oauth/microsoft/callback'].includes(pathname)) throw notFound();
+    const service = pathname.startsWith('/oauth/microsoft/') ? 'outlook' : 'gmail';
+    const provider = providers[service];
+    const def = SERVICES[service];
+    const back = params => redirect(res, '/?' + new URLSearchParams({ provider: service, ...params }));
+    if (pathname.endsWith('/start')) {
+      if (!provider?.oauth.configured) return back({ connect_error: `Connexion ${def.name} non configurée : consulte la documentation de connexion.` });
       const profileId = url.searchParams.get('profile'), name = (url.searchParams.get('name') || '').trim(), win = Number(url.searchParams.get('win'));
       if (!store.hasProfile(profileId) || !name || name.length > 80 || !WINDOWS.includes(win)) {
         return back({ connect_error: 'Paramètres de connexion invalides.' });
       }
       const perms = url.searchParams.has('perms') ? url.searchParams.get('perms').split(',') : ['read'];
-      if (perms.some(p => !SERVICES.gmail.available.includes(p))) return back({ connect_error: 'Permission Gmail invalide ou indisponible.' });
+      if (perms.some(p => !def.available.includes(p))) return back({ connect_error: 'Permission Gmail invalide ou indisponible.' });
       const existingId = url.searchParams.get('account');
       let account = null;
       if (existingId !== null) {
         account = store.getAccount(accountId(existingId));
-        if (account.svc !== 'gmail' || account.profileId !== profileId || account.name !== name) throw badRequest('Compte Gmail invalide');
+        if (account.svc !== service || account.profileId !== profileId || account.name !== name) throw badRequest('Compte Gmail invalide');
       }
-      return redirect(res, gmail.oauth.start({ redirectUri: gmail.redirectUri, perms, context: { profileId, name, win, address: account?.address } }));
+      return redirect(res, provider.oauth.start({ redirectUri: provider.redirectUri, perms, context: { profileId, name, win, address: account?.address } }));
     }
-    if (pathname === '/oauth/google/callback') {
+    if (pathname.endsWith('/callback')) {
       if (url.searchParams.get('error')) return back({ connect_error: 'Autorisation refusée dans Google.' });
       try {
-        const r = await gmail.oauth.finish({ state: url.searchParams.get('state'), code: url.searchParams.get('code') });
-        const email = emailFromIdToken(r.idToken);
+        const r = await provider.oauth.finish({ state: url.searchParams.get('state'), code: url.searchParams.get('code') });
+        const email = r.email || emailFromIdToken(r.idToken);
         if (r.context.address && r.context.address !== email) throw badRequest('Choisis le compte Google déjà connecté pour modifier ses permissions.');
-        const { account } = gmail.sync.connect({ profileId: r.context.profileId, name: r.context.name, windowDays: r.context.win, refreshToken: r.refreshToken, email, scopes: r.scopes });
-        return back({ connect: 'gmail', account: account.id, profile: r.context.profileId, win: r.context.win });
+        const { account } = provider.sync.connect({ profileId: r.context.profileId, name: r.context.name, windowDays: r.context.win, refreshToken: r.refreshToken, email, scopes: r.scopes, ...(r.homeAccountId ? { homeAccountId: r.homeAccountId } : {}) });
+        return back({ connect: service, account: account.id, profile: r.context.profileId, win: r.context.win });
       } catch (e) {
         if (!(e instanceof HttpError)) console.error(e);
         return back({ connect_error: e instanceof HttpError ? e.message : 'La connexion à Gmail a échoué.' });
@@ -112,33 +119,28 @@ export function createApp({ store, ai, ownerName, gmail = null, allowedHosts = n
     ['GET', /^\/api\/state$/, () => {
       const snapshot = store.snapshot();
       for (const profile of snapshot.profiles) for (const account of profile.accounts) {
-        account.perms = account.svc === 'gmail' && gmail ? gmail.sync.permissions(account.id) : [];
-        if (account.svc === 'gmail') account.windowDays = store.getSync(account.id)?.window_days || 30;
+        account.perms = mail.permissions(account);
+        if (providers[account.svc]) account.windowDays = store.getSync(account.id)?.window_days || 30;
       }
-      return { ...snapshot, services: SERVICES, permissions: PERMISSIONS, ai: { configured: ai.configured }, integrations: { gmail: { configured: !!gmail?.oauth.configured } } };
+      return { ...snapshot, services: SERVICES, permissions: PERMISSIONS, ai: { configured: ai.configured }, integrations: Object.fromEntries(Object.entries(providers).map(([k,p]) => [k, { configured: !!p.oauth.configured }])) };
     }],
-    ['GET', /^\/api\/accounts\/([^/]+)\/sync$/, ([id]) => gmail?.sync.progress(accountId(id)) || (() => { throw notFound('Aucune synchronisation pour ce compte'); })()],
+    ['GET', /^\/api\/accounts\/([^/]+)\/sync$/, ([id]) => mail.providerFor(accountId(id)).sync.progress(accountId(id)) || (() => { throw notFound('Aucune synchronisation pour ce compte'); })()],
     ['POST', /^\/api\/accounts\/([^/]+)\/sync$/, ([id]) => {
-      if (store.getAccount(accountId(id)).svc !== 'gmail' || !gmail) throw badRequest('Compte non synchronisable');
-      gmail.sync.syncNow(accountId(id));
+      mail.providerFor(accountId(id)).sync.syncNow(accountId(id));
       return { started: true };
     }],
     ['POST', /^\/api\/accounts\/([^/]+)\/disconnect$/, ([id]) => {
-      if (!gmail?.disconnect) throw badRequest('Déconnexion indisponible');
-      return gmail.disconnect(accountId(id));
+      return mail.providerFor(accountId(id)).disconnect(accountId(id));
     }],
     ['GET', /^\/api\/messages\/([^/]+)$/, ([id]) => store.getMessage(messageId(id))],
-    ['PATCH', /^\/api\/messages\/([^/]+)$/, ([id], body) => gmail ? gmail.sync.updateMessage(messageId(id), body) : store.updateMessage(messageId(id), body)],
-    ['PUT', /^\/api\/messages\/([^/]+)\/draft$/, ([id], body) => gmail?.outbox
-      ? gmail.outbox.saveDraft(messageId(id), body)
-      : store.saveDraft(messageId(id), readComposeInput(body).text, readComposeInput(body))],
+    ['PATCH', /^\/api\/messages\/([^/]+)$/, ([id], body) => mail.updateMessage(messageId(id), body)],
+    ['POST', /^\/api\/drafts$/, (_, body) => mail.createComposition(body.accountId)],
+    ['PUT', /^\/api\/messages\/([^/]+)\/draft$/, ([id], body) => mail.saveDraft(messageId(id), body)],
     ['POST', /^\/api\/messages\/([^/]+)\/send\/preview$/, ([id], body) => {
-      if (!gmail?.outbox) throw badRequest('Envoi indisponible');
-      return gmail.outbox.preview(messageId(id), body);
+      return mail.preview(messageId(id), body);
     }],
     ['POST', /^\/api\/messages\/([^/]+)\/send$/, ([id], body) => {
-      if (!gmail?.outbox) throw badRequest('Envoi indisponible');
-      return gmail.outbox.send(messageId(id), body);
+      return mail.send(messageId(id), body);
     }],
     ['POST', /^\/api\/folders$/, (_, body) => store.createFolder(body)],
     ['PATCH', /^\/api\/contacts\/([^/]+)$/, ([id], body) => store.updateContact(id, body)],

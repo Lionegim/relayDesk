@@ -24,6 +24,7 @@ export function renderApp(s, v) {
       ${sidebar(s, v)}
       ${mail ? [messageList(s, v), reader(s, v)] : contactsPage(s, v)}
     </div>
+    ${when(s.newMailOpen, () => newMailDialog(s, v))}
     ${when(s.c, () => connectWizard(s))}
     ${when(s.confirm?.kind === 'disconnect', () => disconnectDialog(s.confirm))}
     ${when(s.confirm?.kind === 'send' && s.confirm.preview, () => sendDialog(s.confirm))}
@@ -100,7 +101,7 @@ function sidebar(s, v) {
             <span class="grow ellipsis">${a.name}</span>
             <span class="acct-dot" style="background:${ACCOUNT_COLORS[a.c] || ACCOUNT_COLORS.muted}"></span>
           </button>
-          ${when(a.svc === 'gmail' && s.accountMenu === a.id, () => html`
+          ${when(s.data.services[a.svc]?.real && s.accountMenu === a.id, () => html`
             <div class="menu" role="menu" aria-label="Compte Gmail" style="left:0;right:0;top:100%">
               <button class="side-item hov" role="menuitem" data-on-click="accountSync" data-id="${a.id}">Synchroniser maintenant</button>
               <button class="side-item hov" role="menuitem" data-on-click="accountPermissions" data-id="${a.id}">Modifier les permissions</button>
@@ -178,7 +179,7 @@ function reader(s, v) {
   return html`
     <main class="reader">
       <div class="toolbar">
-        <button class="icon-btn" title="Nouveau message">${icon('compose')}</button>
+        <button class="icon-btn" data-on-click="newMessage" title="Nouveau message">${icon('compose')}</button>
         <div class="grow"></div>
         <div class="icon-group">
           <button class="icon-btn" data-on-click="compose" data-mode="reply" title="Répondre">${icon('reply')}</button>
@@ -264,7 +265,7 @@ function messageView(s, v, sel) {
           <textarea data-autofocus data-key="draft-${sel.id}" data-on-input="draft" placeholder="Répondre à ${sel.from.split(' ')[0]} depuis ${sel.account}…">${draft}</textarea>
           <div class="composer-foot">
             <button class="btn btn-ghost" data-on-click="aiDraft">✳ Aider à rédiger</button>
-            <span class="composer-status ellipsis">${sel.draft ? `${sel.draft.gmail ? 'Brouillon Gmail' : 'Brouillon'} enregistré à ${timeOf(sel.draft.savedAt)}` : 'Brouillon local'}</span>
+            <span class="composer-status ellipsis">${sel.draft ? `${sel.draft.synced ? 'Brouillon synchronisé' : 'Brouillon'} enregistré à ${timeOf(sel.draft.savedAt)}` : 'Brouillon local'}</span>
             <button class="btn btn-ghost" data-on-click="saveDraft">Enregistrer</button>
             ${(() => {
               const acc = v.profile.accounts.find(a => a.id === sel.accountId);
@@ -549,7 +550,7 @@ function disconnectDialog(c) {
       <div class="dialog dialog-sm" role="alertdialog" aria-modal="true" aria-label="Déconnecter ${c.name}" data-on-click="noop">
         <div class="dialog-body">
           <h3>Déconnecter ${c.name} ?</h3>
-          <p class="muted" style="margin:0;font-size:14px;line-height:1.55">Les messages importés de ce compte seront retirés de Relay. Ils restent dans Gmail. L’accès accordé à Relay sera révoqué chez Google.</p>
+          <p class="muted" style="margin:0;font-size:14px;line-height:1.55">Les messages importés de ce compte seront retirés de Relay. Ils restent chez leur fournisseur. Le jeton conservé par Relay sera supprimé.</p>
           ${when(c.error, () => html`<div class="alert">${c.error}</div>`)}
         </div>
         <div class="dialog-foot">
@@ -591,4 +592,31 @@ function sendDialog(c) {
         </div>
       </div>
     </div>`;
+}
+
+function newMailDialog(s, v) {
+  const c = s.newMail;
+  const accounts = v.profile.accounts.filter(a => a.channel === 'email' && a.perms?.includes('read'));
+  const account = accounts.find(a => a.id === c.accountId);
+  const disabled = raw(c.busy ? 'disabled' : '');
+  return html`<div class="overlay"><section class="dialog new-mail-dialog" role="dialog" aria-modal="true" aria-label="Nouveau message">
+    <div class="composer-head"><h3 class="grow">Nouveau message</h3><button class="composer-close" data-on-click="closeNewMail" aria-label="Fermer le nouveau message" ${disabled}>×</button></div>
+    ${accounts.length ? html`
+      <label>De<select data-on-change="newMailField" data-field="accountId" ${raw(c.busy || c.messageId ? 'disabled' : '')}>
+        ${accounts.map(a => html`<option value="${a.id}" ${raw(a.id === c.accountId ? 'selected' : '')}>${a.name} — ${a.address || ''}</option>`)}
+      </select></label>
+      <label>À<input data-key="new-to" data-on-input="newMailField" data-field="to" value="${c.to}" maxlength="2000" placeholder="adresse@exemple.fr" ${disabled}></label>
+      <label>Cc<input data-key="new-cc" data-on-input="newMailField" data-field="cc" value="${c.cc}" maxlength="2000" ${disabled}></label>
+      <label>Objet<input data-key="new-subject" data-on-input="newMailField" data-field="subject" value="${c.subject}" maxlength="998" ${disabled}></label>
+      <label>Message<textarea data-key="new-body" data-on-input="newMailField" data-field="text" maxlength="20000" placeholder="Rédige ton message…" ${disabled}>${c.text}</textarea></label>
+      ${when(c.error, () => html`<p role="alert" class="error">${c.error}</p>`)}
+      <div class="composer-foot"><button class="btn btn-ghost" data-on-click="aiNewMail" ${raw(c.busy || !s.data.ai?.configured ? 'disabled' : '')}>✳ Améliorer avec l’IA</button>
+        <span class="composer-status">${c.busy ? 'En cours…' : c.savedAt ? `${c.synced ? 'Brouillon synchronisé' : 'Brouillon local'} à ${timeOf(c.savedAt)}` : 'Non enregistré'}</span>
+        <button class="btn btn-ghost" data-on-click="saveNewMail" ${disabled}>Enregistrer</button>
+        <button class="btn btn-brand" data-on-click="previewNewMail" ${raw(!c.busy && account?.perms?.includes('send') && c.text.trim() && c.to.trim() ? '' : 'disabled')}>Vérifier avant l’envoi</button>
+      </div>
+      ${when(!account?.perms?.includes('send'), () => html`<p class="muted">Active la permission Envoi pour envoyer depuis ce compte.</p>`)}
+      ${when(!s.data.ai?.configured, () => html`<p class="muted">L’assistant sera disponible après configuration de l’IA.</p>`)}
+    ` : html`<p>Connecte un compte Gmail ou Outlook pour rédiger un message.</p><button class="btn btn-brand" data-on-click="newMailConnect">Connecter un compte</button>`}
+  </section></div>`;
 }

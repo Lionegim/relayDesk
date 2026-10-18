@@ -316,3 +316,10 @@ svg { display: block; }
 .toast.toast-ok { background: var(--success-muted); color: var(--success); }
 .send-body { max-height: 260px; overflow: auto; padding: 12px 14px; border: 1px solid var(--border); border-radius: 10px; background: var(--background); font-size: 14px; line-height: 1.55; white-space: pre-wrap; overflow-wrap: anywhere; }
 .toast { position: fixed; left: 50%; bottom: 20px; z-index: 60; transform: translateX(-50%); max-width: 480px; padding: 10px 14px; border-radius: 10px; background: var(--engine-50); color: var(--engine-700); box-shadow: var(--shadow-md); font-size: 13px; }
+
+.new-mail-dialog { width:min(760px,calc(100vw - 32px)); max-height:calc(100vh - 32px); overflow:auto; padding:24px; display:flex; flex-direction:column; gap:12px; }
+.new-mail-dialog h3 { margin:0; }
+.new-mail-dialog label { display:flex; flex-direction:column; gap:5px; font-size:13px; }
+.new-mail-dialog input, .new-mail-dialog select, .new-mail-dialog textarea { width:100%; padding:9px 10px; border:1px solid var(--border); border-radius:6px; background:var(--background); color:inherit; font:inherit; }
+.new-mail-dialog textarea { min-height:180px; resize:vertical; }
+.new-mail-dialog .composer-foot { flex-wrap:wrap; }

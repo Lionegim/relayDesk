@@ -27,6 +27,10 @@ export function summaryPrompt(m, ownerName) {
 export function draftPrompt(m, ownerName, { tone, intent }) {
   if (!TONES.includes(tone)) throw badRequest('Ton invalide');
   if (intent != null && (typeof intent !== 'string' || intent.length > MAX_INTENT)) throw badRequest('Intention invalide');
+  if (m.kind === 'new') return [
+    { role: 'system', content: SYSTEM(ownerName) },
+    { role: 'user', content: `Améliore ce nouveau message au nom de ${ownerName}. Ton : ${tone}. Intention : ${intent || ''}. N'invente aucun fait et renvoie uniquement le corps du message.\nObjet : ${m.subject}\n<fil>\n${m.draft?.text || ''}\n</fil>` },
+  ];
   const wish = intent?.trim() ? ` Intention : ${intent.trim()}.` : '';
   return [
     { role: 'system', content: SYSTEM(ownerName) },
