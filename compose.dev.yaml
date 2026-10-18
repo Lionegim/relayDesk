@@ -1,0 +1,70 @@
+# Relay Desk en conteneur, mode local de TEST uniquement : données fictives, connecteurs et IA désactivés.
+# Lancer avec un fichier d'environnement de test explicite, pour que Compose ne lise jamais le .env réel :
+#   docker compose --env-file deploy/test/compose.env -f compose.dev.yaml up --build
+# Accès : http://127.0.0.1:4311 (publié sur la boucle locale seulement). Voir docs/docker.md.
+name: relay-desk-dev
+
+services:
+  # Génère une clé de coffre aléatoire de test dans un volume dédié, une seule fois. Jamais de fichier dans le dépôt.
+  test-key:
+    image: relay-desk:dev
+    pull_policy: never
+    user: "0:0"
+    entrypoint: ["node", "-e"]
+    command:
+      - >-
+        const fs = require('node:fs'); const p = '/secrets/relay_secret_key';
+        if (!fs.existsSync(p)) fs.writeFileSync(p, require('node:crypto').randomBytes(32).toString('base64'), { mode: 0o400 });
+        fs.chownSync(p, 1000, 1000);
+    read_only: true
+    cap_drop: [ALL]
+    cap_add: [CHOWN]
+    security_opt: ["no-new-privileges:true"]
+    network_mode: none
+    healthcheck:
+      disable: true
+    volumes:
+      - relay-dev-secrets:/secrets
+
+  relay:
+    image: relay-desk:dev
+    build:
+      context: .
+      target: runtime
+    container_name: relay-desk-dev
+    init: true
+    user: "1000:1000"
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777,noexec,nosuid,nodev
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    pids_limit: 256
+    mem_limit: 512m
+    depends_on:
+      test-key:
+        condition: service_completed_successfully
+    # Aucune variable ni env_file venant de l'hôte : la configuration de test est entièrement écrite ici.
+    environment:
+      RELAY_MODE: local
+      HOST: 0.0.0.0
+      PORT: "4310"
+      PUBLIC_BASE_URL: http://127.0.0.1:4311
+      DATA_DIR: /data
+      RELAY_SECRET_KEY_FILE: /run/relay-secrets/relay_secret_key
+      RELAY_CONNECTORS_ENABLED: "false"
+      RELAY_AI_ENABLED: "false"
+      DEMO_DATA: "1"
+    ports:
+      - "127.0.0.1:4311:4310"
+    volumes:
+      - relay-dev-data:/data
+      - relay-dev-secrets:/run/relay-secrets:ro
+    stop_grace_period: 30s
+    logging:
+      driver: json-file
+      options: { max-size: "5m", max-file: "2" }
+
+volumes:
+  relay-dev-data:
+  relay-dev-secrets:

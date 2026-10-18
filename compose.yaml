@@ -1,0 +1,98 @@
+# Relay Desk hébergé : fichier PRÉPARATOIRE, bloqué.
+# - Le serveur refuse RELAY_MODE=hosted tant que l'authentification (lot 3) n'existe pas ; aucun contournement.
+# - Les deux services sont dans le profil « hosted » : un simple « docker compose up » ne démarre rien.
+# - Les variables obligatoires (${...:?}) n'ont pas de valeur par défaut : sans configuration explicite, Compose s'arrête.
+# Ne pas démarrer ce fichier avant l'autorisation de déploiement (voir docs/architecture-docker-mobile.md).
+name: relay-desk
+
+services:
+  relay:
+    profiles: ["hosted"]
+    image: relay-desk:${RELAY_IMAGE_TAG:?RELAY_IMAGE_TAG requis}
+    build:
+      context: .
+      target: runtime
+    # Nom fixe : Compose refuse d'en lancer une seconde copie (une seule base, une seule session WhatsApp).
+    container_name: relay-desk
+    init: true
+    user: "1000:1000"
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777,noexec,nosuid,nodev
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    pids_limit: 256
+    mem_limit: 1g
+    restart: unless-stopped
+    stop_grace_period: 30s
+    environment:
+      RELAY_MODE: hosted
+      HOST: 0.0.0.0
+      PORT: "4310"
+      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:?PUBLIC_BASE_URL requis (https://domaine)}
+      DATA_DIR: /data
+      RELAY_SECRET_KEY_FILE: /run/secrets/relay_secret_key
+      MISTRAL_API_KEY_FILE: /run/secrets/mistral_api_key
+      GOOGLE_CLIENT_ID_FILE: /run/secrets/google_client_id
+      GOOGLE_CLIENT_SECRET_FILE: /run/secrets/google_client_secret
+      MICROSOFT_CLIENT_ID_FILE: /run/secrets/microsoft_client_id
+      DEMO_DATA: "0"
+    secrets:
+      - relay_secret_key
+      - mistral_api_key
+      - google_client_id
+      - google_client_secret
+      - microsoft_client_id
+    volumes:
+      - relay-data:/data
+    # Aucun port publié : seul le proxy est joignable depuis l'extérieur.
+    expose: ["4310"]
+    networks: [backend]
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
+
+  proxy:
+    profiles: ["hosted"]
+    image: caddy:2.10.2-alpine
+    depends_on: [relay]
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,noexec,nosuid,nodev
+    cap_drop: [ALL]
+    cap_add: [NET_BIND_SERVICE]
+    security_opt: ["no-new-privileges:true"]
+    restart: unless-stopped
+    environment:
+      RELAY_DOMAIN: ${RELAY_DOMAIN:?RELAY_DOMAIN requis}
+      ACME_EMAIL: ${ACME_EMAIL:?ACME_EMAIL requis}
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    networks: [backend]
+
+# Fichiers secrets sur la VM, hors dépôt et hors volume de données (propriétaire uid 1000, mode 0400).
+secrets:
+  relay_secret_key:
+    file: ${RELAY_SECRETS_DIR:?RELAY_SECRETS_DIR requis}/relay_secret_key
+  mistral_api_key:
+    file: ${RELAY_SECRETS_DIR:?RELAY_SECRETS_DIR requis}/mistral_api_key
+  google_client_id:
+    file: ${RELAY_SECRETS_DIR:?RELAY_SECRETS_DIR requis}/google_client_id
+  google_client_secret:
+    file: ${RELAY_SECRETS_DIR:?RELAY_SECRETS_DIR requis}/google_client_secret
+  microsoft_client_id:
+    file: ${RELAY_SECRETS_DIR:?RELAY_SECRETS_DIR requis}/microsoft_client_id
+
+networks:
+  backend:
+
+volumes:
+  relay-data:
+  caddy-data:
+  caddy-config:

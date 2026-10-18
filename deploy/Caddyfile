@@ -1,0 +1,27 @@
+# Entrée HTTPS de Relay Desk hébergé (PRÉPARATOIRE, voir compose.yaml : ne pas démarrer avant autorisation).
+# Certificat automatique, HSTS, en-têtes de base. La politique de sécurité du contenu (CSP) reste fixée par l'application.
+# Pas de limite de débit ici : le cœur de Caddy n'en fournit pas ; elle sera implémentée dans l'application (lot 3)
+# ou par un module choisi explicitement.
+# Pas de journal d'accès : les adresses de retour OAuth portent code et state dans la requête.
+{
+	email {$ACME_EMAIL}
+	admin off
+}
+
+{$RELAY_DOMAIN} {
+	encode zstd gzip
+
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "no-referrer"
+		-Server
+	}
+
+	request_body {
+		max_size 2MB
+	}
+
+	# Host d'origine transmis tel quel : l'application le compare à PUBLIC_BASE_URL.
+	reverse_proxy relay:4310
+}
