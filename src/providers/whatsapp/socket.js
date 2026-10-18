@@ -11,15 +11,21 @@ export async function loadBaileys() {
   return baileys;
 }
 
-export async function makeBaileysSocket({ auth }) {
+// linking : nouvelle liaison par QR. Le profil « Desktop » (plateforme DARWIN) est celui des applications de bureau,
+// auxquelles le téléphone envoie l'historique récent le plus large ; il ne s'applique qu'à l'appairage, une session
+// déjà enregistrée garde son profil d'origine. syncFullHistory reste désactivé : pas d'historique complet sans borne.
+export async function makeBaileysSocket({ auth, linking = false }) {
   const lib = await loadBaileys();
   const logger = pino({ level: 'silent' });
   return lib.default({
     auth: { creds: auth.state.creds, keys: lib.makeCacheableSignalKeyStore(auth.state.keys, logger) },
     logger,
-    browser: lib.Browsers.macOS('Relay Desk'),
+    browser: linking ? lib.Browsers.macOS('Desktop') : lib.Browsers.macOS('Relay Desk'),
     markOnlineOnConnect: false,
     syncFullHistory: false,
+    // Tous les types d'historique sont traités, y compris FULL (réponse à une demande bornée à 7 jours) ;
+    // le filtre strict de Relay (7 jours, discussions directes, texte) s'applique ensuite à chaque message.
+    shouldSyncHistoryMessage: () => true,
     enableRecentMessageCache: false,
     enableAutoSessionRecreation: false,
     generateHighQualityLinkPreview: false,

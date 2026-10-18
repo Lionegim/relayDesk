@@ -9,10 +9,21 @@ import { chatToRecord, contactId, contactName, dayLabel, directJid, parseMessage
 
 const LOGGED_OUT = 401;
 const RESTART_REQUIRED = 515;
-const MAX_CHATS = 500;          // discussions conservées par compte
-const MAX_PER_CHAT = 200;       // messages conservés par discussion
-const MAX_BATCH = 5000;         // messages traités par événement
-const MAX_PENDING = 20;         // lots reçus avant la vérification d'identité
+const CHUNK = 1000;             // messages insérés par tranche (la boucle d'événements reste disponible entre deux)
+const MAX_PENDING = 200;        // lots reçus avant la vérification d'identité
+// Types du protocole (WAProto) : historique à la demande.
+const PDO_HISTORY_ON_DEMAND = 3;
+const PDO_FULL_HISTORY_ON_DEMAND = 6;
+const HISTORY_RECENT = 3, HISTORY_FULL = 2, HISTORY_ON_DEMAND = 6;
+const FULL_RESPONSE = {
+  0: null,
+  1: 'Demande expirée côté téléphone.',
+  2: 'Le téléphone a refusé de partager l’historique.',
+  3: 'Le téléphone n’a pas pu préparer l’historique.',
+  4: 'Ce téléphone ne propose pas l’historique complet à la demande.',
+  5: 'Appareil hébergé non connecté.',
+  6: 'Appareil hébergé non configuré.',
+};
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 
 export function createWhatsAppSync({ store, vault, lib, makeSocket, log = console, timing = {} }) {
@@ -22,6 +33,12 @@ export function createWhatsAppSync({ store, vault, lib, makeSocket, log = consol
     settleMs: 8000,             // délai avant de considérer l'import initial terminé
     retainMs: 10 * 60000,       // conservation d'une liaison terminée pour le suivi de la fenêtre
     retryBaseMs: 5000, retryMaxMs: 5 * 60000,
+    historyIdleMs: 2 * 60000,   // sans nouveau lot pendant ce délai : historique déclaré partiel
+    fullResponseMs: 20000,      // attente de la réponse du téléphone à la demande d'historique complet
+    requestCooldownMs: 60000,   // une demande d'historique au plus par minute et par compte
+    onDemandCount: 50,          // messages demandés par discussion et par tour
+    onDemandRounds: 10,         // tours au plus par discussion
+    onDemandSpacingMs: 250,     // intervalle entre deux demandes adressées au téléphone
     ...timing,
   };
   const sessions = new Map();   // accountId -> session
@@ -31,11 +48,14 @@ export function createWhatsAppSync({ store, vault, lib, makeSocket, log = consol
   const queues = new Map();
   const epochs = new Map();
   const forgetHooks = [];
+  const histories = new Map();  // accountId -> suivi de l'historique (aucun JID exposé)
+  const requestOnOpen = new Set();
   const epoch = id => epochs.get(id) || 0;
   let stopped = false, generationCounter = 0;
   const advance = accountId => {
     epochs.set(accountId, ++generationCounter);
     for (const fn of forgetHooks) fn(accountId);
+    resetHistory(accountId);
   };
   const warn = msg => log.warn?.(`WhatsApp : ${msg}`); // jamais de QR, de clé ni de contenu
 
@@ -55,6 +75,7 @@ export function createWhatsAppSync({ store, vault, lib, makeSocket, log = consol
     s.closed = true;
     s.auth.close();
     clearTimeout(s.settle);
+    clearTimeout(s.fullTimer);
     try { Promise.resolve(s.sock.end(undefined)).catch(() => {}); } catch { /* socket déjà fermé */ }
   }
   function dropSession(accountId, { resetRetry = true } = {}) {
@@ -112,7 +133,7 @@ export function createWhatsAppSync({ store, vault, lib, makeSocket, log = consol
     const at = epoch(accountId);
     const auth = createAuthState({ store, vault, accountId, lib: await lib() });
     if (epoch(accountId) !== at || !store.hasAccount(accountId) || stopped || (link && link.done)) { auth.close(); return; }
-    const sock = await makeSocket({ auth });
+    const sock = await makeSocket({ auth, linking: !!link });
     const s = { sock, auth, at, link, open: false, verified: false, closed: false, pending: [], ephemeral: new Set(store.waEphemeralChats(accountId)), settle: null };
     if (epoch(accountId) !== at || !store.hasAccount(accountId) || stopped || (link && link.done)) { endSocket(s); return; }
     dropSession(accountId, { resetRetry: false });
@@ -132,8 +153,12 @@ export function createWhatsAppSync({ store, vault, lib, makeSocket, log = consol
     sock.ev.on('connection.update', u => onConnection(accountId, s, u || {}));
     const batch = (kind, notify) => data => {
       if (!current(accountId, s)) return;
-      if (!s.verified) { if (s.pending.length < MAX_PENDING) s.pending.push([kind, data, notify]); return; }
-      handle(accountId, s, kind, data, notify);
+      if (!s.verified) {
+        if (s.pending.length < MAX_PENDING) s.pending.push([kind, data, notify]);
+        else s.droppedPending = true;
+        return;
+      }
+      enqueue(accountId, s, kind, data, notify);
     };
     sock.ev.on('messaging-history.set', batch('history', false));
     sock.ev.on('messages.upsert', d => batch('messages', d?.type === 'notify')(d));
@@ -141,6 +166,8 @@ export function createWhatsAppSync({ store, vault, lib, makeSocket, log = consol
     sock.ev.on('contacts.update', batch('contacts', false));
     sock.ev.on('chats.update', batch('chats', false));
     sock.ev.on('chats.upsert', batch('chats', false));
+    // Jalons d'historique signalés par Baileys : fin explicite (progression 100) ou pause (aucun lot depuis 2 min).
+    sock.ev.on('messaging-history.status', st => { if (current(accountId, s) && s.verified) historyMilestone(accountId, st); });
   }
 
   function onConnection(accountId, s, { connection, lastDisconnect, qr }) {
@@ -242,14 +269,21 @@ export function createWhatsAppSync({ store, vault, lib, makeSocket, log = consol
     }
     s.settle = setTimeout(() => settled(accountId, s), T.settleMs);
     s.settle.unref?.();
-    for (const [kind, data, notify] of s.pending.splice(0)) handle(accountId, s, kind, data, notify);
+    // Une nouvelle liaison reçoit l'historique initial du téléphone ; une session reprise ne le reçoit pas d'office.
+    if (link && !link.done) beginHistory(accountId, 'link');
+    pruneAndRebuild(accountId);
+    for (const [kind, data, notify] of s.pending.splice(0)) enqueue(accountId, s, kind, data, notify);
+    if (s.droppedPending) noteHistory(accountId, 'Une partie des lots reçus avant la vérification a été ignorée.');
+    if (requestOnOpen.delete(accountId)) requestHistory(accountId, s).catch(() => {});
   }
 
+  // Connexion établie : la fenêtre de liaison peut se fermer. L'historique, lui, continue d'arriver et a son propre suivi.
   function settled(accountId, s) {
     if (!current(accountId, s)) return;
     clearTimeout(s.settle);
     const counts = store.countThreads(accountId);
-    store.setSync(accountId, { status: 'idle', total: counts.threads, done: counts.threads, last_sync_at: new Date().toISOString() });
+    const active = ['waiting', 'receiving'].includes(histories.get(accountId)?.state);
+    store.setSync(accountId, { status: active ? 'syncing' : 'idle', total: counts.threads, done: counts.threads, ...(active ? {} : { last_sync_at: new Date().toISOString() }) });
     const link = s.link;
     if (link && !link.done) {
       link.done = true;
@@ -261,7 +295,7 @@ export function createWhatsAppSync({ store, vault, lib, makeSocket, log = consol
   // ---------- Import ----------
 
   function rebuild(accountId, chatJid, { incoming = false } = {}) {
-    const msgs = store.waChatMessages(accountId, chatJid, MAX_PER_CHAT);
+    const msgs = store.waChatMessages(accountId, chatJid);
     if (!msgs.length) return;
     const name = store.waChatName(accountId, chatJid);
     const rec = chatToRecord(chatJid, msgs, { name, state: store.threadState(accountId, chatJid), incoming });
@@ -272,7 +306,7 @@ export function createWhatsAppSync({ store, vault, lib, makeSocket, log = consol
 
   function names(accountId, contacts) {
     const touched = new Set();
-    for (const c of Array.isArray(contacts) ? contacts.slice(0, MAX_BATCH) : []) {
+    for (const c of Array.isArray(contacts) ? contacts : []) {
       const name = contactName(c);
       if (!name) continue;
       for (const jid of new Set([directJid(c?.id), directJid(c?.phoneNumber), directJid(c?.lid)])) {
@@ -285,7 +319,7 @@ export function createWhatsAppSync({ store, vault, lib, makeSocket, log = consol
   }
 
   function policies(accountId, s, chats) {
-    for (const ch of Array.isArray(chats) ? chats.slice(0, MAX_BATCH) : []) {
+    for (const ch of Array.isArray(chats) ? chats : []) {
       const jid = directJid(ch?.id);
       if (!jid || !Object.hasOwn(ch, 'ephemeralExpiration')) continue;
       const value = Number(ch.ephemeralExpiration);
@@ -296,16 +330,42 @@ export function createWhatsAppSync({ store, vault, lib, makeSocket, log = consol
     }
   }
 
-  function handle(accountId, s, kind, data, notify) {
-    if (kind === 'chats') { policies(accountId, s, data); return; }
-    if (kind === 'history') policies(accountId, s, data?.chats);
+  // Les lots d'un compte sont traités dans l'ordre. Un petit lot est traité tout de suite ; un gros lot d'historique
+  // (Baileys fusionne les tranches reçues pendant la synchronisation initiale) l'est par tranches, avec une pause
+  // entre deux pour ne pas bloquer le serveur. Une déconnexion (génération) interrompt le traitement en cours.
+  function enqueue(accountId, s, kind, data, notify) {
+    const size = Array.isArray(data?.messages) ? data.messages.length : 0;
+    if (!s.ingest && size <= CHUNK) {
+      const job = prepare(accountId, s, kind, data, notify);
+      if (job) { while (job.i < job.raw.length) step(job); finish(job); }
+      return;
+    }
+    s.ingest = (s.ingest || Promise.resolve()).then(async () => {
+      const job = prepare(accountId, s, kind, data, notify);
+      if (!job) return;
+      while (job.i < job.raw.length) {
+        if (job.i) await new Promise(r => setImmediate(r));
+        if (!current(accountId, s)) return;
+        step(job);
+      }
+      finish(job);
+    }).catch(() => warn(`lot ignoré pour le compte ${accountId}`));
+    const tail = s.ingest;
+    tail.then(() => { if (s.ingest === tail) s.ingest = null; });
+  }
+
+  function prepare(accountId, s, kind, data, notify) {
+    if (!current(accountId, s)) return null;
+    if (kind === 'chats') { policies(accountId, s, data); return null; }
     if (kind === 'contacts') {
       const known = new Set(store.waChats(accountId));
       for (const jid of names(accountId, data)) if (known.has(jid)) rebuild(accountId, jid);
-      return;
+      return null;
     }
+    if (kind === 'messages') fullResponses(accountId, s, data?.messages);
     const unread = new Set();
     if (kind === 'history') {
+      policies(accountId, s, data?.chats);
       names(accountId, data?.contacts);
       for (const ch of Array.isArray(data?.chats) ? data.chats : []) {
         const jid = directJid(ch?.id);
@@ -314,21 +374,219 @@ export function createWhatsAppSync({ store, vault, lib, makeSocket, log = consol
         if (Number(ch.unreadCount) > 0) unread.add(jid);
       }
     }
+    return { accountId, s, kind, data, notify, unread, i: 0, since: windowStart(accountId),
+      raw: Array.isArray(data?.messages) ? data.messages : [], known: new Set(store.waChats(accountId)),
+      changed: new Set(), incoming: new Set(), perChat: new Map(), added: 0 };
+  }
+
+  // Une tranche : aucun message n'est écarté avant le filtre (fenêtre, discussion directe, texte).
+  function step(job) {
+    const { accountId, s } = job;
+    const list = job.raw.slice(job.i, job.i + CHUNK).map(m => parseMessage(m, { since: job.since })).filter(m => m && !s.ephemeral.has(m.chatJid));
+    job.i += CHUNK;
+    for (const m of list) {
+      // Nom public de l'expéditeur seulement si aucun nom n'est connu pour la discussion.
+      if (m.pushName && !store.waChatName(accountId, m.chatJid)) store.waSetChatName(accountId, m.chatJid, m.pushName);
+      const c = job.perChat.get(m.chatJid) || { n: 0, oldest: m };
+      c.n++;
+      if (m.ts < c.oldest.ts) c.oldest = m;
+      job.perChat.set(m.chatJid, c);
+    }
+    const inserted = store.waAddMessages(accountId, list);
+    for (const jid of inserted) job.changed.add(jid);
+    if (job.notify) for (const m of list) if (!m.fromMe && inserted.has(m.chatJid)) job.incoming.add(m.chatJid);
+    job.added += list.length;
+  }
+
+  function finish(job) {
+    const { accountId, s, data } = job;
+    if (!current(accountId, s)) return;
+    for (const jid of job.changed) rebuild(accountId, jid, { incoming: job.incoming.has(jid) || (job.unread.has(jid) && !job.known.has(jid)) });
+    if (job.kind !== 'history') return;
+    historyBatch(accountId, s, data, { added: job.added, chats: job.changed });
+    if (Number(data?.syncType) === HISTORY_ON_DEMAND) continueOnDemand(accountId, s, job.perChat, job.since);
+    if (data?.isLatest) settled(accountId, s);
+  }
+
+  // ---------- Historique ----------
+
+  function pruneAndRebuild(accountId) {
+    store.waPruneBefore(accountId, windowStart(accountId));
+    for (const jid of store.waChats(accountId)) rebuild(accountId, jid);
+  }
+
+  function resetHistory(accountId) {
+    const h = histories.get(accountId);
+    if (h) clearTimeout(h.idle);
+    histories.delete(accountId);
+    requestOnOpen.delete(accountId);
+  }
+
+  const terminal = st => ['complete', 'partial', 'unavailable'].includes(st);
+
+  function beginHistory(accountId, source, reason = null) {
+    resetHistory(accountId);
+    const h = { state: 'waiting', source, requestedAt: Date.now(), lastBatchAt: null, batches: 0, messages: 0, chats: new Set(),
+      progress: null, reason, mode: source === 'link' ? 'initial' : null, idle: null, rounds: new Map(), outstanding: 0 };
+    histories.set(accountId, h);
+    store.setSync(accountId, { status: 'syncing', error: null });
+    armIdle(accountId, h);
+    return h;
+  }
+
+  function armIdle(accountId, h) {
+    clearTimeout(h.idle);
+    h.idle = setTimeout(() => {
+      if (histories.get(accountId) !== h || terminal(h.state)) return;
+      finishHistory(accountId, h, 'partial', h.batches
+        ? 'Plus aucun lot reçu du téléphone : l’historique peut être incomplet.'
+        : 'Le téléphone n’a envoyé aucun historique : vérifie qu’il est en ligne, puis actualise.');
+    }, T.historyIdleMs);
+    h.idle.unref?.();
+  }
+
+  function finishHistory(accountId, h, state, reason = null) {
+    if (histories.get(accountId) !== h || terminal(h.state)) return;
+    clearTimeout(h.idle);
+    h.state = state;
+    if (reason) h.reason = reason;
+    if (!store.hasAccount(accountId)) return;
+    const counts = store.countThreads(accountId);
+    store.setSync(accountId, { status: 'idle', total: counts.threads, done: counts.threads, last_sync_at: new Date().toISOString(),
+      error: state === 'complete' ? null : h.reason });
+  }
+
+  function noteHistory(accountId, reason) {
+    const h = histories.get(accountId);
+    if (h) h.reason = reason;
+  }
+
+  function historyBatch(accountId, s, data, { added, chats }) {
+    const h = histories.get(accountId);
+    if (!h || terminal(h.state)) return;
+    h.state = 'receiving';
+    h.batches++;
+    h.lastBatchAt = Date.now();
+    h.messages += added;
+    for (const jid of chats) h.chats.add(jid);
+    if (Number.isFinite(data?.progress)) h.progress = Math.max(0, Math.min(100, Number(data.progress)));
+    store.setSync(accountId, { status: 'syncing' });
+    armIdle(accountId, h);
+    // Seule une progression explicite à 100 % d'un historique récent ou complet vaut fin ; isLatest ne suffit pas
+    // (Baileys le pose sur le premier lot reçu).
+    const type = Number(data?.syncType);
+    if (h.progress === 100 && (type === HISTORY_RECENT || type === HISTORY_FULL)) finishHistory(accountId, h, 'complete');
+  }
+
+  function historyMilestone(accountId, st) {
+    const h = histories.get(accountId);
+    if (!h || terminal(h.state)) return;
+    const type = Number(st?.syncType);
+    if (type !== HISTORY_RECENT && type !== HISTORY_FULL) return; // l'amorçage initial seul ne couvre pas 7 jours
+    if (st.status === 'complete' && st.explicit) finishHistory(accountId, h, 'complete');
+    else if (st.status === 'paused') finishHistory(accountId, h, 'partial', 'Le téléphone a interrompu l’envoi : l’historique peut être incomplet.');
+  }
+
+  // Réponse du téléphone à la demande d'historique complet (Baileys ne la remonte pas : message de protocole de soi à soi).
+  function fullResponses(accountId, s, messages) {
+    const h = histories.get(accountId);
+    if (!h || h.mode !== 'full' || !Array.isArray(messages)) return;
+    for (const m of messages) {
+      const res = m?.key?.fromMe ? m.message?.protocolMessage?.peerDataOperationRequestResponseMessage : null;
+      if (!res || Number(res.peerDataOperationRequestType) !== PDO_FULL_HISTORY_ON_DEMAND) continue;
+      const result = (res.peerDataOperationResult || []).map(r => r?.fullHistorySyncOnDemandRequestResponse).find(Boolean);
+      if (!result || result.requestMetadata?.requestId !== h.requestId) continue;
+      clearTimeout(s.fullTimer);
+      const code = Number(result.responseCode ?? 0);
+      if (code === 0) { h.fullAccepted = true; armIdle(accountId, h); continue; }
+      h.reason = FULL_RESPONSE[code] || 'Le téléphone n’a pas accepté la demande d’historique complet.';
+      onDemandFallback(accountId, s, h);
+    }
+  }
+
+  // Demande au téléphone l'historique des 7 derniers jours : d'abord l'historique complet borné à la fenêtre,
+  // puis, si le téléphone le refuse ou ne répond pas, discussion par discussion depuis le plus ancien message connu.
+  async function requestHistory(accountId, s) {
+    const h = beginHistory(accountId, 'request');
+    const days = store.getSync(accountId)?.window_days || 7;
+    const { proto } = await lib();
+    if (!current(accountId, s) || histories.get(accountId) !== h) return;
+    if (typeof s.sock.sendPeerDataOperationMessage !== 'function') return onDemandFallback(accountId, s, h);
+    h.mode = 'full';
+    h.requestId = randomUUID();
+    try {
+      await s.sock.sendPeerDataOperationMessage({
+        peerDataOperationRequestType: proto?.Message?.PeerDataOperationRequestType?.FULL_HISTORY_SYNC_ON_DEMAND ?? PDO_FULL_HISTORY_ON_DEMAND,
+        fullHistorySyncOnDemandRequest: {
+          requestMetadata: { requestId: h.requestId },
+          historySyncConfig: { fullSyncDaysLimit: days, inlineInitialPayloadInE2EeMsg: true, supportGroupHistory: false, onDemandReady: true },
+        },
+      });
+    } catch {
+      return onDemandFallback(accountId, s, h);
+    }
+    clearTimeout(s.fullTimer);
+    s.fullTimer = setTimeout(() => {
+      if (current(accountId, s) && histories.get(accountId) === h && !h.fullAccepted && !h.batches) {
+        h.reason = 'Pas de réponse du téléphone à la demande d’historique complet.';
+        onDemandFallback(accountId, s, h);
+      }
+    }, T.fullResponseMs);
+    s.fullTimer.unref?.();
+  }
+
+  function onDemandFallback(accountId, s, h) {
+    if (h.mode === 'chats' || terminal(h.state) || histories.get(accountId) !== h) return;
+    h.mode = 'chats';
     const since = windowStart(accountId);
-    const list = (Array.isArray(data?.messages) ? data.messages : []).slice(-MAX_BATCH)
-      .map(m => parseMessage(m, { since })).filter(m => m && !s.ephemeral.has(m.chatJid));
-    if (!list.length) return kind === 'history' && data?.isLatest ? settled(accountId, s) : undefined;
-    // Nom public de l'expéditeur seulement si aucun nom n'est connu pour la discussion.
-    for (const m of list) if (m.pushName && !store.waChatName(accountId, m.chatJid)) store.waSetChatName(accountId, m.chatJid, m.pushName);
-    const known = new Set(store.waChats(accountId));
-    let room = MAX_CHATS - known.size;
-    const accepted = new Set(known);
-    for (const m of list) if (!accepted.has(m.chatJid) && room > 0) { accepted.add(m.chatJid); room--; }
-    const kept = list.filter(m => accepted.has(m.chatJid));
-    const changed = store.waAddMessages(accountId, kept);
-    const incoming = new Set(notify ? kept.filter(m => !m.fromMe && changed.has(m.chatJid)).map(m => m.chatJid) : []);
-    for (const jid of changed) rebuild(accountId, jid, { incoming: incoming.has(jid) || (unread.has(jid) && !known.has(jid)) });
-    if (kind === 'history' && data?.isLatest) settled(accountId, s);
+    const targets = [];
+    for (const jid of store.waChats(accountId)) {
+      const oldest = store.waChatMessages(accountId, jid)[0];
+      if (oldest && oldest.ts >= since && !s.ephemeral.has(jid)) targets.push({ jid, oldest });
+    }
+    if (!targets.length) {
+      return finishHistory(accountId, h, h.batches ? 'partial' : 'unavailable',
+        h.reason || 'Aucune discussion connue à compléter : une nouvelle liaison est nécessaire pour importer les autres discussions.');
+    }
+    askChats(accountId, s, h, targets).catch(() => {});
+  }
+
+  async function askChats(accountId, s, h, targets) {
+    if (typeof s.sock.fetchMessageHistory !== 'function') {
+      return finishHistory(accountId, h, 'unavailable', 'Historique à la demande indisponible avec cette version du connecteur.');
+    }
+    for (const { jid, oldest } of targets) {
+      if (!current(accountId, s) || histories.get(accountId) !== h || terminal(h.state)) return;
+      const rounds = (h.rounds.get(jid) || 0) + 1;
+      if (rounds > T.onDemandRounds) continue;
+      h.rounds.set(jid, rounds);
+      try {
+        // Demande adressée à son propre téléphone (message de protocole), jamais au correspondant.
+        await s.sock.fetchMessageHistory(T.onDemandCount, { remoteJid: jid, id: oldest.msgId, fromMe: oldest.fromMe }, oldest.ts);
+        h.outstanding++;
+      } catch { /* discussion suivante */ }
+      armIdle(accountId, h);
+      await new Promise(r => setTimeout(r, T.onDemandSpacingMs));
+    }
+  }
+
+  // Un lot à la demande plein et encore dans la fenêtre : on redemande plus ancien, dans la limite des tours.
+  function continueOnDemand(accountId, s, perChat, since) {
+    const h = histories.get(accountId);
+    if (!h || h.mode !== 'chats' || terminal(h.state)) return;
+    const next = [];
+    for (const [jid, c] of perChat) if (c.n >= T.onDemandCount && c.oldest.ts >= since) next.push({ jid, oldest: c.oldest });
+    if (next.length) askChats(accountId, s, h, next).catch(() => {});
+  }
+
+  function historyView(accountId) {
+    const h = histories.get(accountId);
+    if (!h) return { state: 'idle', windowDays: store.getSync(accountId)?.window_days || 7 };
+    return {
+      state: h.state, source: h.source, mode: h.mode, windowDays: store.getSync(accountId)?.window_days || 7,
+      requestedAt: new Date(h.requestedAt).toISOString(), lastBatchAt: h.lastBatchAt ? new Date(h.lastBatchAt).toISOString() : null,
+      batches: h.batches, messages: h.messages, conversations: h.chats.size, progress: h.progress, reason: h.reason || null,
+    };
   }
 
   // ---------- API ----------
@@ -407,13 +665,27 @@ export function createWhatsAppSync({ store, vault, lib, makeSocket, log = consol
     progress(accountId) {
       const s = store.getSync(accountId);
       if (!s) return null;
-      return { status: s.status, total: s.total, done: s.done, error: s.error, ...store.countThreads(accountId) };
+      return { status: s.status, total: s.total, done: s.done, error: s.error, ...store.countThreads(accountId), history: historyView(accountId) };
     },
-    // Pas de relevé à la demande chez WhatsApp : reconstruit les fils locaux et relance la session si elle est tombée.
+    // Demande réellement l'historique des 7 derniers jours au téléphone (session enregistrée, sans nouveau QR).
     async syncNow(accountId) {
       if (!isWhatsApp(accountId)) throw badRequest('Ce compte n’est pas un compte WhatsApp.');
-      for (const jid of store.waChats(accountId)) rebuild(accountId, jid);
-      if (!sessions.has(accountId) && !linkOf.has(accountId) && hasSession({ store, vault, accountId })) reopen(accountId, null);
+      pruneAndRebuild(accountId);
+      const h = histories.get(accountId);
+      const busy = h && !terminal(h.state);
+      const recent = h && Date.now() - h.requestedAt < T.requestCooldownMs;
+      if (busy || recent || linkOf.has(accountId)) return this.progress(accountId);
+      const s = sessions.get(accountId);
+      if (s?.open && current(accountId, s)) {
+        await requestHistory(accountId, s);
+      } else if (hasSession({ store, vault, accountId })) {
+        beginHistory(accountId, 'request', 'Reconnexion au téléphone avant la demande d’historique.');
+        requestOnOpen.add(accountId);
+        if (!sessions.has(accountId)) reopen(accountId, null);
+      } else {
+        const v = beginHistory(accountId, 'request');
+        finishHistory(accountId, v, 'unavailable', 'Aucune session WhatsApp enregistrée : relie le téléphone.');
+      }
       return this.progress(accountId);
     },
     // Lu, drapeau, archive et dossier restent locaux : WhatsApp n'a pas d'équivalent fiable.
