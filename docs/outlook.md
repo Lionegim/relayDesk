@@ -9,7 +9,7 @@ Sans client Microsoft configuré, aucune connexion n'est tentée : l'autorisatio
 1. Ouvre le [centre d'administration Microsoft Entra](https://entra.microsoft.com/) → **Applications → Inscriptions d'applications → Nouvelle inscription**.
 2. **Types de comptes pris en charge** : « Comptes dans un annuaire d'organisation et comptes Microsoft personnels ».
 3. **URI de redirection** : plateforme **Applications mobiles et de bureau**, valeur exacte `http://localhost:4310/oauth/microsoft/callback` (adapte le port si `PORT` change). Microsoft ignore le port d'une adresse `localhost`, mais pas le chemin : il doit être identique. Voir [Restrictions des URI de redirection](https://learn.microsoft.com/fr-fr/entra/identity-platform/reply-url).
-4. **Authentification → Paramètres avancés** : « Autoriser les flux clients publics » sur **Oui**. Ne crée pas de secret client.
+4. Conserve la plateforme **Client public / Applications mobiles et de bureau** pour cette URI. Relay utilise le flux code avec PKCE dans le navigateur ; aucun secret client ni flux implicite ne sont nécessaires. Les autres flux de connexion ne sont pas utilisés.
 5. **Autorisations d'API → Microsoft Graph → Autorisations déléguées** : `User.Read`, `Mail.Read`, et selon les besoins `Mail.ReadWrite` (classement et brouillons) et `Mail.Send` (envoi). `openid`, `email` et `offline_access` sont demandés automatiquement.
 6. Copie l'**ID d'application (client)**.
 
