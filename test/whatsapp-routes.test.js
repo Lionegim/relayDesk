@@ -4,6 +4,7 @@ import { openDatabase } from '../src/db/index.js';
 import { seedIfEmpty } from '../src/db/seed.js';
 import { createStore } from '../src/store.js';
 import { createApp } from '../src/http/app.js';
+import { HttpError } from '../src/http/errors.js';
 import { createAssistantService } from '../src/mail/assistant-service.js';
 
 async function setup(t, whatsapp) {
@@ -58,4 +59,16 @@ test('classement WhatsApp : dossier local annoncé local et routé vers son comp
   const proposal = await assistant.run('classify',1);
   const result = await assistant.apply(1,{proposalId:proposal.proposalId});
   assert.equal(result.synced,false);assert.equal(result.message.folderId,proposal.folderId);
+});
+
+test('historique WhatsApp : erreur asynchrone remontée et suivi public de son compte',async t=>{
+  const progress={status:'syncing',threads:2,messages:8,history:{status:'requesting'}};
+  const wa={configured:true,sync:{permissions:()=>['read','drafts','send'],progress:()=>progress,syncNow:async()=>{throw new HttpError(409,'Téléphone indisponible','whatsapp_offline')}}};
+  const {store,request}=await setup(t,wa);
+  const a=store.upsertAccount('perso',{name:'Téléphone',channel:'whatsapp',svc:'whatsapp'});
+  const state=await request('GET','/api/state');
+  const account=state.body.profiles.find(p=>p.id==='perso').accounts.find(x=>x.id===a.id);
+  assert.deepEqual(account.sync,progress);
+  const result=await request('POST',`/api/accounts/${a.id}/sync`,{});
+  assert.equal(result.status,409);assert.equal(result.body.error.code,'whatsapp_offline');
 });

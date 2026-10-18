@@ -339,13 +339,17 @@ export function createStore(db) {
       });
       return changed;
     },
-    // Les `limit` messages les plus récents de la discussion, du plus ancien au plus récent ; les autres sont supprimés.
-    waChatMessages(accountId, chatJid, limit) {
-      q(`DELETE FROM whatsapp_messages WHERE account_id = ? AND chat_jid = ? AND msg_id NOT IN
-         (SELECT msg_id FROM whatsapp_messages WHERE account_id = ? AND chat_jid = ? ORDER BY ts DESC, rowid DESC LIMIT ?)`)
-        .run(accountId, chatJid, accountId, chatJid, limit);
+    // Tous les textes de la fenêtre importée ; une lecture ne supprime jamais les messages précédents.
+    waChatMessages(accountId, chatJid) {
       return q('SELECT msg_id, from_me, ts, text FROM whatsapp_messages WHERE account_id = ? AND chat_jid = ? ORDER BY ts, rowid').all(accountId, chatJid)
         .map(r => ({ msgId: r.msg_id, fromMe: !!r.from_me, ts: r.ts, text: r.text }));
+    },
+    waPruneBefore(accountId, since) {
+      transaction(db, () => {
+        q('DELETE FROM whatsapp_messages WHERE account_id = ? AND ts < ?').run(accountId, since);
+        q('DELETE FROM messages WHERE account_id = ? AND external_id NOT IN (SELECT DISTINCT chat_jid FROM whatsapp_messages WHERE account_id = ?)').run(accountId, accountId);
+        q('DELETE FROM contacts WHERE account_id = ? AND external_id NOT IN (SELECT DISTINCT chat_jid FROM whatsapp_messages WHERE account_id = ?)').run(accountId, accountId);
+      });
     },
     waChats(accountId) {
       return q('SELECT DISTINCT chat_jid FROM whatsapp_messages WHERE account_id = ?').all(accountId).map(r => r.chat_jid);

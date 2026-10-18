@@ -329,6 +329,10 @@ svg { display: block; }
 .new-mail-dialog .composer-foot { flex-wrap:wrap; }
 
 /* ---------- Discussion WhatsApp ---------- */
+.wa-sync { margin-top: 9px; padding: 9px 10px; border-radius: 8px; background: #edf5f0; color: #49665b; font-size: 11px; }
+.wa-sync > div { display: flex; flex-direction: column; gap: 3px; }
+.wa-sync strong { color: #005c4b; font-weight: 600; }
+.wa-sync .link-btn { align-self: flex-start; margin-top: 2px; padding-left: 0; color: #005c4b; }
 .thread.thread-wa { --t-avbg: #dcebe5; --t-avfg: #005c4b; }
 .thread.thread-wa.is-on { --t-muted: #49665b; --t-dot: #008069; --t-flag: #755300; background: #dcefe6; color: #111b21; }
 .chip[data-id="whatsapp"].is-on { background: #008069; color: #ffffff; }

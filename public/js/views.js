@@ -149,6 +149,14 @@ function messageList(s, v) {
         <div class="chips">
           ${chans.map(c => html`<button class="${cls('chip', s.channel === c && 'is-on')}" data-on-click="selectChannel" data-id="${c}">${c === 'all' ? 'Tous' : CH[c].label}</button>`)}
         </div>
+        ${when(s.channel === 'whatsapp', () => html`<div class="wa-sync" role="status">
+          ${v.profile.accounts.filter(a => a.svc === 'whatsapp').map(a => html`<div>
+            <strong>${a.name} · 7 derniers jours</strong>
+            <span>${a.sync?.status === 'syncing' ? 'Récupération de l’historique depuis le téléphone…' : a.sync?.error || 'Historique reçu de WhatsApp'}</span>
+            <span>${a.sync?.threads ?? 0} conversations · ${a.sync?.messages ?? 0} messages</span>
+            <button class="link-btn" data-on-click="accountSync" data-id="${a.id}" ${raw(a.sync?.status === 'syncing' ? 'disabled' : '')}>Actualiser l’historique</button>
+          </div>`)}
+        </div>`)}
       </header>
       <div class="threads">
         ${v.list.map(m => html`

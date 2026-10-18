@@ -77,6 +77,10 @@ setInterval(async () => {
   if (!state.data || state.c || !state.data.profiles.some(p => p.accounts.some(a => ['gmail', 'outlook', 'whatsapp'].includes(a.svc)))) return;
   try { applyData(await api.state()); } catch { /* nouvel essai au prochain passage */ }
 }, REFRESH_MS);
+setInterval(async () => {
+  if (!state.data || state.c || !state.data.profiles.some(p => p.accounts.some(a => a.svc === 'whatsapp' && a.sync?.status === 'syncing'))) return;
+  try { applyData(await api.state()); } catch { /* progression au prochain passage */ }
+}, 3000);
 
 function applyData(data) {
   const before = new Map((state.data?.messages || []).map(m => [m.id, m.sortAt + ':' + m.count]));
@@ -444,6 +448,7 @@ const actions = {
     set({ accountMenu: null });
     try {
       await api.syncNow(Number(id));
+      applyData(await api.state());
       set({ toast: 'Synchronisation demandée.' });
     } catch (e) { fail(e); }
   },

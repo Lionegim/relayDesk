@@ -121,6 +121,7 @@ export function createApp({ store, ai, ownerName, gmail = null, providers = {}, 
       for (const profile of snapshot.profiles) for (const account of profile.accounts) {
         account.perms = mail.permissions(account);
         if (providers[account.svc]) account.windowDays = account.svc === 'whatsapp' ? 7 : store.getSync(account.id)?.window_days || 30;
+        if (account.svc === 'whatsapp' && providers.whatsapp) account.sync = providers.whatsapp.sync.progress?.(account.id) || null;
       }
       return { ...snapshot, services: SERVICES, permissions: PERMISSIONS, ai: { configured: ai.configured }, integrations: Object.fromEntries(Object.entries(providers).map(([k,p]) => [k, { configured: !!(p.configured ?? p.oauth?.configured) }])) };
     }],
@@ -146,8 +147,10 @@ export function createApp({ store, ai, ownerName, gmail = null, providers = {}, 
       return { cancelled: true };
     }],
     ['GET', /^\/api\/accounts\/([^/]+)\/sync$/, ([id]) => mail.providerFor(accountId(id)).sync.progress(accountId(id)) || (() => { throw notFound('Aucune synchronisation pour ce compte'); })()],
-    ['POST', /^\/api\/accounts\/([^/]+)\/sync$/, ([id]) => {
-      mail.providerFor(accountId(id)).sync.syncNow(accountId(id));
+    ['POST', /^\/api\/accounts\/([^/]+)\/sync$/, async ([id]) => {
+      const aid = accountId(id), provider = mail.providerFor(aid);
+      if (store.getAccount(aid).svc === 'whatsapp') await provider.sync.syncNow(aid);
+      else provider.sync.syncNow(aid);
       return { started: true };
     }],
     ['POST', /^\/api\/accounts\/([^/]+)\/disconnect$/, ([id]) => {
