@@ -21,7 +21,7 @@ Le QR crée un accès en lecture et envoi pour ce Mac. L’application n’envoi
 - La fenêtre de sept jours ne comporte plus de plafond silencieux de 500 discussions ou de 200 messages par discussion. Tous les textes importés de cette fenêtre sont consultables ; le texte importé reste limité à 8 000 caractères par message. Le contexte transmis à l’IA est borné à 24 000 caractères, en conservant les échanges les plus récents.
 - Contacts des discussions importées : nom disponible, numéro lorsqu’il est connu et dernière interaction. Les identifiants privés `@lid` ne sont pas affichés comme des numéros de téléphone.
 - Lu/non lu, drapeau, archivage, dossiers et brouillons restent **locaux**. Aucun accusé de lecture n’est envoyé par un clic de lecture dans Relay.
-- Réponse texte dans une discussion existante, au plus 4 096 caractères. Les groupes sont disponibles en lecture et pour l’IA, avec les auteurs fournis par WhatsApp ; leur envoi n’est pas activé. Pas de nouveau destinataire WhatsApp, réponse à tous, transfert ou médias. **Nouveau message** reste réservé aux comptes email.
+- Réponse texte dans une discussion existante, au plus 4 096 caractères. Les groupes sont disponibles en lecture et pour l’IA, avec les auteurs fournis par WhatsApp et les noms disponibles dans les contacts du même compte ; leur envoi n’est pas activé. Pas de nouveau destinataire WhatsApp, réponse à tous, transfert ou médias. **Nouveau message** reste réservé aux comptes email.
 - Résumé, classement et proposition de réponse via l’assistant commun. L’IA n’est appelée qu’à la demande de l’utilisateur ; le panneau indique que le fil sélectionné est transmis à Mistral. Le classement WhatsApp reste local.
 
 ## Envoi

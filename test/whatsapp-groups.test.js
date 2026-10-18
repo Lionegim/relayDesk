@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { setupWhatsApp, linkedAccount, msg } from './whatsapp-helpers.js';
+import { setupWhatsApp, linkedAccount, msg, tick } from './whatsapp-helpers.js';
 import { parseMessage,chatJid,directJid } from '../src/providers/whatsapp/parse.js';
 
 test('groupes WhatsApp : texte, auteurs distincts, brouillons locaux et aucun envoi groupe',async t=>{
@@ -23,4 +23,18 @@ test('groupes WhatsApp : texte, auteurs distincts, brouillons locaux et aucun en
  assert.ok(c.store.waEphemeralChats(accountId).includes(group),'politique groupe persistée');
  const ephemeral={...received,key:{...received.key,id:'e'},message:{ephemeralMessage:{message:{conversation:'Privé'}}}};
  assert.equal(parseMessage(ephemeral,{since}),null);
+});
+
+// Les lots historiques omettent souvent pushName : résoudre le participant dans le carnet du même compte.
+test('historique de groupe : noms des auteurs résolus depuis les contacts reçus', async () => {
+ const ctx=await setupWhatsApp(); const {accountId,sock}=await linkedAccount(ctx,{messages:[]});
+ const group='120363000123456@g.us', author='123456789012345@lid';
+ const m=msg('named','Texte',{chat:group,pushName:'',ago:60});m.key.participant=author;
+ sock.emit('messaging-history.set',{contacts:[{id:author,name:'Camille'}],chats:[{id:group,name:'Équipe'}],messages:[m]});await tick();
+ assert.equal(ctx.store.waChatMessages(accountId,group)[0].senderName,'Camille');
+ const row=ctx.db.prepare('SELECT id FROM messages WHERE account_id=? AND external_id=?').get(accountId,group);
+ assert.equal(ctx.store.getMessage(row.id).from,'Camille');
+ ctx.store.waSetChatName(accountId,author,'Camille Martin');
+ assert.equal(ctx.store.getMessage(row.id).from,'Camille Martin','les noms reçus après le lot restent visibles');
+ ctx.wa.sync.stop();
 });

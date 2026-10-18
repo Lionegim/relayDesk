@@ -55,12 +55,13 @@ export function createStore(db) {
     getMessage(id) {
       const r = row(id), m = toMessage(r, true);
       if (r.channel === 'whatsapp' && r.account_id && r.external_id) {
-        const recent = q('SELECT from_me, ts, text, author_jid, sender_name FROM whatsapp_messages WHERE account_id = ? AND chat_jid = ? ORDER BY ts DESC, rowid DESC').all(r.account_id, r.external_id);
+        const recent = q("SELECT m.from_me, m.ts, m.text, m.author_jid, COALESCE(c.name, NULLIF(m.sender_name, 'Participant'), m.sender_name) AS sender_name FROM whatsapp_messages m LEFT JOIN whatsapp_chats c ON c.account_id = m.account_id AND c.chat_jid = m.author_jid WHERE m.account_id = ? AND m.chat_jid = ? ORDER BY m.ts DESC, m.rowid DESC").all(r.account_id, r.external_id);
         m.group = r.external_id.endsWith('@g.us');
         m.fromMe = recent.length ? !!recent[0].from_me : false;
         m.at = m.sortAt;
         // Relire la source aussi pour les fils importés avant fromMe : un contact peut s'appeler « Moi ».
         if (recent.length) {
+          if (m.group && !recent[0].from_me) m.from = recent[0].sender_name || 'Participant';
           const who = q('SELECT name FROM whatsapp_chats WHERE account_id = ? AND chat_jid = ?').get(r.account_id, r.external_id)?.name || m.subject.replace(/^WhatsApp · /, '');
           m.trail = recent.slice(1).map(t => {
             const from = t.from_me ? 'Moi' : m.group ? t.sender_name || 'Participant' : who;
@@ -342,7 +343,7 @@ export function createStore(db) {
     },
     // Tous les textes de la fenêtre importée ; une lecture ne supprime jamais les messages précédents.
     waChatMessages(accountId, chatJid) {
-      return q('SELECT msg_id, from_me, ts, text, author_jid, sender_name FROM whatsapp_messages WHERE account_id = ? AND chat_jid = ? ORDER BY ts, rowid').all(accountId, chatJid)
+      return q("SELECT m.msg_id, m.from_me, m.ts, m.text, m.author_jid, COALESCE(c.name, NULLIF(m.sender_name, 'Participant'), m.sender_name) AS sender_name FROM whatsapp_messages m LEFT JOIN whatsapp_chats c ON c.account_id = m.account_id AND c.chat_jid = m.author_jid WHERE m.account_id = ? AND m.chat_jid = ? ORDER BY m.ts, m.rowid").all(accountId, chatJid)
         .map(r => ({ msgId: r.msg_id, fromMe: !!r.from_me, ts: r.ts, text: r.text, participantJid: r.author_jid, senderName: r.sender_name }));
     },
     waPruneBefore(accountId, since) {
