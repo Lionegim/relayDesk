@@ -43,6 +43,7 @@ export function createGmailClient({ refreshToken, oauth, fetchImpl = globalThis.
 
   return {
     post: (path, body) => request('POST', path, {}, body),
+    put: (path, body) => request('PUT', path, {}, body),
     profile: () => get('profile'),
     labels: () => get('labels'),
     listThreads: (q, pageToken) => get('threads', { q, pageToken, maxResults: 100 }),

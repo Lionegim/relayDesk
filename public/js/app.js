@@ -21,6 +21,7 @@ const state = {
   c: null,
   details: {},
   confirm: null,
+  composeTo: {},
 };
 
 const root = document.getElementById('root');
@@ -349,13 +350,16 @@ const actions = {
   // Lecture
   compose: ({ mode }) => set({ composing: mode }),
   closeComposer: () => set({ composing: null }),
+  composeTo: (_, e) => { const id = state.selectedId, v = e.target.value; set(s => ({ composeTo: { ...s.composeTo, [id]: v } })); },
   draft: (_, e) => { const id = state.selectedId, v = e.target.value; set(s => ({ drafts: { ...s.drafts, [id]: v } })); },
   saveDraft: () => {
     const sel = derive(state).sel;
     if (!sel) return;
     const text = state.drafts[sel.id] ?? state.details[sel.id]?.draft?.text ?? '';
-    api.saveDraft(sel.id, text).then(draft => {
-      sel.draft = { savedAt: draft.savedAt };
+    const mode = state.composing || 'reply';
+    const to = mode === 'forward' ? (state.composeTo[sel.id] ?? state.details[sel.id]?.draft?.to ?? '') : null;
+    api.saveDraft(sel.id, { text, mode, to }).then(draft => {
+      sel.draft = { savedAt: draft.savedAt, gmail: draft.gmail };
       if (state.details[sel.id]) state.details[sel.id].draft = draft;
       set({});
     }).catch(fail);

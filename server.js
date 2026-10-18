@@ -8,6 +8,7 @@ import { loadKey, createVault } from './src/secrets.js';
 import { createGoogleOAuth } from './src/providers/gmail/oauth.js';
 import { createGmailSync } from './src/providers/gmail/sync.js';
 import { createGmailDisconnect } from './src/providers/gmail/disconnect.js';
+import { createGmailOutbox } from './src/providers/gmail/outbox.js';
 
 const port = Number(process.env.PORT) || 4310;
 const host = process.env.HOST || '127.0.0.1';
@@ -21,12 +22,13 @@ const vault = createVault(loadKey({ envKey: process.env.RELAY_SECRET_KEY, keyFil
 const oauth = createGoogleOAuth({ clientId: process.env.GOOGLE_CLIENT_ID, clientSecret: process.env.GOOGLE_CLIENT_SECRET });
 const sync = createGmailSync({ store, vault, oauth });
 const disconnect = createGmailDisconnect({ store, vault, sync });
+const outbox = createGmailOutbox({ store, sync, ownerName: process.env.OWNER_NAME || 'Jean-Hugues' });
 
 const ai = createMistralClient({ apiKey: process.env.MISTRAL_API_KEY || '', model: process.env.MISTRAL_MODEL || 'mistral-small-latest' });
 const server = createApp({
   store, ai,
   ownerName: process.env.OWNER_NAME || 'Jean-Hugues',
-  gmail: { oauth, sync, disconnect, redirectUri: `http://127.0.0.1:${port}/oauth/google/callback` },
+  gmail: { oauth, sync, disconnect, outbox, redirectUri: `http://127.0.0.1:${port}/oauth/google/callback` },
   allowedHosts: [`127.0.0.1:${port}`, `localhost:${port}`, `[::1]:${port}`],
 });
 

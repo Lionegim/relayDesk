@@ -13,7 +13,7 @@ const toMessage = (r, full) => {
     id: r.id, p: r.profile_id, accountId: r.account_id, from: r.from_name, initials: r.initials, handle: r.handle, channel: r.channel,
     account: r.account, time: r.time_label, sortAt: r.sort_at, unread: bool(r.unread), flagged: bool(r.flagged), archived: bool(r.archived),
     folderId: r.folder_id, label: r.label, subject: r.subject, preview: r.preview, triage: r.triage, count: r.message_count,
-    draft: r.draft_saved_at ? { savedAt: r.draft_saved_at, ...(full ? { text: r.draft_text } : {}) } : null,
+    draft: r.draft_saved_at ? { savedAt: r.draft_saved_at, gmail: !!r.draft_external_id, ...(full ? { text: r.draft_text, mode: r.draft_mode, to: r.draft_to } : {}) } : null,
   };
   if (full) Object.assign(m, { body: r.body, trail: JSON.parse(r.trail) });
   return m;
@@ -87,12 +87,27 @@ export function createStore(db) {
       return toMessage(row(id), false);
     },
 
-    saveDraft(id, text) {
-      row(id);
+    saveDraft(id, text, { mode = null, to = null, externalId } = {}) {
+      const r = row(id);
       if (typeof text !== 'string' || text.length > MAX_DRAFT) throw badRequest('Brouillon invalide');
       const savedAt = new Date().toISOString();
-      q('UPDATE messages SET draft_text = ?, draft_saved_at = ? WHERE id = ?').run(text, savedAt, id);
-      return { text, savedAt };
+      const ext = externalId === undefined ? r.draft_external_id : externalId;
+      q('UPDATE messages SET draft_text = ?, draft_saved_at = ?, draft_mode = ?, draft_to = ?, draft_external_id = ? WHERE id = ?').run(text, savedAt, mode, to, ext, id);
+      return { text, savedAt, mode, to, gmail: !!ext };
+    },
+    setReplyMeta(id, reply) {
+      q('UPDATE messages SET reply_meta = ? WHERE id = ?').run(JSON.stringify(reply), id);
+    },
+    clearDraft(id) {
+      q('UPDATE messages SET draft_text = NULL, draft_saved_at = NULL, draft_mode = NULL, draft_to = NULL, draft_external_id = NULL WHERE id = ?').run(id);
+    },
+    // Lots C et D : de quoi construire une réponse dans le fil.
+    composeContext(id) {
+      const r = row(id);
+      return {
+        accountId: r.account_id, threadId: r.external_id, subject: r.subject, body: r.body, sortAt: r.sort_at,
+        reply: r.reply_meta ? JSON.parse(r.reply_meta) : null, draftExternalId: r.draft_external_id,
+      };
     },
 
     createFolder({ profileId, name: raw, parentId = null }) {
@@ -208,7 +223,12 @@ export function createStore(db) {
     },
 
     // Les brouillons sont conservés. Avec labels, le dossier suit aussi Gmail.
-    upsertThread(accountId, t, { syncFolder = false } = {}) {
+    upsertThread(accountId, t, opts) {
+      const id = this.writeThread(accountId, t, opts);
+      if (t.reply) q('UPDATE messages SET reply_meta = ? WHERE id = ?').run(JSON.stringify(t.reply), id);
+      return id;
+    },
+    writeThread(accountId, t, { syncFolder = false } = {}) {
       const acc = accountOf(accountId);
       const existing = q('SELECT id FROM messages WHERE account_id = ? AND external_id = ?').get(accountId, t.externalId);
       const vals = [t.from, t.initials, t.handle, t.sortAt, +t.unread, +t.flagged, t.label, t.subject, t.preview, t.body, t.triage, JSON.stringify(t.trail), t.count];

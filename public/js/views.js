@@ -255,10 +255,15 @@ function messageView(s, v, sel) {
             <span class="grow">${composeLabel}</span>
             <button class="composer-close" data-on-click="closeComposer" aria-label="Fermer">×</button>
           </div>
+          ${when(s.composing === 'forward', () => html`
+            <label class="composer-to">
+              <span>À</span>
+              <input data-key="to-${sel.id}" data-on-input="composeTo" value="${s.composeTo[sel.id] ?? (full?.draft?.mode === 'forward' ? full.draft.to : '') ?? ''}" placeholder="adresse@exemple.fr" autocomplete="off" maxlength="2000">
+            </label>`)}
           <textarea data-autofocus data-key="draft-${sel.id}" data-on-input="draft" placeholder="Répondre à ${sel.from.split(' ')[0]} depuis ${sel.account}…">${draft}</textarea>
           <div class="composer-foot">
             <button class="btn btn-ghost" data-on-click="aiDraft">✳ Aider à rédiger</button>
-            <span class="composer-status ellipsis">${sel.draft ? `Brouillon enregistré à ${timeOf(sel.draft.savedAt)}` : 'Brouillon local'}</span>
+            <span class="composer-status ellipsis">${sel.draft ? `${sel.draft.gmail ? 'Brouillon Gmail' : 'Brouillon'} enregistré à ${timeOf(sel.draft.savedAt)}` : 'Brouillon local'}</span>
             <button class="btn btn-ghost" data-on-click="saveDraft">Enregistrer</button>
             <button class="btn btn-brand" disabled title="L’envoi nécessite un compte connecté et ta validation">Envoyer</button>
           </div>

@@ -82,6 +82,14 @@ export function bodyText(msg) {
   return text.length > MAX_BODY ? text.slice(0, MAX_BODY) + '\n…' : text;
 }
 
+// En-têtes bruts (non décodés) du dernier message visible, pour répondre dans le fil.
+export function replyMeta(thread) {
+  const last = (thread.messages || []).filter(m => !(m.labelIds || []).some(l => SKIP.includes(l))).at(-1);
+  if (!last) return null;
+  const h = headerMap(last);
+  return { from: h.from || '', to: h.to || '', cc: h.cc || '', replyTo: h['reply-to'] || '', messageId: h['message-id'] || '', references: h.references || '', at: Number(last.internalDate) || null };
+}
+
 // Renvoie null si la conversation ne contient plus de message visible (corbeille, spam, brouillon seul).
 export function threadToRecord(thread, { ownEmail, labelNames = {}, preferredLabelId = null }) {
   const msgs = (thread.messages || []).filter(m => !(m.labelIds || []).some(l => SKIP.includes(l)));
@@ -110,6 +118,7 @@ export function threadToRecord(thread, { ownEmail, labelNames = {}, preferredLab
     }),
     count: msgs.length,
     labelId: userLabel || null,
+    reply: replyMeta(thread),
     ...triageEmail({ labels, headers: h }),
   };
 }

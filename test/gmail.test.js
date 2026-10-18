@@ -394,7 +394,8 @@ test('permissions : demande progressive, scopes effectivement accordés et secre
   let state = (await req('GET', '/api/state')).body;
   assert.deepEqual(state.profiles.find(p => p.id === 'perso').accounts.find(a => a.id === account.id).perms, ['read']);
   assert.ok(!JSON.stringify(state).includes('rt-secret'));
-  for (const bad of ['labels,unknown', 'read,,labels', 'send', 'drafts', 'https://mail.google.com/']) {
+  // Lot C : drafts devient disponible ; send reste refusé jusqu'au lot D.
+  for (const bad of ['labels,unknown', 'read,,labels', 'send', 'https://mail.google.com/']) {
     const r = await req('GET', '/oauth/google/start?profile=perso&name=x&win=7&perms=' + encodeURIComponent(bad));
     assert.match(new URL(r.headers.get('location'), 'http://localhost').searchParams.get('connect_error'), /Permission/);
   }

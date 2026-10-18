@@ -6,6 +6,7 @@ import { HttpError, badRequest, notFound } from './errors.js';
 import { SERVICES, PERMISSIONS } from '../connectors.js';
 import { summaryPrompt, draftPrompt } from '../ai/assistant.js';
 import { emailFromIdToken } from '../providers/gmail/oauth.js';
+import { readComposeInput } from '../providers/gmail/outbox.js';
 
 const PUBLIC_DIR = fileURLToPath(new URL('../../public/', import.meta.url));
 const MAX_BODY = 64 * 1024;
@@ -128,7 +129,9 @@ export function createApp({ store, ai, ownerName, gmail = null, allowedHosts = n
     }],
     ['GET', /^\/api\/messages\/([^/]+)$/, ([id]) => store.getMessage(messageId(id))],
     ['PATCH', /^\/api\/messages\/([^/]+)$/, ([id], body) => gmail ? gmail.sync.updateMessage(messageId(id), body) : store.updateMessage(messageId(id), body)],
-    ['PUT', /^\/api\/messages\/([^/]+)\/draft$/, ([id], body) => store.saveDraft(messageId(id), body.text)],
+    ['PUT', /^\/api\/messages\/([^/]+)\/draft$/, ([id], body) => gmail?.outbox
+      ? gmail.outbox.saveDraft(messageId(id), body)
+      : store.saveDraft(messageId(id), readComposeInput(body).text, readComposeInput(body))],
     ['POST', /^\/api\/folders$/, (_, body) => store.createFolder(body)],
     ['PATCH', /^\/api\/contacts\/([^/]+)$/, ([id], body) => store.updateContact(id, body)],
     ['POST', /^\/api\/profiles\/([^/]+)\/accounts$/, ([id], body) => store.connectAccount(id, body)],

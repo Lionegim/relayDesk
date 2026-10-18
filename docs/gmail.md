@@ -56,6 +56,17 @@ L’ajout d’une permission demande une nouvelle autorisation Google et sa déc
 
 Les opérations du même compte sont exécutées dans l’ordre pour éviter qu’une synchronisation en cours écrase une écriture. Les erreurs de modification ne changent pas SQLite ; si Gmail a créé un libellé avant qu’une modification de conversation échoue, ce libellé peut rester dans Gmail et sera réutilisé au prochain essai.
 
+## Brouillons Gmail (permission « Brouillons »)
+
+Avec la permission **Brouillons** (`gmail.compose`), **Enregistrer** crée le brouillon dans Gmail, puis le met à jour aux enregistrements suivants ; le statut affiche « Brouillon Gmail enregistré à … ». Sans cette permission, le brouillon reste dans Relay.
+
+- **Répondre** : au `Reply-To`, sinon à l'expéditeur, dans le même fil (`In-Reply-To`, `References`). Si le dernier message vient de toi, la réponse va à ses destinataires.
+- **Répondre à tous** : ajoute les destinataires et copies d'origine, sans ton adresse ni doublons.
+- **Transférer** : un champ « À » apparaît ; le message d'origine est cité sous « Message transféré ». Tant qu'aucune adresse n'est saisie, le brouillon reste local.
+- Les destinataires sont lus sur les en-têtes bruts : un nom d'affichage encodé ne peut pas ajouter d'adresse.
+- Pour les fils importés avant cette version, Relay relit les en-têtes du fil dans Gmail au premier brouillon.
+- Un brouillon supprimé dans Gmail est recréé au prochain enregistrement.
+
 ## Déconnecter un compte
 
 Menu du compte → **Déconnecter**, puis confirmation. Relay attend la fin de la synchronisation ou de l'action en cours sur ce compte, révoque l'accès chez Google, puis supprime le compte, son jeton, son état de synchronisation, ses messages importés et ses liens de libellés. Tous les dossiers restent, y compris ceux créés à partir de ses libellés. Les messages restent dans Gmail. Si Google est injoignable, la suppression a lieu quand même : retire alors l'accès depuis [ton compte Google](https://myaccount.google.com/permissions).
@@ -69,5 +80,4 @@ Menu du compte → **Déconnecter**, puis confirmation. Relay attend la fin de l
 
 ## Étapes suivantes
 
-1. `gmail.compose` : brouillons Gmail réels.
-2. `gmail.send` : envoi, après un écran de validation du contenu exact.
+1. `gmail.send` : envoi, après un écran de validation du contenu exact.
