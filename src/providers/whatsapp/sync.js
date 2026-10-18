@@ -362,13 +362,25 @@ export function createWhatsAppSync({ store, vault, lib, makeSocket, log = consol
   // entre deux pour ne pas bloquer le serveur. Une déconnexion (génération) interrompt le traitement en cours.
   function enqueue(accountId, s, kind, data, notify) {
     const size = Array.isArray(data?.messages) ? data.messages.length : 0;
+    let job = null;
+    const failed = () => {
+      warn(`lot non importé pour le compte ${accountId}`);
+      if (!current(accountId, s)) return;
+      // Les tranches déjà enregistrées restent visibles ; le cycle ne pourra plus se déclarer complet.
+      if (job) for (const jid of job.changed) try { rebuild(accountId, jid); } catch { /* fil suivant */ }
+      lostHistory(accountId, 'Une partie de l’historique n’a pas pu être importée : actualise l’historique.');
+      const h = histories.get(accountId);
+      if (h) finishHistory(accountId, h, 'partial');
+    };
     if (!s.ingest && size <= CHUNK) {
-      const job = prepare(accountId, s, kind, data, notify);
-      if (job) { while (job.i < job.raw.length) step(job); finish(job); }
+      try {
+        job = prepare(accountId, s, kind, data, notify);
+        if (job) { while (job.i < job.raw.length) step(job); finish(job); }
+      } catch { failed(); }
       return;
     }
     s.ingest = (s.ingest || Promise.resolve()).then(async () => {
-      const job = prepare(accountId, s, kind, data, notify);
+      job = prepare(accountId, s, kind, data, notify);
       if (!job) return;
       while (job.i < job.raw.length) {
         if (job.i) await new Promise(r => setImmediate(r));
@@ -376,13 +388,7 @@ export function createWhatsAppSync({ store, vault, lib, makeSocket, log = consol
         step(job);
       }
       finish(job);
-    }).catch(() => {
-      warn(`lot non importé pour le compte ${accountId}`);
-      if (!current(accountId, s)) return;
-      lostHistory(accountId, 'Un lot d’historique n’a pas pu être importé : actualise l’historique.');
-      const h = histories.get(accountId);
-      if (h) finishHistory(accountId, h, 'partial');
-    });
+    }).catch(failed);
     const tail = s.ingest;
     tail.then(() => { if (s.ingest === tail) s.ingest = null; });
   }

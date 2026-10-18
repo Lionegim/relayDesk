@@ -30,7 +30,7 @@ const fullResponse = (sock, code) => ({
 });
 
 test('lot fusionné : tous les messages de la fenêtre importés, sans troncature ni plafond', async () => {
-  const ctx = await setupWhatsApp({ timing: FAST });
+  const ctx = await setupWhatsApp({ timing: { ...FAST, historyIdleMs: 10000 } });
   const { accountId, sock } = await linkedAccount(ctx, { messages: [] });
   // 6 000 messages sur 300 discussions, du plus récent au plus ancien (ordre Baileys), dont 250 dans une seule.
   const messages = [];
@@ -173,4 +173,54 @@ test('déconnexion pendant un gros lot : traitement interrompu, rien de réécri
   assert.equal(ctx.db.prepare('SELECT COUNT(*) AS n FROM whatsapp_messages WHERE account_id = ?').get(accountId).n, 0);
   assert.equal(ctx.wa.sync.progress(accountId), null);
   ctx.wa.sync.stop();
+});
+
+test('fin honnête : jalon seul, mauvais type, progression d’un autre lot, tranche en échec', async () => {
+  // Demande bornée (mode full) : un lot RECENT à 100 % ou un jalon « complete » ne terminent pas le cycle.
+  const ctx = await setupWhatsApp({ timing: { ...FAST, fullResponseMs: 5000, historyIdleMs: 10000 } });
+  const { accountId, sock } = await linkedAccount(ctx);
+  spyRequests(sock);
+  await endLinkHistory(sock);
+  await ctx.wa.sync.syncNow(accountId);
+  sock.emit('messaging-history.status', { syncType: 2, status: 'complete', explicit: true });
+  sock.emit('messaging-history.set', { chats: [], contacts: [], messages: [msg('R1', 'récent', { ago: 50 })], syncType: 3, progress: 100 });
+  await tick();
+  assert.equal(ctx.wa.sync.progress(accountId).history.state, 'receiving');
+  // Lot FULL sans progression : n'hérite pas du 100 % d'un autre lot.
+  sock.emit('messaging-history.set', { chats: [], contacts: [], messages: [msg('F1', 'complet', { ago: 60 })], syncType: 2 });
+  await tick();
+  assert.equal(ctx.wa.sync.progress(accountId).history.state, 'receiving');
+  // Gros lot FULL final à 100 % : complet seulement après son import, avec ses messages comptés.
+  const big = Array.from({ length: 2501 }, (_, i) => msg(`G${i}`, `t${i}`, { chat: peer(i % 40), ago: 100 + i }));
+  sock.emit('messaging-history.status', { syncType: 2, status: 'complete', explicit: true });
+  sock.emit('messaging-history.set', { chats: [], contacts: [], messages: big, syncType: 2, progress: 100 });
+  assert.equal(ctx.wa.sync.progress(accountId).history.state, 'receiving', 'pas de fin avant l’import');
+  await until(() => ctx.wa.sync.progress(accountId).history.state === 'complete', 5000);
+  const p = ctx.wa.sync.progress(accountId);
+  assert.equal(p.history.messages, 2501 + 2);
+  assert.equal(p.total, ctx.store.countThreads(accountId).threads);
+  assert.ok(p.total >= 41);
+  ctx.wa.sync.stop();
+
+  // Échec de la deuxième tranche : tranches déjà enregistrées visibles, cycle partiel, jamais complet ensuite.
+  const bad = await setupWhatsApp({ timing: { ...FAST, fullResponseMs: 5000 } });
+  const b = await linkedAccount(bad);
+  spyRequests(b.sock);
+  await endLinkHistory(b.sock);
+  await bad.wa.sync.syncNow(b.accountId);
+  const add = bad.store.waAddMessages.bind(bad.store);
+  let calls = 0;
+  bad.store.waAddMessages = (id, list) => { if (++calls === 2) throw new Error('disque'); return add(id, list); };
+  const lot = Array.from({ length: 1001 }, (_, i) => msg(`E${i}`, `t${i}`, { chat: peer(i % 5), ago: 100 + i }));
+  b.sock.emit('messaging-history.set', { chats: [], contacts: [], messages: lot, syncType: 2 });
+  await until(() => bad.wa.sync.progress(b.accountId).history.state === 'partial', 5000);
+  bad.store.waAddMessages = add;
+  assert.ok(bad.store.countThreads(b.accountId).threads >= 5, 'tranche déjà enregistrée reconstruite');
+  b.sock.emit('messaging-history.set', { chats: [], contacts: [], messages: [], syncType: 2, progress: 100 });
+  await tick();
+  const h = bad.wa.sync.progress(b.accountId).history;
+  assert.equal(h.state, 'partial');
+  assert.match(h.reason, /n’a pas pu être importée/);
+  assert.ok(!/disque/.test(h.reason), 'raison publique générique');
+  bad.wa.sync.stop();
 });
