@@ -46,7 +46,7 @@ export function createStore(db) {
   return {
     db,
     pruneReplyMemory: () => memory.prune(),
-    markAIReply(id,text) {memory.markAI(memoryScope(id),text);},
+    markAIReply(id,text) {memory.ignore(memoryScope(id),text);},
     learnAvailableReplies() {
       for(const m of q("SELECT id FROM messages WHERE channel='whatsapp' AND account_id IS NOT NULL").all()) this.getReplyMemory(m.id);
     },
@@ -58,7 +58,7 @@ export function createStore(db) {
         memory.observe(scope,sent);
       }
       const value=memory.view(scope);
-      if(!internal) {const {promptExamples,revision,...publicView}=value;return publicView;}
+      if(!internal) {const {promptExamples,revision,identity,learnAfter,...publicView}=value;return publicView;}
       return value;
     },
     changeReplyMemory(id, input) {
@@ -68,8 +68,16 @@ export function createStore(db) {
       memory.change(scope,input);return this.getReplyMemory(id);
     },
     // Après accusé de succès fournisseur seulement. Une erreur de mémoire ne transforme jamais un envoi réussi en échec.
-    rememberReply(id,text) {
-      try {const scope=memoryScope(id);if(scope) memory.observe(scope,[{fromMe:true,text,at:Date.now()}]);} catch {return false;}
+    rememberReply(id,text,{ticket,at=Date.now()}={}) {
+      try {
+        const scope=memoryScope(id);if(!scope) return false;
+        const current=memory.view(scope);
+        if(ticket && current.identity!==ticket.identity) return false;
+        if(ticket && current.revision!==ticket.revision && current.learnAfter>=at) {
+          memory.ignore(scope,text,{remove:true});return false;
+        }
+        memory.observe(scope,[{fromMe:true,text,at}]);
+      } catch {return false;}
       return true;
     },
 
@@ -378,7 +386,10 @@ export function createStore(db) {
         for (const m of list) if (ins.run(accountId, m.chatJid, m.msgId, +m.fromMe, m.ts, m.text, m.participantJid || null, m.senderName || null).changes) changed.add(m.chatJid);
       });
       const scope={accountId,conversationId:null,profileId:accountOf(accountId).profile_id};
-      for(const jid of new Set(list.filter(m=>m.fromMe).map(m=>m.chatJid))) memory.observe({...scope,conversationId:jid},list.filter(m=>m.chatJid===jid && m.fromMe).map(m=>({fromMe:true,text:m.text,at:m.ts})));
+      for(const jid of new Set(list.filter(m=>m.fromMe).map(m=>m.chatJid))) {
+        const persisted=q('SELECT text,ts AS at FROM whatsapp_messages WHERE account_id=? AND chat_jid=? AND from_me=1 ORDER BY ts DESC LIMIT 100').all(accountId,jid);
+        memory.observe({...scope,conversationId:jid},persisted.map(m=>({...m,fromMe:true})));
+      }
       return changed;
     },
     // Tous les textes de la fenêtre importée ; une lecture ne supprime jamais les messages précédents.

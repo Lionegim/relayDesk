@@ -17,7 +17,7 @@ CREATE TABLE reply_memory_samples (
   PRIMARY KEY (account_id, conversation_id, sample_key),
   FOREIGN KEY (account_id, conversation_id) REFERENCES reply_memory(account_id, conversation_id) ON DELETE CASCADE
 );
--- Empreintes seules pour éviter d'apprendre à nouveau une proposition IA envoyée sans retouche.
+-- Empreintes seules : propositions IA sans retouche et envois en cours exclus après une réinitialisation.
 CREATE TABLE reply_memory_suggestions (
   account_id INTEGER NOT NULL,
   conversation_id TEXT NOT NULL,

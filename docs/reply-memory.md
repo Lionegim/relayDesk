@@ -21,13 +21,13 @@ La mémoire est un petit carnet d’exemples et de tendances, pas un entraîneme
 
 Les anciennes lignes email importées avant cette fonctionnalité ne permettent pas de vérifier la provenance de tous leurs auteurs : elles ne sont pas devinées à partir du libellé « Moi ». Leur mémoire s’enrichira lors des prochains imports vérifiables et envois. Les textes WhatsApp disponibles sur ce Mac sont repris localement au démarrage et à la lecture de la mémoire.
 
-Les citations, blocs transférés et signatures standards reconnus sont retirés avant stockage. Les empreintes des propositions IA récentes sont conservées sans leur texte : un exemple identique à une proposition connue est ignoré pour limiter le réapprentissage du style du modèle. Ce filtre exact ne permet pas de reconnaître tous les textes assistés par IA ou modifiés dans une autre application.
+Les citations, blocs transférés et signatures standards reconnus sont retirés avant stockage. Les empreintes des propositions IA récentes sont conservées sans leur texte : un exemple identique à une proposition connue est ignoré pour limiter le réapprentissage du style du modèle. Ce filtre exact ne permet pas de reconnaître tous les textes assistés par IA ou modifiés dans une autre application. Une empreinte d’exclusion est aussi conservée pour un envoi déjà en cours lorsque la mémoire est mise en pause ou réinitialisée, afin que son accusé tardif et sa réimportation ne restaurent pas l’exemple.
 
 ## Conservation et confidentialité
 
 SQLite conserve au plus **24 extraits distincts de 1 200 caractères par conversation**, pendant **180 jours**. Les tendances (longueur, tu/vous, salutations, emojis et retours à la ligne) sont calculées localement. La déduplication du texte évite de compter deux fois un envoi et son réimport ; ce sont des exemples de style distincts, pas une mesure de fréquence de tous les envois.
 
-Cette copie de quelques réponses peut durer plus longtemps que la fenêtre d’historique WhatsApp de sept jours. La mémoire disparaît avec le compte. Le passage d’une discussion WhatsApp en mode éphémère purge aussi sa mémoire. Les profils et les comptes ne partagent aucun exemple, même si le correspondant porte le même nom. Les variantes de JID PN/LID ne sont pas fusionnées automatiquement.
+Cette copie de quelques réponses peut durer plus longtemps que la fenêtre d’historique WhatsApp de sept jours. La mémoire disparaît avec le compte. Le passage d’une discussion WhatsApp en mode éphémère purge aussi sa mémoire. La suppression individuelle d’un message source n’est pas encore réconciliée avec cette copie de mémoire ; pour retirer un tel extrait, réinitialiser la mémoire de la conversation. Les profils et les comptes ne partagent aucun exemple, même si le correspondant porte le même nom. Les variantes de JID PN/LID ne sont pas fusionnées automatiquement.
 
 Le nettoyage des extraits expirés se fait au démarrage, toutes les heures et à la lecture de la conversation. La mémoire, comme les messages importés, reste dans la base locale ; elle n’est pas une sauvegarde distante ni un coffre de secrets.
 

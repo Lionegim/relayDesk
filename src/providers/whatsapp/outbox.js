@@ -92,6 +92,8 @@ export function createWhatsAppOutbox({ store, sync }) {
           // Consommée avant l'appel : ni requête concurrente, ni rejeu, ni relance automatique.
           confirmations.delete(digest);
           let sent;
+          const memoryTicket=store.getReplyMemory(messageId,{internal:true});
+          const sendStartedAt=Date.now();
           try {
             sent = await sock.sendMessage(chatJid, { text });
           } catch {
@@ -101,7 +103,8 @@ export function createWhatsAppOutbox({ store, sync }) {
           for (const [key, c] of confirmations) if (c.messageId === messageId && c.accountId === accountId) confirmations.delete(key);
           const msgId = typeof sent?.key?.id === 'string' && sent.key.id ? sent.key.id : `relay-${digest.slice(0, 24)}`;
           if (store.hasAccount(accountId)) {
-            store.waAddMessages(accountId, [{ chatJid, msgId, fromMe: true, ts: Date.now(), text }]);
+            store.rememberReply(messageId,text,{ticket:memoryTicket,at:sendStartedAt});
+            store.waAddMessages(accountId, [{ chatJid, msgId, fromMe: true, ts: sendStartedAt, text }]);
             store.clearDraft(messageId);
             sync.rebuild(accountId, chatJid);
           }

@@ -150,6 +150,8 @@ export function createOutlookOutbox({ store, sync, ownerName = '' }) {
             throw new HttpError(409, 'Validation absente, expirée ou déjà utilisée : vérifie le message à nouveau.', 'confirmation_invalid');
           }
           confirmations.delete(digest);
+          const memoryTicket=store.getReplyMemory(messageId,{internal:true});
+          const sendStartedAt=Date.now();
           try {
             await graph.sendMime(mime);
           } catch (e) {
@@ -160,7 +162,7 @@ export function createOutlookOutbox({ store, sync, ownerName = '' }) {
           // Toutes les validations de ce message sont annulées avant de libérer la ligne : un identifiant de nouveau
           // message réutilisé par SQLite ne peut jamais hériter d'un aperçu antérieur.
           for (const [d, c] of confirmations) if (c.messageId === messageId && c.accountId === accountId) confirmations.delete(d);
-          if (['reply','replyAll'].includes(mode)) store.rememberReply(messageId,text);
+          if (['reply','replyAll'].includes(mode)) store.rememberReply(messageId,text,{ticket:memoryTicket,at:sendStartedAt});
           store.clearDraft(messageId);
           // Le brouillon Outlook lié n'est jamais supprimé (pas de suppression conditionnelle à une version).
           return { sent: true, draftRemoved: !fresh.draftExternalId };

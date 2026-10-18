@@ -150,3 +150,23 @@ test('propositions IA : empreintes conservées sur 180 jours même après 100 no
  for(let i=0;i<110;i++) c.store.markAIReply(id,`Autre proposition ${i}`);
  c.store.rememberReply(id,'Texte IA original à ne pas apprendre');assert.equal(c.store.getReplyMemory(id).sampleCount,0);
 });
+
+test('mémoire WA : envoi commencé avant effacement, accusé tardif et réimport n’apprennent rien',async t=>{
+ const c=await setupWhatsApp();t.after(()=>c.wa.sync.stop());const a=await linkedAccount(c);const id=rowId(c,a.accountId);const text='Ancien envoi en cours de confirmation';
+ a.sock.sendMessage=async()=>{await new Promise(r=>setTimeout(r,5));c.store.changeReplyMemory(id,{reset:true});await new Promise(r=>setTimeout(r,5));return {key:{id:'ack-late'}};};
+ const preview=await c.wa.outbox.preview(id,{text});assert.equal((await c.wa.outbox.send(id,{text,digest:preview.digest})).sent,true);assert.equal(c.store.getReplyMemory(id).sampleCount,0);
+ c.store.waAddMessages(a.accountId,[{chatJid:PEER,msgId:'ack-late',fromMe:true,ts:Date.now(),text}]);assert.equal(c.store.getReplyMemory(id).sampleCount,0);
+});
+
+
+test('réimport email après reset durant envoi : exclusion durable du texte, sans fuite sur compte recréé',async t=>{
+ const c=await setupWhatsApp();t.after(()=>c.wa.sync.stop());const a=c.store.upsertAccount('perso',{name:'Gmail',channel:'email',svc:'gmail',address:'me@example.test'});
+ const record=threadToRecord({id:'thread',messages:[gmailMessage('in','Reçu',['INBOX'],'other@example.test')]},{ownEmail:'me@example.test'});const id=c.store.upsertThread(a.id,record);
+ const ticket=c.store.getReplyMemory(id,{internal:true}),at=Date.now();c.store.changeReplyMemory(id,{reset:true});
+ c.store.rememberReply(id,'Envoi en cours',{ticket,at});
+ c.store.upsertThread(a.id,{...record,ownSamples:[{fromMe:true,text:'Envoi en cours',at:Date.now()}]});assert.equal(c.store.getReplyMemory(id).sampleCount,0);
+ const beforeIdentity=c.store.getReplyMemory(id,{internal:true}).identity;
+ c.store.deleteAccount(a.id);const next=c.store.upsertAccount('perso',{name:'Gmail',channel:'email',svc:'gmail',address:'me@example.test'});const newId=c.store.upsertThread(next.id,record);
+ assert.notEqual(c.store.getReplyMemory(newId,{internal:true}).identity,beforeIdentity);
+ c.store.rememberReply(newId,'Ancien compte ne doit rien transmettre',{ticket,at});assert.equal(c.db.prepare('SELECT count(*) AS n FROM reply_memory_suggestions').get().n,0);
+});

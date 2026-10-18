@@ -31,8 +31,8 @@ export function createReplyMemoryRepository(db) {
   const q = sql => db.prepare(sql);
   function get(scope, create = true) {
     if (!scope?.accountId || !scope.conversationId) return null;
-    if (create) q('INSERT OR IGNORE INTO reply_memory (account_id,conversation_id,profile_id,revision) VALUES (?,?,?,?)')
-      .run(scope.accountId,scope.conversationId,scope.profileId,randomUUID());
+    if (create) q('INSERT OR IGNORE INTO reply_memory (account_id,conversation_id,profile_id,revision,identity) VALUES (?,?,?,?,?)')
+      .run(scope.accountId,scope.conversationId,scope.profileId,randomUUID(),randomUUID());
     const row=q('SELECT * FROM reply_memory WHERE account_id=? AND conversation_id=? AND profile_id=?').get(scope.accountId,scope.conversationId,scope.profileId);
     if (!row) return null;
     const changed=q('DELETE FROM reply_memory_samples WHERE account_id=? AND conversation_id=? AND sent_at<?')
@@ -57,9 +57,11 @@ export function createReplyMemoryRepository(db) {
         .run(scope.accountId,scope.conversationId,scope.accountId,scope.conversationId,MEMORY_LIMIT).changes;
       if(JSON.stringify(samples(scope))!==before) touch(scope);
     },
-    markAI(scope,text) {
+    ignore(scope,text,{remove=false}={}) {
       if(!get(scope)) return;
-      q('INSERT OR REPLACE INTO reply_memory_suggestions VALUES (?,?,?,?)').run(scope.accountId,scope.conversationId,hash(clean(text)),Date.now());
+      const key=hash(clean(text));
+      q('INSERT OR REPLACE INTO reply_memory_suggestions VALUES (?,?,?,?)').run(scope.accountId,scope.conversationId,key,Date.now());
+      if(remove && q('DELETE FROM reply_memory_samples WHERE account_id=? AND conversation_id=? AND sample_key=?').run(scope.accountId,scope.conversationId,key).changes) touch(scope);
       q('DELETE FROM reply_memory_suggestions WHERE created_at<?').run(Date.now()-MEMORY_DAYS*86400000);
     },
     prune() {
@@ -71,7 +73,7 @@ export function createReplyMemoryRepository(db) {
     view(scope) {
       const row=get(scope); if(!row) return {available:false,enabled:false,sampleCount:0,traits:[],examples:[]};
       const list=samples(scope);
-      return {available:true,enabled:!!row.enabled,revision:row.revision,sampleCount:list.length,traits:styleOf(list),
+      return {available:true,enabled:!!row.enabled,revision:row.revision,identity:row.identity,learnAfter:row.learn_after,sampleCount:list.length,traits:styleOf(list),
         examples:list.slice(0,3).map(s=>({text:s.text.slice(0,240),at:s.at})),retentionDays:MEMORY_DAYS,
         // Exemples bornés pour l'appel de rédaction, jamais exposés via la vue publique.
         promptExamples:row.enabled?list.slice(0,5).map(s=>s.text.slice(0,400)):[]};

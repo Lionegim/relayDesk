@@ -190,3 +190,10 @@ test('mémoire Gmail : apprentissage seulement après succès, jamais brouillon,
  assert.equal(store.getReplyMemory(msg.id).sampleCount,before+1);
  assert.ok(store.getReplyMemory(msg.id).examples.some(x=>x.text===input.text));sync.stop();
 });
+
+test('mémoire : effacement pendant un envoi Gmail en cours empêche son apprentissage tardif',async()=>{
+ const {outbox,msg,g,store,sync}=await ready();const input={text:'Un envoi commencé avant effacement',mode:'reply'};
+ const p=await outbox.preview(msg.id,input);
+ g.fail=(method,path)=>{if(method==='POST'&&path==='messages/send')store.changeReplyMemory(msg.id,{reset:true});return false;};
+ assert.equal((await outbox.send(msg.id,{...input,digest:p.digest})).sent,true);assert.equal(store.getReplyMemory(msg.id).sampleCount,0);sync.stop();
+});
