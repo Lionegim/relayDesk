@@ -83,7 +83,7 @@ export function chatToRecord(chatJid, msgs, { name, state, incoming = false, tra
     subject: `WhatsApp · ${who}`,
     preview: last.text.slice(0, 200),
     body: last.text,
-    trail: msgs.slice(0, -1).reverse().slice(0, trailMax).map(m => ({ from: label(m), initials: initialsOf(label(m)), at: m.ts, body: m.text })),
+    trail: msgs.slice(0, -1).reverse().slice(0, trailMax).map(m => ({ from: label(m), initials: initialsOf(label(m)), fromMe: m.fromMe, at: m.ts, body: m.text })),
     count: msgs.length,
   };
 }

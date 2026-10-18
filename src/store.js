@@ -52,7 +52,16 @@ export function createStore(db) {
     },
 
     hasProfile: id => !!q('SELECT 1 FROM profiles WHERE id = ?').get(id),
-    getMessage: id => toMessage(row(id), true),
+    getMessage(id) {
+      const r = row(id), m = toMessage(r, true);
+      if (r.channel === 'whatsapp' && r.account_id && r.external_id) {
+        const last = q('SELECT from_me FROM whatsapp_messages WHERE account_id = ? AND chat_jid = ? ORDER BY ts DESC, rowid DESC LIMIT 1').get(r.account_id, r.external_id);
+        m.fromMe = last ? !!last.from_me : /^Moi(?: \(à .+\))?$/.test(m.from);
+        m.at = m.sortAt;
+        m.trail = m.trail.map(t => ({ ...t, fromMe: typeof t.fromMe === 'boolean' ? t.fromMe : t.from === 'Moi' }));
+      }
+      return m;
+    },
 
     aiFolders(profileId) {
       return q('SELECT id, name FROM folders WHERE profile_id = ? ORDER BY position, id').all(profileId)
