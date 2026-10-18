@@ -46,18 +46,35 @@ export function createGraphClient({ refreshToken, oauth, fetchImpl = globalThis.
     // Refus net (4xx) : le message d'erreur Graph n'est pas repris (il peut citer le contenu).
     if (!res.ok) throw new HttpError(502, `Erreur Outlook (${res.status}).`, 'provider');
     const text = await res.text();
-    return text ? JSON.parse(text) : {};
+    if (!text) return {};
+    try {
+      return JSON.parse(text);
+    } catch {
+      // Jamais d'extrait de la réponse dans l'erreur ni dans les journaux.
+      throw new HttpError(502, 'Réponse Outlook illisible.', 'retryable');
+    }
   }
 
   const enc = encodeURIComponent;
+  // Listes paginées (@odata.nextLink) lues en entier, avec une borne de sécurité.
+  async function all(path, params) {
+    const out = [];
+    let page = await request('GET', path, { params });
+    out.push(...(page.value || []));
+    while (page['@odata.nextLink'] && out.length < 5000) {
+      page = await request('GET', page['@odata.nextLink']);
+      out.push(...(page.value || []));
+    }
+    return { value: out };
+  }
   const MSG_FIELDS = 'id,conversationId,parentFolderId,subject,bodyPreview,body,from,toRecipients,ccRecipients,replyTo,receivedDateTime,sentDateTime,isRead,isDraft,flag,importance,inferenceClassification,internetMessageId';
 
   return {
     request,
     me: () => request('GET', 'me', { params: { $select: 'mail,userPrincipalName,displayName' } }),
     // wellKnownName n'existe qu'en bêta : les dossiers système sont résolus par leur nom réservé (wellKnown).
-    folders: () => request('GET', 'me/mailFolders', { params: { $top: 100, $select: 'id,displayName,parentFolderId,childFolderCount' } }),
-    childFolders: id => request('GET', `me/mailFolders/${enc(id)}/childFolders`, { params: { $top: 100, $select: 'id,displayName,parentFolderId,childFolderCount' } }),
+    folders: () => all('me/mailFolders', { $top: 100, $select: 'id,displayName,parentFolderId,childFolderCount' }),
+    childFolders: id => all(`me/mailFolders/${enc(id)}/childFolders`, { $top: 100, $select: 'id,displayName,parentFolderId,childFolderCount' }),
     wellKnown: name => request('GET', `me/mailFolders/${enc(name)}`, { params: { $select: 'id,displayName' } }),
     // Tous les messages d'une conversation, en-têtes de fil compris.
     conversation: async conversationId => {
