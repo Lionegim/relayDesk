@@ -55,10 +55,17 @@ export function createStore(db) {
     getMessage(id) {
       const r = row(id), m = toMessage(r, true);
       if (r.channel === 'whatsapp' && r.account_id && r.external_id) {
-        const last = q('SELECT from_me FROM whatsapp_messages WHERE account_id = ? AND chat_jid = ? ORDER BY ts DESC, rowid DESC LIMIT 1').get(r.account_id, r.external_id);
-        m.fromMe = last ? !!last.from_me : /^Moi(?: \(à .+\))?$/.test(m.from);
+        const recent = q('SELECT from_me, ts, text FROM whatsapp_messages WHERE account_id = ? AND chat_jid = ? ORDER BY ts DESC, rowid DESC LIMIT 51').all(r.account_id, r.external_id);
+        m.fromMe = recent.length ? !!recent[0].from_me : false;
         m.at = m.sortAt;
-        m.trail = m.trail.map(t => ({ ...t, fromMe: typeof t.fromMe === 'boolean' ? t.fromMe : t.from === 'Moi' }));
+        // Relire la source aussi pour les fils importés avant fromMe : un contact peut s'appeler « Moi ».
+        if (recent.length) {
+          const who = q('SELECT name FROM whatsapp_chats WHERE account_id = ? AND chat_jid = ?').get(r.account_id, r.external_id)?.name || m.subject.replace(/^WhatsApp · /, '');
+          m.trail = recent.slice(1).map(t => {
+            const from = t.from_me ? 'Moi' : who;
+            return { from, initials: from.split(/\s+/).slice(0, 2).map(w => w[0] || '').join('').toUpperCase(), fromMe: !!t.from_me, at: t.ts, body: t.text };
+          });
+        }
       }
       return m;
     },

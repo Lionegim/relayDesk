@@ -37,7 +37,17 @@ function render() {
   }
   const v = derive(state);
   if (v.sel) loadDetails(v.sel.id);
+  const chatBefore = root.querySelector?.('.wa-timeline');
+  const chatPosition = chatBefore && {
+    id: chatBefore.dataset.chatId, ready: chatBefore.dataset.ready,
+    nearBottom: chatBefore.scrollHeight - chatBefore.scrollTop - chatBefore.clientHeight < 64,
+  };
   patch(root, renderApp(state, v));
+  const chatAfter = root.querySelector?.('.wa-timeline');
+  if (chatAfter?.dataset.ready === 'true' &&
+      (!chatPosition || chatPosition.id !== chatAfter.dataset.chatId || chatPosition.ready !== 'true' || chatPosition.nearBottom)) {
+    chatAfter.scrollTop = chatAfter.scrollHeight;
+  }
 }
 
 // Corps et fil sont chargés à la demande : l'état global ne contient que la liste.

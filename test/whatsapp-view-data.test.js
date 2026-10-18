@@ -18,5 +18,8 @@ test('conversation WhatsApp : direction et horodatage exacts, même si le corres
   assert.equal(full.fromMe,false,'un nom de contact ne décide jamais de la direction');
   assert.deepEqual(full.trail.map(m=>m.fromMe),[true,false]);
   assert.ok(full.at>full.trail[0].at && full.trail[0].at>full.trail[1].at);
+  const legacy = full.trail.map(({ fromMe, ...rest })=>rest);
+  c.db.prepare('UPDATE messages SET trail=? WHERE id=?').run(JSON.stringify(legacy),id);
+  assert.deepEqual(c.store.getMessage(id).trail.map(m=>m.fromMe),[true,false], 'anciens fils reconstruits depuis la source, sans déduction du nom');
   assert.equal(c.sockets.last().sent.length,0);
 });
