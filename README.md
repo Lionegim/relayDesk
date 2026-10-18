@@ -29,6 +29,10 @@ Pour connecter tes comptes : [Gmail](docs/gmail.md), [Outlook / Microsoft 365](d
 | `SYNC_INTERVAL_MS` | Fréquence de vérification Gmail | `60000` |
 | `HOST`, `PORT` | Adresse d’écoute | `127.0.0.1`, `4310` |
 
+## Architecture prévue
+
+Le [plan Docker et mobile](docs/architecture-docker-mobile.md), préparé avec Claude, décrit la cible : serveur hébergé personnel, accès web installé sur téléphone, authentification et migration contrôlée. Ce plan ne constitue pas un déploiement déjà réalisé.
+
 ## Ce qui est en place
 
 - **Messages** : profils (Anove, Client Atlas, Personnel), favoris (boîte unifiée, non lus, avec drapeau, brouillons), filtres par canal, recherche, liste redimensionnable (280 à 720 px, double-clic pour réinitialiser, largeur mémorisée), lecture du fil, lu/non lu, drapeau, archivage, réponse/réponse à tous/transfert, brouillons enregistrés.
