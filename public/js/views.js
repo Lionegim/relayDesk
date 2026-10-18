@@ -140,8 +140,8 @@ function messageList(s, v) {
       <header class="list-head">
         <div class="list-title">
           <div class="grow" style="display:flex;flex-direction:column;min-width:0">
-            <strong class="ellipsis">${v.viewTitle} — ${v.profile.name}</strong>
-            <small>${v.inProfile.length} messages, ${v.inProfile.filter(m => m.unread).length} non lus</small>
+            <strong class="ellipsis">${s.channel === 'whatsapp' ? 'WhatsApp' : v.viewTitle} — ${v.profile.name}</strong>
+            <small>${s.channel === 'whatsapp' ? plural(v.list.length, 'conversation') : `${v.inProfile.length} messages, ${v.inProfile.filter(m => m.unread).length} non lus`}</small>
           </div>
           <button class="icon-btn" title="Filtrer">${icon('lines')}</button>
         </div>
@@ -152,17 +152,17 @@ function messageList(s, v) {
       </header>
       <div class="threads">
         ${v.list.map(m => html`
-          <button class="${cls('thread', m.id === s.selectedId && 'is-on')}" draggable="true" data-key="m${m.id}" data-id="${m.id}"
+          <button class="${cls('thread', m.channel === 'whatsapp' && 'thread-wa', m.id === s.selectedId && 'is-on')}" draggable="true" data-key="m${m.id}" data-id="${m.id}"
             data-on-click="selectThread" data-on-dragstart="threadDragStart">
             ${when(m.unread, () => html`<span class="dot"></span>`)}
             <span class="avatar">${m.initials}</span>
             <span class="thread-body">
               <span class="thread-line">
-                <span class="thread-from ellipsis">${m.from}</span>
+                <span class="thread-from ellipsis">${m.channel === 'whatsapp' ? waName(m) : m.from}</span>
                 ${when(m.flagged, () => html`<span class="thread-flag">⚑</span>`)}
                 <span class="thread-time">${timeLabel(m)}</span>
               </span>
-              <span class="thread-subject"><span class="grow ellipsis">${m.subject}</span><span class="thread-channel">${CH[m.channel].label}</span></span>
+              ${when(m.channel !== 'whatsapp', () => html`<span class="thread-subject"><span class="grow ellipsis">${m.subject}</span><span class="thread-channel">${CH[m.channel].label}</span></span>`)}
               <span class="thread-preview">${m.preview}</span>
             </span>
           </button>`)}
@@ -338,7 +338,7 @@ function whatsappView(s, v, sel) {
         <span class="avatar wa-avatar">${sel.initials}</span>
         <div class="wa-who">
           <strong class="ellipsis">${name}</strong>
-          <span class="ellipsis"><span class="wa-badge">WhatsApp</span>${sel.account}${sel.handle ? ` · ${sel.handle}` : ''}${folderName ? ` · ${folderName}` : ''}</span>
+          <span class="ellipsis"><span class="wa-badge">WhatsApp</span>${sel.account !== 'WhatsApp' ? sel.account : ''}${sel.handle ? ` · ${sel.handle}` : ''}${folderName ? ` · ${folderName}` : ''}</span>
         </div>
         <div class="wa-head-actions">
           <button class="link-btn" data-on-click="aiClassify">Classer</button>
@@ -347,7 +347,7 @@ function whatsappView(s, v, sel) {
       </header>
       <div class="wa-timeline" data-key="wa-timeline-${sel.id}" data-chat-id="${sel.id}" data-ready="${String(!!full && !full.failed)}" role="log" aria-label="Messages, du plus ancien au plus récent">
         <div class="wa-thread">
-          ${full ? waTimeline(waMessages(sel, full)) : html`
+          ${full?.failed ? html`<div class="wa-note"><p>Discussion indisponible. Aperçu du dernier message :</p><p class="wa-text">${sel.preview}</p></div>` : full ? waTimeline(waMessages(sel, full)) : html`
             <div class="wa-msg wa-in"><div class="wa-bubble wa-loading"><div class="skeleton" style="width:220px"></div><div class="skeleton" style="width:140px"></div></div></div>`}
           ${when(full?.failed, () => html`<p class="wa-note">Discussion incomplète : seul l’aperçu est disponible.</p>`)}
         </div>

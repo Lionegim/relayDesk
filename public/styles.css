@@ -329,6 +329,9 @@ svg { display: block; }
 .new-mail-dialog .composer-foot { flex-wrap:wrap; }
 
 /* ---------- Discussion WhatsApp ---------- */
+.thread.thread-wa { --t-avbg: #dcebe5; --t-avfg: #005c4b; }
+.thread.thread-wa.is-on { --t-muted: #49665b; --t-dot: #008069; --t-flag: #755300; background: #dcefe6; color: #111b21; }
+.chip[data-id="whatsapp"].is-on { background: #008069; color: #ffffff; }
 .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
 .wa { --wa-green: #008069; --wa-green-hover: #006d59; --wa-green-active: #005c4b; --wa-sand: #f2ede6; --wa-sand-dot: rgb(120 100 70 / 0.05);
   --wa-in: #ffffff; --wa-out: #d9fdd3; --wa-ink: #111b21; --wa-meta: #667781;

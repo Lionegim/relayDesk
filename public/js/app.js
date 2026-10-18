@@ -58,11 +58,16 @@ function rememberComposition() {
   if (state.newMail?.messageId) compositionBuffers.set(state.newMail.messageId, state.newMail);
 }
 function loadDetails(id) {
-  if (state.details[id] || loading.has(id)) return;
+  if ((state.details[id] && !state.details[id].refreshing) || loading.has(id)) return;
   loading.add(id);
   api.message(id)
     .then(full => { if (state.data.messages.some(m => m.id === id)) set(s => ({ details: { ...s.details, [id]: full } })); })
-    .catch(err => { if (!state.data.messages.some(m => m.id === id)) return; set(s => ({ details: { ...s.details, [id]: { failed: true, trail: [] } } })); fail(err); })
+    .catch(err => {
+      if (!state.data.messages.some(m => m.id === id)) return;
+      set(s => ({ details: { ...s.details, [id]: s.details[id] && !s.details[id].failed
+        ? { ...s.details[id], refreshing: false, stale: true } : { failed: true, trail: [] } } }));
+      fail(err);
+    })
     .finally(() => loading.delete(id));
 }
 
@@ -75,9 +80,12 @@ setInterval(async () => {
 
 function applyData(data) {
   const before = new Map((state.data?.messages || []).map(m => [m.id, m.sortAt + ':' + m.count]));
-  const details = Object.fromEntries(Object.entries(state.details).filter(([id]) => {
+  const details = Object.fromEntries(Object.entries(state.details).flatMap(([id, full]) => {
     const m = data.messages.find(x => x.id === Number(id));
-    return m && before.get(m.id) === m.sortAt + ':' + m.count;
+    if (!m) return [];
+    if (!full.stale && before.get(m.id) === m.sortAt + ':' + m.count) return [[id, full]];
+    // Garder les bulles pendant le rechargement préserve l'ancrage de lecture.
+    return m.channel === 'whatsapp' && !full.failed ? [[id, { ...full, refreshing: true }]] : [];
   }));
   const a = state.ai, updated = a && data.messages.find(m => m.id === a.forId);
   const ai = a && (!updated || before.get(updated.id) !== updated.sortAt + ':' + updated.count) ? null : a;
