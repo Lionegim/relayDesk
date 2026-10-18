@@ -1,0 +1,36 @@
+# Liste blanche : tout le contexte est exclu, puis seuls les fichiers nécessaires à l'image sont réintégrés.
+*
+!package.json
+!package-lock.json
+!server.js
+!src/**
+!public/**
+!test/**
+!deploy/healthcheck.mjs
+
+# Exclusions prioritaires, même à l'intérieur des dossiers autorisés : secrets, données, sauvegardes, exports, archives.
+**/.env
+**/.env.*
+**/*.env
+**/*.key
+**/*.pem
+**/*.p12
+**/secrets
+**/data
+**/backups
+**/exports
+**/*.zip
+**/*.tar
+**/*.tar.gz
+**/*.tgz
+**/*.db
+**/*.db-wal
+**/*.db-shm
+**/*.sqlite
+**/*.sqlite3
+**/*.sqlite-wal
+**/*.sqlite-shm
+**/*.log
+**/node_modules
+**/.DS_Store
+**/.git
