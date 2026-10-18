@@ -3,25 +3,15 @@
 import { createHash, timingSafeEqual } from 'node:crypto';
 import { HttpError, badRequest } from '../../http/errors.js';
 import { buildMessage, envelope, forwardBody, formatAddress, parseAddressList, toRaw, MimeError } from './mime.js';
+import { readComposeInput } from '../../mail/input.js';
+export { readComposeInput } from '../../mail/input.js';
 import { replyMeta } from './parse.js';
 
-const MODES = ['reply', 'replyAll', 'forward', 'new'];
-const MAX_TEXT = 20000;
-const MAX_TO = 2000;
 const CONFIRM_TTL_MS = 10 * 60000;
 
 // L'empreinte couvre le message exact et le fil Gmail visé.
 const digestOf = (mime, threadId) => createHash('sha256').update(`thread:${threadId || ''}\n`).update(mime, 'utf8').digest('hex');
 
-export function readComposeInput(body) {
-  const { text, mode = 'reply', to = null, cc = null, subject = '' } = body || {};
-  if (typeof text !== 'string' || text.length > MAX_TEXT) throw badRequest('Texte invalide');
-  if (!MODES.includes(mode)) throw badRequest('Mode de réponse invalide');
-  if (to !== null && (typeof to !== 'string' || to.length > MAX_TO || /[\r\n\0]/.test(to))) throw badRequest('Destinataires invalides');
-  if (cc !== null && (typeof cc !== 'string' || cc.length > MAX_TO || /[\r\n\0]/.test(cc))) throw badRequest('Copies invalides');
-  if (typeof subject !== 'string' || subject.length > 998 || /[\r\n\0]/.test(subject)) throw badRequest('Objet invalide');
-  return { text, mode, to: ['forward', 'new'].includes(mode) ? (to || '') : null, ...(mode === 'new' ? { cc: cc || '', subject } : {}) };
-}
 
 const mimeErrors = fn => {
   try {
@@ -177,6 +167,9 @@ export function createGmailOutbox({ store, sync, ownerName = '' }) {
             if (e.code === 'gmail') confirmations.set(digest, confirmation);
             throw e;
           }
+          // Toute validation de cette composition devient caduque, y compris les anciennes versions.
+          // SQLite peut réutiliser son identifiant après suppression du brouillon local.
+          for (const [key, c] of confirmations) if (c.messageId === messageId && c.accountId === accountId) confirmations.delete(key);
           store.clearDraft(messageId);
           // Le brouillon Gmail lié n'est jamais supprimé : Gmail n'offre pas de suppression conditionnelle à une version,
           // et il a pu être modifié ailleurs. Seul le brouillon local est nettoyé ; le distant est signalé.

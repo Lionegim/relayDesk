@@ -42,6 +42,11 @@ function render() {
 
 // Corps et fil sont chargés à la demande : l'état global ne contient que la liste.
 const loading = new Set();
+const compositionBuffers = new Map();
+let selectionVersion = 0;
+function rememberComposition() {
+  if (state.newMail?.messageId) compositionBuffers.set(state.newMail.messageId, state.newMail);
+}
 function loadDetails(id) {
   if (state.details[id] || loading.has(id)) return;
   loading.add(id);
@@ -300,7 +305,7 @@ const actions = {
     set({ newMailOpen: true, newMail: { accountId, to: '', cc: '', subject: '', text: '', busy: false } });
   },
   newMailField: ({ field }, e) => { if (!state.newMail?.busy) set({ newMail: { ...state.newMail, [field]: field === 'accountId' ? Number(e.target.value) : e.target.value, savedAt: null, error: null } }); },
-  closeNewMail: () => { if (!state.newMail?.busy) set({ newMailOpen: false }); },
+  closeNewMail: () => { if (!state.newMail?.busy) { rememberComposition(); set({ newMailOpen: false }); } },
   newMailConnect: () => { set({ newMailOpen: false }); openWizard(); },
   saveNewMail: () => saveNewMail(),
   previewNewMail: async () => {
@@ -324,7 +329,7 @@ const actions = {
     } catch (e) { set({ newMail: { ...state.newMail, busy: false, error: e.message } }); }
   },
   toggleProfileMenu: () => set({ menu: !state.menu, accountMenu: null }),
-  selectProfile: ({ id }) => set({ profileId: id, menu: false, accountMenu: null, picked: {}, group: 'all', channel: 'all', query: '', selectedId: firstOf(id), folder: null, ai: null, moveOpen: false, creating: false, composing: null }),
+  selectProfile: ({ id }) => { selectionVersion++; rememberComposition(); set({ newMailOpen: false, profileId: id, menu: false, accountMenu: null, picked: {}, group: 'all', channel: 'all', query: '', selectedId: firstOf(id), folder: null, ai: null, moveOpen: false, creating: false, composing: null }); },
   selectApp: ({ app }) => set({ app, ai: null, moveOpen: false }),
   selectNav: ({ id }) => set({ nav: id, channel: 'all', folder: null }),
   selectGroup: ({ id }) => set({ group: id, app: 'contacts' }),
@@ -381,11 +386,16 @@ const actions = {
   search: (_, e) => set({ query: e.target.value }),
   selectChannel: ({ id }) => set({ channel: id }),
   selectThread: async ({ id }) => {
+    const version = ++selectionVersion, profileId = state.profileId;
+    rememberComposition();
     const m = state.data.messages.find(x => x.id === num(id));
     set({ selectedId: m.id, moveOpen: false, composing: null });
     if (m.kind === 'new') {
       try {
+        const cached = compositionBuffers.get(m.id);
+        if (cached) { set({ newMailOpen: true, newMail: cached }); return; }
         const full = await api.message(m.id);
+        if (selectionVersion !== version || state.profileId !== profileId || state.selectedId !== m.id) return;
         set({ newMailOpen: true, newMail: { messageId: full.id, accountId: full.accountId, to: full.draft?.to || '', cc: full.draft?.cc || '', subject: full.subject, text: full.draft?.text || '', savedAt: full.draft?.savedAt, synced: full.draft?.synced, busy: false } });
       } catch (e) { fail(e); }
       return;
@@ -514,6 +524,7 @@ const actions = {
     }
     // Envoi confirmé par le serveur : plus rien ici ne doit inviter à renvoyer.
     const id = c.messageId;
+    compositionBuffers.delete(id);
     set(s => {
       const drafts = { ...s.drafts }, composeTo = { ...s.composeTo }, details = { ...s.details };
       delete drafts[id]; delete composeTo[id]; delete details[id];
@@ -535,6 +546,9 @@ const actions = {
     set({ confirm: { ...c, busy: true, error: null } });
     try {
       await api.disconnectAccount(c.accountId);
+      selectionVersion++;
+      for (const [id, draft] of compositionBuffers) if (draft.accountId === c.accountId) compositionBuffers.delete(id);
+      if (state.newMail?.accountId === c.accountId) set({ newMail: null, newMailOpen: false });
       applyData(await api.state());
       const v = derive(state);
       set({ confirm: null, selectedId: v.sel ? state.selectedId : firstOf(state.profileId), folder: null });

@@ -157,6 +157,10 @@ export function createStore(db) {
     // ---------- Comptes réels ----------
 
     upsertAccount(profileId, { name: accountName, channel, svc, address = null }) {
+      const existing = q('SELECT svc, address FROM accounts WHERE profile_id = ? AND name = ?').get(profileId, accountName);
+      if (existing && (existing.svc !== svc || (existing.address && address && existing.address.toLowerCase() !== address.toLowerCase()))) {
+        throw badRequest('Ce nom est déjà utilisé par un autre compte. Choisis un nom différent.');
+      }
       q(`INSERT INTO accounts (profile_id, name, channel, svc, status, c, address, position)
          VALUES (?, ?, ?, ?, 'Connexion…', 'info', ?, (SELECT COALESCE(MAX(position), 0) + 1 FROM accounts))
          ON CONFLICT (profile_id, name) DO UPDATE SET svc = excluded.svc, channel = excluded.channel, address = COALESCE(excluded.address, accounts.address)`)

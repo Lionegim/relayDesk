@@ -1,5 +1,5 @@
 // Toutes les routes de messagerie passent par ce registre, sans connaître le fournisseur.
-import { readComposeInput } from '../providers/gmail/outbox.js';
+import { readComposeInput } from './input.js';
 import { HttpError, badRequest } from '../http/errors.js';
 export function createMailService({ store, providers }) {
   const providerFor = accountId => {

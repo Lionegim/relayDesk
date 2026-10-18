@@ -135,7 +135,7 @@ function setup() {
 
 test('synchronisation : import initial puis incrémental', async () => {
   const { store, g, sync, db } = setup();
-  const { account, job } = sync.connect({ profileId: 'perso', name: 'Gmail perso', windowDays: 30, refreshToken: 'rt-secret', email: 'jh@gmail.com' });
+  const { account, job } = sync.connect({ profileId: 'perso', name: 'Gmail test réel', windowDays: 30, refreshToken: 'rt-secret', email: 'jh@gmail.com' });
   await job;
   assert.equal(store.getAccount(account.id).status, 'Connecté');
   const p = sync.progress(account.id);
@@ -170,7 +170,7 @@ test('synchronisation : import initial puis incrémental', async () => {
 
 test('synchronisation : accès révoqué', async () => {
   const { store, g, sync } = setup();
-  const { account, job } = sync.connect({ profileId: 'perso', name: 'Gmail perso', windowDays: 7, refreshToken: 'rt', email: 'jh@gmail.com' });
+  const { account, job } = sync.connect({ profileId: 'perso', name: 'Gmail test réel', windowDays: 7, refreshToken: 'rt', email: 'jh@gmail.com' });
   await job;
   const real = g.fetch;
   g.fetch = async (url, init) => (String(url).includes('oauth2') ? new Response(JSON.stringify({ error: 'invalid_grant' }), { status: 400 }) : real(url, init));
@@ -186,7 +186,7 @@ test('autorisation : PKCE, state à usage unique, redirection', async () => {
   await new Promise(r => server.listen(0, '127.0.0.1', r));
   const base = `http://127.0.0.1:${server.address().port}`;
   try {
-    const start = await fetch(`${base}/oauth/google/start?profile=perso&name=Gmail%20perso&win=30`, { redirect: 'manual' });
+    const start = await fetch(`${base}/oauth/google/start?profile=perso&name=Gmail%20test&win=30`, { redirect: 'manual' });
     const auth = new URL(start.headers.get('location'));
     assert.equal(auth.host, 'accounts.google.com');
     assert.equal(auth.searchParams.get('code_challenge_method'), 'S256');

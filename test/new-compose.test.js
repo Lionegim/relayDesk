@@ -44,3 +44,16 @@ test('registre multi-fournisseurs : aucun appel Gmail pour un autre service',asy
  const prompts=draftPrompt(store.getMessage(m.id),'Moi',{tone:'Cordial',intent:'Rends plus bref'});
  assert.match(prompts[1].content,/nouveau message/);assert.match(prompts[1].content,/Nouveau message de test/);
 });
+test('nouvelle composition : aucune ancienne validation ne survit à un envoi puis réutilisation d’identifiant',async()=>{
+ const {mail,account,g}=await ready();const first=mail.createComposition(account.id);
+ const old=await mail.preview(first.id,input);const next={...input,text:'Deuxième version validée'};const p=await mail.preview(first.id,next);
+ await mail.send(first.id,{...next,digest:p.digest});
+ const second=mail.createComposition(account.id);assert.equal(second.id,first.id,'SQLite réutilise effectivement cet identifiant');
+ await assert.rejects(mail.send(second.id,{...input,digest:old.digest}),e=>e.status===409);assert.equal(g.sent.length,1);
+});
+test('comptes : un nom ne peut pas remplacer silencieusement le fournisseur ou l’identité',async()=>{
+ const {store,account}=await ready();
+ assert.throws(()=>store.upsertAccount('perso',{name:account.name,channel:'email',svc:'outlook',address:'other@example.test'}),e=>e.status===400);
+ assert.throws(()=>store.upsertAccount('perso',{name:account.name,channel:'email',svc:'gmail',address:'other@example.test'}),e=>e.status===400);
+ assert.equal(store.getAccount(account.id).address,'jh@gmail.com');
+});

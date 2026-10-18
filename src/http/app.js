@@ -7,7 +7,6 @@ import { SERVICES, PERMISSIONS } from '../connectors.js';
 import { summaryPrompt, draftPrompt } from '../ai/assistant.js';
 import { emailFromIdToken } from '../providers/gmail/oauth.js';
 import { createMailService } from '../mail/service.js';
-import { readComposeInput } from '../providers/gmail/outbox.js';
 
 const PUBLIC_DIR = fileURLToPath(new URL('../../public/', import.meta.url));
 const MAX_BODY = 64 * 1024;
