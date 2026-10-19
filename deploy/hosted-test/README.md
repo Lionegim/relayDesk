@@ -19,7 +19,7 @@ Variables (`identity.env.example`, sans secret) :
 
 | Variable | Valeur |
 | --- | --- |
-| `IDENTITY_DOMAIN` | Domaine d'identité, p. ex. `auth.relay.migeoncorp.fr` |
+| `IDENTITY_DOMAIN` | Domaine d'identité, p. ex. `auth.relay.noegim.com` |
 | `IDENTITY_TRUSTED_PROXIES` | Sous-réseau fixe du réseau `backend` (Caddy), seul autorisé à fournir `X-Forwarded-*` |
 | `IDENTITY_SECRETS_DIR` | Répertoire ci-dessus |
 
@@ -58,8 +58,8 @@ node deploy/hosted-test/configure-keycloak.mjs \
   --admin-url http://127.0.0.1:18080 \
   --admin-user-file /etc/relay-desk-test/identity/kc_bootstrap_admin_user \
   --admin-password-file /etc/relay-desk-test/identity/kc_bootstrap_admin_password \
-  --public-url https://relay.migeoncorp.fr \
-  --issuer-base https://auth.relay.migeoncorp.fr \
+  --public-url https://relay.noegim.com \
+  --issuer-base https://auth.relay.noegim.com \
   --out /etc/relay-desk-test/identity-out
 ```
 
@@ -77,10 +77,10 @@ Rien de secret n'est affiché.
 
 ```sh
 node deploy/hosted-test/prove-mfa.mjs \
-  --issuer https://auth.relay.migeoncorp.fr/realms/relay-test \
-  --redirect-uri https://relay.migeoncorp.fr/auth/callback \
+  --issuer https://auth.relay.noegim.com/realms/relay-test \
+  --redirect-uri https://relay.noegim.com/auth/callback \
   --out /etc/relay-desk-test/identity-out \
-  [--relay-url https://relay.migeoncorp.fr]
+  [--relay-url https://relay.noegim.com]
 ```
 
 **Contrôles de la preuve** :
@@ -90,6 +90,7 @@ node deploy/hosted-test/prove-mfa.mjs \
 - id_token RS256 vérifié sur le JWKS (iss, aud, nonce, exp), `acr=relay-mfa` et `sub` du propriétaire ;
 - session SSO réutilisée (mêmes cookies Keycloak), avec puis sans `acr_values` : le mot de passe est sauté mais un nouvel OTP est exigé, aucun code n'est délivré directement (le cookie ne couvre jamais le niveau 2, âge maximal 0) ;
 - refus : OTP sans `acr_values` (minimum du client), grant direct, retour non déclaré, requête sans PKCE, flux implicite ;
+- avec `--relay-url`, démarrage paginé sans profil imposé, première page bornée à 50 et refus d’un profil explicite inconnu ;
 - avec `--relay-url`, bout en bout : `/auth/login` de Relay, Keycloak, `/auth/callback` (jeton vérifié par Relay), puis `/api/state` à 200 avec la session et 401 sans.
 
 La preuve attend une fenêtre TOTP neuve (jusqu'à 30 s), car un code ne sert qu'une fois.
@@ -115,7 +116,7 @@ La correspondance de realm `acr.loa.map` vaut `{"relay-mfa": 2}`. Le claim `acr`
 **Client `relay-desk`** :
 
 - confidentiel, secret neuf, code d'autorisation seulement, PKCE S256 exigé ;
-- retour exact `https://relay.migeoncorp.fr/auth/callback`, aucune origine web ;
+- retour exact `https://relay.noegim.com/auth/callback`, aucune origine web ;
 - aucun grant direct, implicite, compte de service, device ni CIBA ;
 - `minimum.acr.value` et `default.acr.values` valent `relay-mfa`, donc l'OTP est exigé même si le client ne demande rien.
 
@@ -131,7 +132,7 @@ La correspondance de realm `acr.loa.map` vaut `{"relay-mfa": 2}`. Le claim `acr`
 - `prove-mfa.mjs --relay-url` : 26 contrôles sur 26 ;
 - 25 sondes d'encodage de chemins vers `/admin`, `master` et `account` (`%252e`, `..;`, `%3b`, `%2f`, `%5c`, casse, `//`, `./`) : toutes en 404 ou 400, sans contenu.
 
-**Non vérifié ici** : PostgreSQL et la compose réelle (Docker indisponible dans cet environnement), le DNS, les certificats publics et la VM.
+**Non vérifié lors de cette recette locale Claude** : PostgreSQL et la compose réelle (Docker indisponible dans cet environnement), le DNS, les certificats publics et la VM. La recette OVH et les certificats publics ont ensuite été vérifiés séparément : voir [OPERATIONS.md](OPERATIONS.md). Le déploiement utilise le Caddyfile complet de cet overlay ; `identity.caddy` reste un extrait de référence.
 
 ## Limites avant toute donnée réelle
 

@@ -4,14 +4,14 @@
 // après le seul mot de passe, grant direct refusé, retour non déclaré refusé, PKCE obligatoire.
 // N'affiche aucun jeton, code, mot de passe ni secret : seulement les claims non sensibles et les verdicts.
 //
-//   node deploy/hosted-test/prove-mfa.mjs --issuer https://auth.relay.migeoncorp.fr/realms/relay-test \
-//     --redirect-uri https://relay.migeoncorp.fr/auth/callback --out /root/relay-identity-test-out
+//   node deploy/hosted-test/prove-mfa.mjs --issuer https://auth.relay.noegim.com/realms/relay-test \
+//     --redirect-uri https://relay.noegim.com/auth/callback --out /root/relay-identity-test-out
 // La session SSO créée par le parcours nominal est ensuite réutilisée (mêmes cookies) : un nouvel OTP doit être exigé.
 //
 // --out : répertoire produit par configure-keycloak.mjs (relay/auth_client_*, relay/auth.env, owner/*).
 // Le retour vers Relay Desk n'est jamais suivi : le code est intercepté puis échangé ici, une seule fois.
 //
-// Bout en bout avec Relay Desk (son propre module OIDC vérifie le jeton) : --relay-url https://relay.migeoncorp.fr
+// Bout en bout avec Relay Desk (son propre module OIDC vérifie le jeton) : --relay-url https://relay.noegim.com
 // part de /auth/login, passe par Keycloak (mot de passe + OTP), revient sur /auth/callback de Relay, puis vérifie
 // qu'/api/state répond 200 avec la session et 401 sans. --relay-connect http://hôte:port force l'adresse de
 // connexion (Relay local sans DNS ni TLS), avec le Host de --relay-url.
@@ -198,6 +198,12 @@ export async function proveMfa({ issuer, redirectUri, clientId, clientSecret, us
       check('Relay : retour accepté (jeton vérifié par Relay, session créée)', [302, 303].includes(done.status) && !/[?&]error=|\/login/.test(done.location));
       const state = await relayRequest(`${relayUrl}/api/state`, { connect: relayConnect, cookies });
       check('Relay : /api/state accessible avec la session propriétaire', state.status === 200);
+      const firstPage = await relayRequest(`${relayUrl}/api/state?paged=1&limit=50`, { connect: relayConnect, cookies });
+      let data; try { data = JSON.parse(firstPage.body); } catch { /* échec signalé ci-dessous */ }
+      check('Relay : démarrage paginé sans profil imposé', firstPage.status === 200 && !!data?.page && data.profiles?.length > 0);
+      check('Relay : première page bornée à 50 conversations', Array.isArray(data?.messages) && data.messages.length <= 50);
+      const invalidProfile = await relayRequest(`${relayUrl}/api/state?paged=1&profile=profile-does-not-exist`, { connect: relayConnect, cookies });
+      check('Relay : profil explicite inconnu toujours refusé', invalidProfile.status === 400);
       const anon = await relayRequest(`${relayUrl}/api/state`, { connect: relayConnect });
       check('Relay : /api/state refusé sans session', anon.status === 401);
     }

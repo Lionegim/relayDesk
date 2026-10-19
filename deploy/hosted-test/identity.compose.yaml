@@ -74,7 +74,7 @@ services:
       KC_DB_URL_HOST: keycloak-db
       KC_DB_URL_DATABASE: keycloak
       KC_DB_USERNAME: keycloak
-      KC_HOSTNAME: https://${IDENTITY_DOMAIN:?IDENTITY_DOMAIN requis (p. ex. auth.relay.migeoncorp.fr)}
+      KC_HOSTNAME: https://${IDENTITY_DOMAIN:?IDENTITY_DOMAIN requis (p. ex. auth.relay.noegim.com)}
       KC_HOSTNAME_STRICT: "true"
       # Console d'administration servie seulement par la boucle locale de la VM.
       KC_HOSTNAME_ADMIN: http://127.0.0.1:18080

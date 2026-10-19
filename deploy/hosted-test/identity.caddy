@@ -2,7 +2,7 @@
 # Seuls le realm de test et les ressources statiques de Keycloak sont publics. Tout le reste répond 404 :
 # console et API d'administration (/admin), realm master, console de compte, santé et métriques (port 9000,
 # jamais relié au proxy). L'administration se fait par la boucle locale de la VM (tunnel SSH).
-# IDENTITY_DOMAIN : p. ex. auth.relay.migeoncorp.fr ; KEYCLOAK_UPSTREAM : p. ex. keycloak:8080.
+# IDENTITY_DOMAIN : p. ex. auth.relay.noegim.com ; KEYCLOAK_UPSTREAM : p. ex. keycloak:8080.
 {$IDENTITY_DOMAIN} {
 	encode zstd gzip
 

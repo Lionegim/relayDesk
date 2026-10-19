@@ -7,8 +7,8 @@
 //     --admin-url http://127.0.0.1:8081 \
 //     --admin-user-file /etc/relay-identity/secrets/kc_bootstrap_admin_user \
 //     --admin-password-file /etc/relay-identity/secrets/kc_bootstrap_admin_password \
-//     --public-url https://relay.migeoncorp.fr \
-//     --issuer-base https://auth.relay.migeoncorp.fr \
+//     --public-url https://relay.noegim.com \
+//     --issuer-base https://auth.relay.noegim.com \
 //     --out /root/relay-identity-test-out
 //
 // Options : --realm (relay-test), --client-id (relay-desk), --owner (owner-test), --acr (relay-mfa),
