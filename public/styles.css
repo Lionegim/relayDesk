@@ -733,3 +733,10 @@ svg { display: block; }
 .avatar,.person-profile-avatar {position:relative;overflow:hidden;flex-shrink:0;}
 .wa-profile-photo {position:absolute;inset:0;width:100%;height:100%;object-fit:cover;border-radius:inherit;}
 .wa-profile-photo[hidden] {display:none;}
+
+/* Keep email-import status readable when a WhatsApp thread activates the dark workspace. */
+.whatsapp-workspace .mail-history {background:#26322f;border-color:#44534e;color:#e9edef;}
+.whatsapp-workspace .mail-history strong {color:#e9edef;}
+.whatsapp-workspace .mail-history>div>span,.whatsapp-workspace .mail-history p,.whatsapp-workspace .mail-history .muted {color:#b9c9c1;}
+.whatsapp-workspace .mail-history .link-btn {color:#87dfb8;}
+.whatsapp-workspace .mail-history progress {accent-color:#75cba8;}
