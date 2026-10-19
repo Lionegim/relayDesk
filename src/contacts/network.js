@@ -42,7 +42,12 @@ export function createContactNetwork(db,{people,unified,changed=()=>{}}) {
     }
     return {id:c.id,name:c.name,messages:count,score:Math.round(score*100)/100,lastAt,band:score>=12?'frequent':score>=3?'regular':count?'occasional':'inactive'};
    }).sort((a,b)=>b.score-a.score || a.name.localeCompare(b.name));
-   return {days,since,asOf:now,nodes,groups:groups(p,contacts)};
+   const coverage=q('SELECT id,name,svc FROM accounts WHERE '+(p==='all'?'1=1':'profile_id=?')+' ORDER BY position,id').all(...(p==='all'?[]:[p])).filter(a=>['gmail','outlook','whatsapp'].includes(a.svc)).map(a=>{
+    const firstAt=a.svc==='whatsapp'?q('SELECT MIN(ts) at FROM whatsapp_messages WHERE account_id=? AND ts>0 AND ts<=?').get(a.id,now).at:q('SELECT MIN(sort_at) at FROM messages WHERE account_id=? AND sort_at>0 AND sort_at<=? AND compose_kind!=\'new\'').get(a.id,now).at;
+    const history=a.svc==='whatsapp'?null:q('SELECT status FROM mail_history_imports WHERE account_id=?').get(a.id)?.status;
+    return {id:a.id,name:a.name,svc:a.svc,firstAt,complete:history==='complete',importing:['running','retrying'].includes(history),partial:a.svc==='whatsapp'};
+   });
+   return {days,since,asOf:now,nodes,coverage,groups:groups(p,contacts)};
   },
  };
 }
