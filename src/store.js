@@ -1,3 +1,4 @@
+import {createContactNetwork} from './contacts/network.js';
 import {createPersonHistory} from './ai/person-history.js';
 import {createHistoryRepository} from './mail/history/repository.js';
 import {createUnifiedPeople} from './contacts/unified.js';
@@ -53,6 +54,7 @@ export function createStore(db) {
   const people = createContactsRepository(db,changed);
   const personHistory=createPersonHistory(db,{people});
   const unified=createUnifiedPeople(db,people,changed);
+  const network=createContactNetwork(db,{people,unified,changed});
   const duplicates=createDuplicateRepository(db,{people,unified,changed});
 
   const profile = id => q('SELECT * FROM profiles WHERE id = ?').get(id) || (() => { throw notFound('Profil introuvable'); })();
@@ -74,6 +76,9 @@ export function createStore(db) {
 
   return {
     db,
+    contactNetwork:(p,options)=>network.network(p,options),
+    savePersonGroup:(p,input,id)=>network.save(p,input,id),
+    personGroupMembership:(p,id,personId,on)=>network.membership(p,id,personId,on),
     history:createHistoryRepository(db,changed),
     contactsBackfill:()=>people.backfill(),
     contactDuplicateProfiles:()=>[...q('SELECT id FROM profiles').all(),{id:'all'}],
@@ -135,7 +140,9 @@ export function createStore(db) {
           id: p.id, name: p.name, kind: p.kind, initials: p.initials,
           accounts: accounts.filter(a => a.profile_id === p.id).map(toAccount),
         })),
-        folders: q('SELECT id, profile_id AS p, name, parent_id AS parent FROM folders ORDER BY position, rowid').all().map(f => ({ ...f })),
+        folders: (()=>{const folders=q('SELECT f.id, f.profile_id AS p, f.name, f.parent_id AS parent,fl.account_id accountId,fl.label_id labelId FROM folders f LEFT JOIN folder_labels fl ON fl.folder_id=f.id AND fl.account_id=(SELECT MIN(account_id) FROM folder_labels WHERE folder_id=f.id) ORDER BY f.position, f.rowid').all();
+          const byId=new Map(folders.map(f=>[f.id,f]));return folders.map(f=>{let root=f;const seen=new Set([f.id]);while(root.parent && byId.has(root.parent) && !seen.has(root.parent)){root=byId.get(root.parent);seen.add(root.id);}const base=`g${root.accountId}_${root.labelId}`.replace(/[^\w-]/g,'_');return {id:f.id,p:f.p,name:f.name,parent:f.parent,accountId:root.accountId && (root.id===base || root.id.startsWith(base+'_'))?root.accountId:null};});})(),
+        personGroups:network.groups(options?.profile || q('SELECT id FROM profiles ORDER BY position').get()?.id),
         messages:(paged?paged.rows:q('SELECT * FROM messages ORDER BY sort_at DESC,id DESC').all()).map(r=>toMessage(r,false)),
         ...(paged?{page:paged.page,counts:paged.counts}:{}),
         contacts: people.list(),
@@ -401,7 +408,7 @@ export function createStore(db) {
         // Seuls les dossiers créés par l'import suivent un renommage externe.
         // Ne jamais remplacer le nom d'un dossier local ou partagé par un chemin Gmail.
         const links = q('SELECT COUNT(*) AS n FROM folder_labels WHERE folder_id = ?').get(found.folder_id).n;
-        if ((found.folder_id === base || found.folder_id.startsWith(base + '_')) && links === 1) q('UPDATE folders SET name = ? WHERE id = ? AND parent_id IS NULL').run(labelName, found.folder_id);
+        if ((found.folder_id === base || found.folder_id.startsWith(base + '_')) && links === 1) q('UPDATE folders SET name = ? WHERE id = ? AND parent_id IS NULL AND name!=?').run(labelName, found.folder_id,labelName);
         return found.folder_id;
       }
       q(`INSERT INTO folders (id, profile_id, name, parent_id, position)
@@ -410,6 +417,16 @@ export function createStore(db) {
       return id;
     },
 
+    syncProviderFolders(accountId,records) {
+      const imported=new Map();
+      for(const r of records) imported.set(r.externalId,this.ensureLabelFolder(accountId,r.externalId,r.path || r.name));
+      for(const r of records){const id=imported.get(r.externalId),base=`g${accountId}_${r.externalId}`.replace(/[^\w-]/g,'_');
+        if(id!==base && !id.startsWith(base+'_'))continue;
+        if(q('SELECT COUNT(*) n FROM folder_labels WHERE folder_id=?').get(id).n!==1)continue;
+        const parent=imported.get(r.parentId) || null,label=parent?r.name:(r.path || r.name);
+        q('UPDATE folders SET name=?,parent_id=? WHERE id=? AND (name!=? OR parent_id IS NOT ?)').run(label,parent,id,label,parent);
+      }
+    },
     // Les brouillons sont conservés. Avec labels, le dossier suit aussi Gmail.
     upsertThread(accountId, t, opts) {
       const id = this.writeThread(accountId, t, opts);

@@ -1,7 +1,7 @@
 // Conversion d'une conversation Graph (messages d'un même conversationId) en ligne Relay, au même format que Gmail.
-// Les corps sont demandés en texte brut à Graph ; rien n'est rendu en HTML.
+// Plain text for indexing/AI; the separate display endpoint sanitizes provider HTML.
 import { triageEmail } from '../../triage.js';
-import { initialsOf, stripQuoted } from '../gmail/parse.js';
+import { initialsOf, stripQuoted, htmlToText } from '../gmail/parse.js';
 
 const MAX_BODY = 20000;
 
@@ -21,6 +21,7 @@ const header = (m, name) => (m.internetMessageHeaders || []).find(h => h.name?.t
 
 export function bodyText(m) {
   let text = String(m.body?.content ?? m.bodyPreview ?? '').replace(/\r\n/g, '\n');
+  if(m.body?.contentType?.toLowerCase()==='html')text=htmlToText(text);
   text = stripQuoted(text) || text.trim();
   return text.length > MAX_BODY ? text.slice(0, MAX_BODY) + '\n…' : text;
 }

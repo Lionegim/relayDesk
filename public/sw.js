@@ -1,10 +1,10 @@
 // Service worker de Relay Desk : uniquement l'interface statique générique, versionnée.
 // Jamais d'API, d'authentification, d'OAuth, de QR WhatsApp, de page HTML privée ni de contenu de message en cache.
 // Hors ligne, une navigation affiche une page générique ; aucune requête n'est mise en file ni rejouée.
-const VERSION = 'relay-shell-2026-10-19-15';
+const VERSION = 'relay-shell-2026-10-19-16';
 const ASSETS = [
   '/styles.css',
-  '/js/app.js', '/js/api.js', '/js/dom.js', '/js/views.js', '/js/constants.js', '/js/pwa.js', '/js/login.js', '/js/live.js',
+  '/js/app.js', '/js/api.js', '/js/dom.js', '/js/views.js', '/js/constants.js', '/js/pwa.js', '/js/login.js', '/js/live.js', '/js/network.js',
   '/fonts/inter-latin-wght-normal.woff2', '/fonts/jetbrains-mono-latin-wght-normal.woff2',
   '/icons/icon.svg', '/icons/icon-192.png', '/icons/icon-512.png', '/icons/maskable-512.png', '/icons/apple-touch-icon.png',
   '/icons/instagram-glyph-black.svg', '/icons/linkedin-in-blue.png',

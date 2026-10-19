@@ -21,8 +21,10 @@ export function listPage(db,{profile,nav='all',channel='all',folder=null,q='',li
  if(folder && !folders.some(f=>f.id===folder)) throw badRequest('Dossier invalide pour ce profil');
  const base=unified?'archived=0':'profile_id=? AND archived=0',baseParams=unified?[]:[profile];
  const counts=sql('SELECT COUNT(*) AS all_count, COALESCE(SUM(unread),0) AS unread, COALESCE(SUM(flagged),0) AS todo, COALESCE(SUM(draft_saved_at IS NOT NULL),0) AS drafts FROM messages WHERE '+base).get(...baseParams);
- counts.all=counts.all_count;delete counts.all_count;counts.folders=Object.fromEntries(folders.map(f=>{const ids=subtree(f.id);return[f.id,sql(`SELECT COUNT(*) AS n FROM messages WHERE ${base} AND folder_id IN (${ids.map(()=>'?')})`).get(...baseParams,...ids).n];}));
- let where=base,params=[...baseParams];
+ counts.all=counts.all_count;delete counts.all_count;
+ const directCounts=new Map(sql(`SELECT folder_id,COUNT(*) n,COALESCE(SUM(unread),0) unread FROM messages WHERE ${unified?'1=1':'profile_id=?'} GROUP BY folder_id`).all(...baseParams).map(r=>[r.folder_id,r]));
+ counts.folders={};counts.folderUnread={};for(const f of folders){const rows=subtree(f.id).map(id=>directCounts.get(id));counts.folders[f.id]=rows.reduce((n,r)=>n+(r?.n || 0),0);counts.folderUnread[f.id]=rows.reduce((n,r)=>n+(r?.unread || 0),0);}
+ let where=folder?(unified?'1=1':'profile_id=?'):base,params=[...baseParams];
  if(folder){const ids=subtree(folder);where+=` AND folder_id IN (${ids.map(()=>'?')})`;params.push(...ids);}
  else if(nav!=='all') where+=' AND '+({unread:'unread=1',todo:'flagged=1',drafts:'draft_saved_at IS NOT NULL'}[nav]);
  if(channel!=='all'){where+=' AND channel=?';params.push(channel);}

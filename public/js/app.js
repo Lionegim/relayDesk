@@ -14,14 +14,16 @@ const state = {
   data: null, loadError: null, toast: null,
   app: 'mail', profileId: storage.get('relay.profile') || null, menu: false, accountMenu: null,
   nav: 'all', folder: null, channel: 'all', query: '', selectedId: null,
-  collapsed: {}, creating: false, folderDraft: '', dragOver: null, moveOpen: false,
+  collapsed: (()=>{try{return JSON.parse(storage.get('relay.folderExpansion') || '{}');}catch{return {};}})(), creating: false, folderDraft: '', dragOver: null, moveOpen: false,
   listW: Number(storage.get(LIST_W_KEY)) || 340, resizing: false,
   composing: null, drafts: {}, expandedTrail: {},
   ai: null, aiTone: 'Cordial', aiIntent: '',
+  contactView:globalThis.matchMedia?.('(max-width:600px)').matches?'list':'network',network:null,networkBusy:false,networkError:null,networkDays:90,groupEditor:null,groupName:'',groupQuery:'',groupBusy:false,
   group: 'all', picked: {}, focusId: null, contactQuery: '', contactSearch: false, sort: 'recent',
   contactHistory:null,contactHistoryError:null,historyBusy:false,
   duplicates:null,duplicatesBusy:false,duplicatesError:null,duplicatesReview:null,duplicatesKeep:null,duplicatesTab:'pending',duplicatesLimit:25,
   personOpen:null, person:null, personError:null, personBusy:false, personKind:'email', personValue:'', personMerge:'', contactImport:false, contactImportBusy:null, fromPerson:false,
+  mailText:{},
   c: null,
   details: {},
   confirm: null, auth: null, authPanel: null,
@@ -47,7 +49,7 @@ function render() {
     return;
   }
   const v = derive(state);
-  if (state.app==='mail' && v.sel) loadDetails(v.sel.id);
+  if (state.app==='mail' && v.sel) {loadDetails(v.sel.id);const full=state.details[v.sel.id];if(full && !full.failed && full.channel==='email' && full.kind!=='new' && !full.displayStatus)loadMailDisplay(v.sel.id,full);}
   const chatBefore = root.querySelector?.('.wa-timeline');
   const chatPosition = chatBefore && {
     id: chatBefore.dataset.chatId, ready: chatBefore.dataset.ready,
@@ -97,6 +99,11 @@ function mergeHistory(prev, next) {
   const extra = prev.trail.filter(t => !seen.has(trailKey(t)) && Number.isFinite(t.at) && t.at <= limit);
   return extra.length ? { ...next, trail: [...(next.trail || []), ...extra], history: prev.history ?? next.history } : next;
 }
+function loadMailDisplay(id,full){
+ const revision=detailRevisions.get(id)||0;
+ set(s=>({details:{...s.details,[id]:{...full,displayStatus:'loading'}}}));
+ api.mailDisplay(id).then(display=>{const current=state.details[id];if(current && current.sortAt===full.sortAt && current.count===full.count && revision===(detailRevisions.get(id)||0))set(s=>({details:{...s.details,[id]:{...current,display,displayStatus:'ready'}}}));}).catch(()=>{const current=state.details[id];if(current && current.sortAt===full.sortAt && current.count===full.count && revision===(detailRevisions.get(id)||0))set(s=>({details:{...s.details,[id]:{...current,displayStatus:'failed'}}}));});
+}
 function loadDetails(id) {
   if (loading.has(id)) return detailJobs.get(id);
   if (state.details[id] && !state.details[id].refreshing) return true;
@@ -144,6 +151,11 @@ let historyRequest=0;
 async function loadContactHistory(){const profile=state.profileId,request=++historyRequest;try{const result=await api.contactHistory(profile);if(state.profileId===profile && request===historyRequest)set({contactHistory:result,contactHistoryError:null});}catch(e){if(state.profileId===profile && request===historyRequest)set({contactHistoryError:e.message});}}
 
 let duplicatesRequest=0,duplicateActionVersion=0;
+let networkRequest=0;
+async function loadNetwork(){
+ const request=++networkRequest,profile=state.profileId,days=state.networkDays;set({networkBusy:true,networkError:null});
+ try{const network=await api.network(profile,days);if(request===networkRequest && profile===state.profileId)set({network});}catch(e){if(request===networkRequest)set({networkError:e.message});}finally{if(request===networkRequest)set({networkBusy:false});}
+}
 async function loadDuplicates(scan=false) {
  const profile=state.profileId,request=++duplicatesRequest;
  try{const result=await (scan?api.scanDuplicates(profile):api.duplicates(profile));if(state.profileId===profile && request===duplicatesRequest)set({duplicates:result,duplicatesError:null});}
@@ -406,7 +418,7 @@ function derive(s) {
   const d = s.data;
   const profile = d.profiles.find(p => p.id === s.profileId) || d.profiles[0];
   // Mode paginé : le serveur a déjà filtré (profil, vue, canal, dossier, recherche) ; les compteurs viennent du serveur.
-  const inProfile = s.paged ? d.messages : d.messages.filter(m => (s.profileId==='all' || m.p === s.profileId) && !m.archived);
+  const inProfile = s.paged ? d.messages : d.messages.filter(m => (s.profileId==='all' || m.p === s.profileId) && (s.folder || !m.archived));
   const byNav = s.paged ? inProfile : s.folder
     ? inProfile.filter(m => folderSet(s.folder).has(m.folderId))
     : inProfile.filter(m => s.nav === 'all' || (s.nav === 'unread' && m.unread) || (s.nav === 'todo' && m.flagged) || (s.nav === 'drafts' && m.draft));
@@ -422,7 +434,7 @@ function derive(s) {
   const contactsMine = s.profileId==='all'?(d.unifiedContacts || []):d.contacts.filter(c => c.p === s.profileId);
   const cq = s.contactQuery.trim().toLowerCase();
   const contacts = contactsMine
-    .filter(c => (s.group === 'all' || c.g.includes(s.group)) && (!cq || (c.name + c.title + (c.identities || []).map(i=>i.value).join(' ')).toLowerCase().includes(cq)))
+    .filter(c => (s.group === 'all' || c.g.includes(s.group) || (d.personGroups || []).find(g=>g.id===s.group)?.members.includes(c.id)) && (!cq || (c.name + c.title + (c.identities || []).map(i=>i.value).join(' ')).toLowerCase().includes(cq)))
     .sort(s.sort === 'name' ? (a, b) => a.name.localeCompare(b.name) : (a, b) => a.order - b.order);
 
   return {
@@ -434,11 +446,12 @@ function derive(s) {
     picked: contacts.filter(c => s.picked[c.id]),
     folders: flatFolders(s),
     folderCount: id => {
-      if (counts.folders) return counts.folders[id] || 0;
-      const set = folderSet(id); return inProfile.filter(m => set.has(m.folderId)).length;
+      if (counts.folderUnread) return counts.folderUnread[id] || 0;
+      const set = folderSet(id); return inProfile.filter(m => m.unread && set.has(m.folderId)).length;
     },
     viewTitle: s.folder ? (d.folders.find(f => f.id === s.folder)?.name || '') : NAV.find(n => n[0] === s.nav)[1],
-    groupTitle: GROUPS.find(g => g[0] === s.group)[1],
+    groups:[...GROUPS.filter(([id])=>id==='all' || contactsMine.some(c=>c.g.includes(id))),...(d.personGroups || []).map(g=>[g.id,g.name])],
+    groupTitle: (d.personGroups || []).find(g=>g.id===s.group)?.name || GROUPS.find(g => g[0] === s.group)?.[1] || 'Contacts',
     compact: SETTINGS.density === 'compacte',
     showTriage: SETTINGS.showTriage,
   };
@@ -799,10 +812,10 @@ const actions = {
     duplicateActionVersion++;
     selectionVersion++; rememberComposition();
     if (state.drawer) backFrom('drawer');
-    filtersChanged({contactHistory:null,contactHistoryError:null,historyBusy:false,duplicates:null,duplicatesError:null,duplicatesBusy:false,duplicatesReview:null,duplicatesKeep:null,duplicatesLimit:25, newMailOpen: false, profileId: id, personOpen:null,person:null,personError:null,personMerge:'',personValue:'',personBusy:false,contactImport:false,fromPerson:false, menu: false, accountMenu: null, picked: {}, group: 'all', channel: 'all', query: '', selectedId: state.paged ? null : firstOf(id), selectedRow: null, folder: null, ai: null, moveOpen: false, creating: false, composing: null, pane: 'list' });
-    if(state.app==='duplicates')loadDuplicates();if(state.app==='history')loadContactHistory();
+    filtersChanged({contactHistory:null,contactHistoryError:null,historyBusy:false,duplicates:null,duplicatesError:null,duplicatesBusy:false,duplicatesReview:null,duplicatesKeep:null,duplicatesLimit:25, newMailOpen: false, profileId: id, personOpen:null,person:null,personError:null,personMerge:'',personValue:'',personBusy:false,network:null,networkError:null,groupEditor:null,contactImport:false,fromPerson:false, menu: false, accountMenu: null, picked: {}, group: 'all', channel: 'all', query: '', selectedId: state.paged ? null : firstOf(id), selectedRow: null, folder: null, ai: null, moveOpen: false, creating: false, composing: null, pane: 'list' });
+    if(state.app==='duplicates')loadDuplicates();if(state.app==='history')loadContactHistory();if(state.app==='contacts')loadNetwork();
   },
-  selectApp: ({ app }) => { if (state.drawer) backFrom('drawer'); set({ app, ai: null, moveOpen: false,duplicatesReview:null });if(app==='duplicates')loadDuplicates();if(app==='history')loadContactHistory(); },
+  selectApp: ({ app }) => { if (state.drawer) backFrom('drawer'); set({ app, ai: null, moveOpen: false,duplicatesReview:null });if(app==='duplicates')loadDuplicates();if(app==='history')loadContactHistory();if(app==='contacts')loadNetwork(); },
   selectNav: ({ id }) => { if (state.drawer) backFrom('drawer'); filtersChanged({ nav: id, channel: 'all', folder: null }); },
   openDrawer: () => { set({ drawer: true }); pushLayer('drawer'); },
   closeDrawer: () => backFrom('drawer'),
@@ -812,12 +825,23 @@ const actions = {
   loadOlder: ({ id }) => loadOlder(Number(id)),
   draftReload: ({ id }) => resolveConflict(Number(id), false),
   draftKeepMine: ({ id }) => resolveConflict(Number(id), true),
-  selectGroup: ({ id }) => { if (state.drawer) backFrom('drawer'); set({ group: id, app: 'contacts' }); },
+  retryMailDisplay:({id})=>{const full=state.details[id];if(full)loadMailDisplay(Number(id),full);},
+  toggleMailText:({id})=>set({mailText:{...state.mailText,[id]:!state.mailText[id]}}),
+  contactView:({view})=>{set({contactView:view});if(!state.network)loadNetwork();},
+  networkDays:(_,e)=>{set({networkDays:Number(e.target.value)});loadNetwork();},
+  refreshNetwork:()=>loadNetwork(),
+  openGroup:({id})=>{const g=(state.data.personGroups || []).find(g=>g.id===id);set({groupEditor:id || 'new',groupName:g?.name || '',groupQuery:''});},
+  closeGroup:()=>set({groupEditor:null,groupName:''}),
+  groupQuery:(_,e)=>set({groupQuery:e.target.value}),
+  groupName:(_,e)=>set({groupName:e.target.value}),
+  saveGroup:async()=>{if(state.groupBusy)return;const profile=state.profileId,id=state.groupEditor;set({groupBusy:true});try{const g=await api.saveGroup(profile,{name:state.groupName},id==='new'?null:id);if(profile===state.profileId){await reload({refresh:true});set({groupEditor:id==='new'?g.id:null,group:g.id});await loadNetwork();}}catch(e){fail(e);}finally{set({groupBusy:false});}},
+  toggleGroupMember:async({group,id,on})=>{if(state.groupBusy)return;const profile=state.profileId;set({groupBusy:true});try{await api.groupMember(profile,group,id,on==='true');if(profile===state.profileId){await reload({refresh:true});await loadNetwork();}}catch(e){fail(e);}finally{set({groupBusy:false});}},
+  selectGroup: ({ id }) => { if (state.drawer) backFrom('drawer'); set({ group: id, app: 'contacts' });if(!state.network)loadNetwork(); },
 
   // Dossiers
   newRootFolder: () => set({ creating: 'root', folderDraft: '' }),
   addSubfolder: ({ id }, e) => { e.stopPropagation(); set(s => ({ creating: id, folderDraft: '', collapsed: { ...s.collapsed, [id]: false } })); },
-  toggleFolder: ({ id }, e) => { e.stopPropagation(); set(s => ({ collapsed: { ...s.collapsed, [id]: !s.collapsed[id] } })); },
+  toggleFolder: ({ id }, e) => { e.stopPropagation(); const collapsed={...state.collapsed,[id]:!state.collapsed[id]};storage.set('relay.folderExpansion',JSON.stringify(collapsed));set({collapsed}); },
   selectFolder: ({ id }) => { if (state.drawer) backFrom('drawer'); filtersChanged({ folder: id, channel: 'all' }); },
   folderDraft: (_, e) => set({ folderDraft: e.target.value }),
   folderKey: (_, e) => {
@@ -1213,7 +1237,9 @@ delegate(document, {
 
 document.addEventListener('keydown', e => {
   if (e.key !== 'Escape') return;
-  if (state.confirm) actions.confirmCancel();
+  if(state.groupEditor){if(!state.groupBusy)actions.closeGroup();}
+  else if(state.personOpen){if(!state.personBusy)actions.closePerson();}
+  else if (state.confirm) actions.confirmCancel();
   else if (state.newMailOpen) actions.closeNewMail();
   else if (state.c) closeWizard();
   else if (state.ai) set({ ai: null });
@@ -1261,6 +1287,7 @@ api.session()
         refresh: async () => {
           await reload({ refresh: true });
           if(state.app==='duplicates' && !state.duplicatesBusy)await loadDuplicates();
+          if(state.app==='contacts' && !state.networkBusy)await loadNetwork();
           if(state.app==='history' && !state.historyBusy)await loadContactHistory();
           // Keep the first page of an open person timeline current as history
           // arrives. Do not reset a reader paging through older conversations.

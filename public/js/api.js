@@ -29,6 +29,10 @@ const query = params => {
 };
 
 export const api = {
+  mailDisplay:id=>call('POST',`/api/messages/${id}/display`,{}),
+  network:(profile,days)=>call('GET',`/api/profiles/${encodeURIComponent(profile)}/network${query({days})}`),
+  saveGroup:(profile,input,id)=>call(id?'PATCH':'POST',`/api/profiles/${encodeURIComponent(profile)}/person-groups${id?'/'+encodeURIComponent(id):''}`,input),
+  groupMember:(profile,id,person,on)=>call('PUT',`/api/profiles/${encodeURIComponent(profile)}/person-groups/${encodeURIComponent(id)}/members/${encodeURIComponent(person)}`,{on}),
   async session() {const info=await call('GET','/auth/session');csrfToken=info.csrfToken || null;return info;},
   sessions: ()=>call('GET','/auth/sessions'),
   revokeSession: id=>call('DELETE',`/auth/sessions/${encodeURIComponent(id)}`,{}),

@@ -48,3 +48,7 @@ Mise à jour : 19 octobre 2026. Ce suivi réconcilie le plan d’implémentation
 4. **MCP par compte / Proton / LinkedIn**, selon leur utilité et les accès disponibles. Aucun de ces services ne doit être annoncé comme connecté avant une recette réelle.
 
 Ces lots sont un ordre de suite, pas des travaux déclenchés par cette mise à jour du plan. Le périmètre actuel reste la vue unifiée, la conservation des rapprochements et le bilan du plan.
+
+## Interface : dossiers, lecture et réseau (19 octobre 2026)
+
+Réorganisation inspirée de Mail et revue avec Claude Desktop : arbres par compte, vrais sous-dossiers et badges non lus ; lecture HTML sémantique nettoyée avec repli texte ; réseau centré sur le propriétaire (30/90/365 jours), liste mobile et groupes manuels persistants avec gestion des membres. Voir [détail et limites](ui-reseau-et-lecture.md). L’approbation de l’aperçu exact demeure obligatoire pour chaque envoi.

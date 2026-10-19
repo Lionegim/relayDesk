@@ -4,8 +4,8 @@ import { HttpError } from '../../http/errors.js';
 
 const BASE = 'https://graph.microsoft.com/v1.0/';
 const HOST = 'graph.microsoft.com';
-// Corps en texte brut : Graph convertit lui-même le HTML, rien n'est rendu côté Relay.
-const TEXT_BODY = 'outlook.body-content-type="text"';
+// HTML source for safe display; parsers separately derive plain text for AI.
+const HTML_BODY = 'outlook.body-content-type="html"';
 
 export function createGraphClient({ refreshToken, oauth, fetchImpl = globalThis.fetch, onRotate = () => {} }) {
   let rt = refreshToken;
@@ -111,8 +111,8 @@ export function createGraphClient({ refreshToken, oauth, fetchImpl = globalThis.
       const out = [];
       let next = null;const seen=new Set();
       do {
-        const page = next ? await request('GET', next, { prefer: TEXT_BODY })
-          : await request('GET', 'me/messages', { prefer: TEXT_BODY, params: {
+        const page = next ? await request('GET', next, { prefer: HTML_BODY })
+          : await request('GET', 'me/messages', { prefer: HTML_BODY, params: {
             $filter: `conversationId eq '${String(conversationId).replace(/'/g, "''")}'`, $select: `${MSG_FIELDS},internetMessageHeaders`, $top: 50,
           } });
         out.push(...(page.value || []));

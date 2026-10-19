@@ -1,3 +1,4 @@
+import {networkView} from './network.js';
 import { html, raw, when, cls } from './dom.js';
 import { CH, LABELS, ACCOUNT_COLORS, NAV, GROUPS, FREQ, SORTS, AV, TONES, STEPS, WINDOWS, CONTACT_CHANNELS, ICON } from './constants.js';
 
@@ -53,7 +54,7 @@ export function renderApp(s, v) {
     ${when(s.confirm?.kind === 'send' && s.confirm.preview, () => sendDialog(s.confirm, s.offline))}
     ${when(s.authPanel, () => authDevices(s))}
     ${when(s.contactImport, () => contactImportDialog(s,v))}
-    ${when(s.personOpen, () => personDialog(s,v))}
+    ${when(s.personOpen, () => personDialog(s,v))}${when(s.groupEditor,()=>groupDialog(s,v))}
     ${when(s.toast, () => html`<div class="${cls('toast', s.toastOk && 'toast-ok')}" role="status">${s.toast}</div>`)}`;
 }
 
@@ -63,7 +64,7 @@ function sidebar(s, v) {
   const counts = v.counts || { unread: v.inProfile.filter(m => m.unread).length, todo: v.inProfile.filter(m => m.flagged).length, drafts: v.inProfile.filter(m => m.draft).length };
   const unread = counts.unread;
   const navCount = id => id === 'todo' ? counts.todo : id === 'drafts' ? counts.drafts : id === 'all' ? counts.unread : counts.unread;
-  const indent = d => `${6 + d * 14}px`;
+  const indent = d => `${6 + Math.min(d,4) * 16}px`;
   return html`
     <aside class="sidebar" ${raw(s.mobile ? `aria-hidden="${!s.drawer}"` : '')}>
       ${when(s.mobile, () => html`<button class="close-btn drawer-close" data-on-click="closeDrawer" aria-label="Fermer le menu">×</button>`)}
@@ -93,11 +94,11 @@ function sidebar(s, v) {
       ${['contacts','duplicates','history'].includes(s.app) ? html`
         <div class="side-section">
           <button class="${cls('side-item',s.app==='duplicates' && 'is-on')}" data-on-click="selectApp" data-app="duplicates"><span class="ico">${icon('people')}</span><span class="grow">Doublons à vérifier</span></button>
-          <button class="${cls('side-item',s.app==='history' && 'is-on')}" data-on-click="selectApp" data-app="history"><span class="ico">${icon('list')}</span><span class="grow">Liens et fusions</span></button><div class="side-label">Groupes</div>
-          ${GROUPS.map(([id, label]) => html`
+          <button class="${cls('side-item',s.app==='history' && 'is-on')}" data-on-click="selectApp" data-app="history"><span class="ico">${icon('list')}</span><span class="grow">Liens et fusions</span></button><div class="folders-head"><div class="side-label">Groupes</div><button class="folder-new" data-on-click="openGroup" title="Créer un groupe" aria-label="Créer un groupe">+</button></div>
+          ${(v.groups || GROUPS).map(([id, label]) => html`
             <button class="${cls('side-item', s.group === id && 'is-on')}" data-on-click="selectGroup" data-id="${id}">
               <span class="ico">${icon('list')}</span><span class="grow">${label}</span>
-              <span class="count">${id === 'all' ? v.contactsMine.length : v.contactsMine.filter(c => c.g.includes(id)).length}</span>
+              <span class="count">${id === 'all' ? v.contactsMine.length : v.contactsMine.filter(c => c.g.includes(id) || (s.data.personGroups || []).find(g=>g.id===id)?.members.includes(c.id)).length}</span>
             </button>`)}
         </div>` : html`
         <nav class="side-section">
@@ -114,11 +115,12 @@ function sidebar(s, v) {
             <span class="side-label">Dossiers</span>
             ${when(s.profileId!=='all',()=>html`<button class="folder-new" data-on-click="newRootFolder" title="Nouveau dossier">+</button>`)}
           </div>
-          ${v.folders.map(r => r.input ? html`
-            <div class="folder-input" style="padding-left:${indent(r.depth + 1)}" data-key="folder-input">
-              <input class="input input-sm" data-autofocus placeholder="${r.depth ? 'Nom du sous-dossier' : 'Nom du dossier'}" value="${s.folderDraft}"
-                data-on-input="folderDraft" data-on-keydown="folderKey" data-on-blur="folderBlur" maxlength="80">
-            </div>` : folderRow(s, v, r, indent))}
+          ${[...new Set(v.folders.filter(r=>!r.input).map(r=>r.f.accountId || 'local'))].map(accountId=>{
+            const account=v.profile.accounts.find(a=>a.id===accountId),key='account:'+accountId;
+            return html`<div class="mailbox-account"><button class="mailbox-account-title" data-on-click="toggleFolder" data-id="${key}" aria-expanded="${!s.collapsed[key]}"><span>${s.collapsed[key]?'▸':'▾'}</span>${account?providerMark(account.svc,account.channel):icon('folder')}<strong class="ellipsis">${account?.name || 'Dossiers locaux'}</strong></button>
+            ${when(!s.collapsed[key],()=>v.folders.filter(r=>!r.input && (r.f.accountId || 'local')===accountId).map(r=>folderRow(s,v,r,indent)))}</div>`;
+          })}
+          ${v.folders.filter(r=>r.input).map(r=>html`<div class="folder-input" style="padding-left:${indent(r.depth+1)}"><input class="input input-sm" data-autofocus placeholder="Nom du dossier" value="${s.folderDraft}" data-on-input="folderDraft" data-on-keydown="folderKey" data-on-blur="folderBlur" maxlength="80"></div>`)}
         </div>`}
 
       <div class="side-section">
@@ -154,11 +156,11 @@ function folderRow(s, v, r, indent) {
   return html`
     <div class="${cls('folder-row', s.folder === f.id && 'is-on', s.dragOver === f.id && 'is-drop')}" style="padding-left:${indent(r.depth)}" data-key="${f.id}"
       data-on-dragover="folderDragOver" data-on-dragleave="folderDragLeave" data-on-drop="folderDrop" data-id="${f.id}">
-      <button class="${cls('folder-caret', !s.collapsed[f.id] && 'is-open', !r.kids && 'is-leaf')}" data-on-click="toggleFolder" data-id="${f.id}" aria-label="Déplier">▶</button>
+      <button class="${cls('folder-caret', !s.collapsed[f.id] && 'is-open', !r.kids && 'is-leaf')}" data-on-click="toggleFolder" data-id="${f.id}" aria-label="${s.collapsed[f.id]?'Déplier':'Replier'} ${f.name}" aria-expanded="${!s.collapsed[f.id]}" ${raw(!r.kids?'disabled':'')}>▶</button>
       <button class="folder-name" data-on-click="selectFolder" data-id="${f.id}">
         <span class="ico">${icon('folder')}</span>
         <span class="grow ellipsis">${f.name}</span>
-        ${when(n, () => html`<span class="count muted" style="font-size:12px">${n}</span>`)}
+        ${when(n, () => html`<span class="count muted" style="font-size:12px" title="Conversations non lues, sous-dossiers compris">${n}</span>`)}
       </button>
       <button class="folder-sub" ${raw(s.profileId==='all'?'disabled':'')} data-on-click="addSubfolder" data-id="${f.id}" title="Nouveau sous-dossier">+</button>
     </div>`;
@@ -317,7 +319,7 @@ function messageView(s, v, sel) {
           <span class="badge badge-${LABELS[sel.label] || 'secondary'}">${sel.label}</span>
           <span class="grow ellipsis" style="min-width:0">${sel.triage}</span>
         </div>`)}
-      ${full ? html`<div class="msg-body">${full.failed ? sel.preview : full.body}</div>` : html`
+      ${full ? html`<div class="mail-reading-controls"><span>${full.display?.latest?'Message mis en forme · images distantes bloquées':'Version texte'}</span>${when(full.displayStatus==='failed',()=>html`<button class="link-btn" data-on-click="retryMailDisplay" data-id="${sel.id}">Recharger la mise en forme</button>`)}${when(full.display?.latest,()=>html`<button class="link-btn" data-on-click="toggleMailText" data-id="${sel.id}">${s.mailText?.[sel.id]?'Afficher la mise en forme':'Afficher le texte'}</button>`)}</div><div class="${cls('msg-body',full.display?.latest && !s.mailText?.[sel.id] && 'mail-rich')}">${full.failed ? sel.preview : full.display?.latest && !s.mailText?.[sel.id]?raw(full.display.latest):full.body}</div>` : html`
         <div style="display:flex;flex-direction:column;gap:8px;max-width:720px;padding:18px 0 22px">
           <div class="skeleton" style="width:100%"></div><div class="skeleton" style="width:91.6%"></div><div class="skeleton" style="width:60%"></div>
         </div>`}
@@ -327,13 +329,9 @@ function messageView(s, v, sel) {
           ${[...trail].reverse().map((t, i) => {
             const key = `${sel.id}:${i}`;
             return html`
-              <button class="${cls('trail-item', s.expandedTrail[key] && 'is-open')}" data-on-click="toggleTrail" data-trail="${key}">
-                <span class="avatar">${t.initials}</span>
-                <span style="display:flex;flex-direction:column;gap:3px;flex:1;min-width:0">
-                  <span style="display:flex;gap:8px;font-size:13px"><b style="font-weight:600">${t.from}</b><span class="muted" style="margin-left:auto;font-size:12px">${timeLabel(t)}</span></span>
-                  <span class="trail-text">${s.expandedTrail[key] ? t.body : t.body.replace(/\n/g, ' ')}</span>
-                </span>
-              </button>`;
+              <article class="trail-card"><button class="${cls('trail-item', s.expandedTrail[key] && 'is-open')}" data-on-click="toggleTrail" data-trail="${key}" aria-expanded="${!!s.expandedTrail[key]}">
+                <span class="avatar">${t.initials}</span><span class="trail-heading"><span><b>${t.from}</b><time>${timeLabel(t)}</time></span><span class="trail-preview">${t.body.replace(/\n/g,' ').slice(0,160)}</span></span><span>${s.expandedTrail[key]?'−':'+'}</span></button>
+                ${when(s.expandedTrail[key],()=>html`<div class="msg-body ${full.display?.items[t.id] && !s.mailText?.[sel.id]?'mail-rich':''}">${full.display?.items[t.id] && !s.mailText?.[sel.id]?raw(full.display.items[t.id]):t.body}</div>`)}</article>`;
           })}
         </div>`)}
       ${when(s.composing, () => html`
@@ -554,7 +552,6 @@ function aiPanel(s, sel) {
 function contactsPage(s, v) {
   const all = v.contacts.length > 0 && v.picked.length === v.contacts.length;
   const sortLabel = SORTS.find(x => x[0] === s.sort)[1];
-  const searchOpen = s.contactSearch || !!s.contactQuery;
   return html`
     <main class="contacts">
       <div class="contacts-scroll">
@@ -567,15 +564,16 @@ function contactsPage(s, v) {
           <button class="btn btn-ghost" data-on-click="selectApp" data-app="duplicates">Vérifier les doublons</button><button class="btn btn-brand" data-on-click="openContactImport">Importer des contacts</button>
         </div>
 
+        <div class="contact-mode-bar"><div class="contact-mode" aria-label="Affichage des contacts"><button class="${cls(s.contactView==='network' && 'is-on')}" data-on-click="contactView" data-view="network" aria-pressed="${s.contactView==='network'}">◎ Réseau</button><button class="${cls(s.contactView==='list' && 'is-on')}" data-on-click="contactView" data-view="list" aria-pressed="${s.contactView==='list'}">☷ Liste</button></div><button class="btn btn-ghost" data-on-click="openGroup">+ Créer un groupe</button>${when((s.data.personGroups || []).some(g=>g.id===s.group),()=>html`<button class="link-btn" data-on-click="openGroup" data-id="${s.group}">Gérer le groupe</button>`)}</div>
         <div class="contacts-tools">
           <div class="group-tabs">
-            ${GROUPS.map(([id, label]) => html`
+            ${(v.groups || GROUPS).map(([id, label]) => html`
               <button class="${cls('group-tab', s.group === id && 'is-on')}" data-on-click="selectGroup" data-id="${id}">${icon('list')}${label}</button>`)}
           </div>
           <div class="contacts-actions">
-            ${when(searchOpen, () => html`
+            ${when(true, () => html`
               <div style="width:180px"><input class="input" data-autofocus placeholder="Rechercher un contact" value="${s.contactQuery}" data-on-input="contactQuery"></div>`)}
-            <button class="icon-btn" title="Filtrer">${icon('funnel')}</button>
+
             <button class="icon-btn" data-on-click="cycleSort" title="${sortLabel}">${icon('sort')}</button>
             <button class="icon-btn" data-on-click="toggleContactSearch" title="Rechercher">${icon('search')}</button>
           </div>
@@ -589,7 +587,7 @@ function contactsPage(s, v) {
             <button class="btn btn-ghost" data-on-click="clearPicked">Désélectionner</button>
           </div>`)}
 
-        <div class="table">
+        ${s.contactView==='network'?networkView(s,v):html`<div class="table">
           <div class="trow">
             <div class="cell-check">${checkbox(all, 'toggleAll', '', 'Tout sélectionner')}</div>
             <span class="th">Nom</span><span class="th">Titre</span><span class="th">Fréquence</span><span class="th">Canaux</span><span class="th" style="text-align:right">Dernier échange</span>
@@ -612,7 +610,7 @@ function contactsPage(s, v) {
               </div>`;
           })}
           ${when(!v.contacts.length, () => html`<div class="empty">Aucun contact</div>`)}
-        </div>
+        </div>`}
       </div>
     </main>`;
 }
@@ -932,6 +930,7 @@ function personDialog(s,v) {
  <label>Autre fiche dans ce profil<select data-on-change="personField" data-field="personMerge"><option value="">Choisir une fiche…</option>${v.contactsMine.filter(c=>c.id!==p.id).map(c=>html`<option value="${c.id}" ${raw(s.personMerge===c.id?'selected':'')}>${c.name} · ${(c.identities || []).map(i=>i.value).slice(0,2).join(' · ')}</option>`)}</select></label>
  ${when(source,()=>html`<div class="merge-review"><strong>${source.name}</strong><ul class="identity-list">${identityList((source.identities || []).map(i=>({...i,source:i.source==='manual'?'Ajout manuel (autre fiche)':i.source})))}</ul><p>Cette fiche et celle de ${p.name} seront regroupées. Les conversations et destinataires d’origine seront conservés.</p><button class="btn btn-brand" data-on-click="mergePerson" ${disabled}>Confirmer la liaison de ces fiches</button></div>`)}
  ${p.merges.map(m=>html`<p><button class="link-btn" data-on-click="undoPersonMerge" data-id="${m.id}" ${disabled}>Annuler la liaison du ${new Date(m.created_at).toLocaleString('fr-FR')}</button></p>`)}</details>
+ <section class="person-groups"><h4>Vos groupes</h4><p class="muted">Enregistrés dans Relay Desk · ${v.profile.name}</p><div>${(s.data.personGroups || []).map(g=>html`<button class="group-membership ${g.members.includes(p.id)?'is-on':''}" aria-pressed="${g.members.includes(p.id)}" data-on-click="toggleGroupMember" data-group="${g.id}" data-id="${p.id}" data-on="${!g.members.includes(p.id)}" ${raw(s.groupBusy?'disabled':'')}>${g.members.includes(p.id)?'✓':'+'} ${g.name}</button>`)}<button class="group-membership" data-on-click="openGroup">+ Nouveau groupe</button></div></section>
  <h4>Échanges · ${p.timeline.total} conversation${p.timeline.total>1?'s':''}</h4>
  ${when(p.timeline.activity,()=>html`<p class="person-activity">${plural(p.timeline.activity.messages,'message')}${p.timeline.activity.firstAt?` · depuis ${whenLabel(p.timeline.activity.firstAt)}`:''}</p><p class="muted">${p.timeline.activity.channels.map(c=>`${CH[c.channel]?.label || c.channel} : ${c.conversations}`).join(' · ')}</p>`)}<p class="muted">L’historique s’enrichit à mesure des imports, sans créer de doublons. Les groupes et leurs participants restent intacts.</p>
  ${when(p.identities.some(i=>i.sharedWith>1),()=>html`<p class="muted">Les identifiants partagés ne regroupent pas les échanges automatiquement. Lie les fiches après vérification si elles représentent la même personne.</p>`)}<div class="person-timeline">${p.timeline.items.map(m=>html`<button class="person-exchange" data-on-click="personConversation" data-id="${m.id}"><span>${CH[m.channel]?.label || m.channel} · ${m.profileName?m.profileName+' · ':''}${m.account} · ${whenLabel(m.sortAt)} · ${plural(m.count,'message')}</span><strong>${m.subject}</strong><span class="ellipsis">${m.preview}</span></button>`)}</div>
@@ -957,3 +956,5 @@ function duplicatesPage(s,v) {
 function contactHistoryPage(s,v) {
  return html`<main class="contacts"><div class="contacts-scroll"><div class="duplicate-workbench"><header class="duplicates-head">${when(s.mobile,()=>html`<button class="icon-btn mobile-only" data-on-click="openDrawer" aria-label="Ouvrir le menu">${icon('lines')}</button>`)}<div><p class="duplicates-eyebrow">CONTACTS · ${v.profile.name}</p><h1>Liens et fusions</h1><p>Les rapprochements que tu as validés restent enregistrés.</p></div></header><p class="muted duplicate-note">Les fiches sources, emails et téléphones restent attachés à leur compte. L’historique conserve les fusions et leurs annulations, y compris après redémarrage ou réimportation du carnet.</p>${when(s.contactHistoryError,()=>html`<p role="alert" class="duplicate-error">${s.contactHistoryError}</p>`)}${s.contactHistory?html`<div class="saved-links">${s.contactHistory.map(e=>html`<article class="duplicate-card saved-link"><div><small>${e.scope_name} · ${new Date(e.created_at).toLocaleString('fr-FR')}</small><h3>${e.source_name} → ${e.target_name}</h3><small>${e.sourceProfiles.join(' · ')} → ${e.targetProfiles.join(' · ')}</small><p>${e.undone_at?'Fusion annulée le '+new Date(e.undone_at).toLocaleString('fr-FR'):e.kind==='unified'?'Lien dans la vue unifiée · comptes d’origine conservés':'Fusion enregistrée dans le profil d’origine'}</p></div>${when(e.canUndo,()=>html`<button class="btn btn-ghost" data-on-click="undoSavedMerge" data-id="${e.id}" ${raw(s.historyBusy || s.offline?'disabled':'')}>Annuler cette fusion</button>`)}${when(!e.available,()=>html`<small>Historique conservé · source retirée ou modifiée</small>`)}</article>`)}</div>${when(!s.contactHistory.length,()=>html`<div class="duplicates-empty"><h2>Aucune fusion enregistrée dans cette vue</h2><p>Les prochaines fusions validées apparaîtront ici.</p></div>`)}`:html`<p role="status">Chargement de l’historique…</p>`}</div></div></main>`;
 }
+
+function groupDialog(s,v){return html`<div class="overlay"><section class="dialog group-dialog" role="dialog" aria-modal="true" aria-label="Groupe de contacts"><header class="composer-head"><h3 class="grow">${s.groupEditor==='new'?'Créer un groupe':'Gérer le groupe'}</h3><button class="close-btn" data-on-click="closeGroup" aria-label="Fermer le groupe">×</button></header><div class="dialog-body"><p class="muted">${v.profile.name} · Vous choisissez les personnes de ce groupe. Les carnets Google et Outlook restent inchangés.</p><label>Nom du groupe<input class="input" data-autofocus value="${s.groupName}" data-on-input="groupName" maxlength="80" placeholder="Famille, équipe, investisseurs…"></label><p class="muted">Ajoutez ou retirez les membres depuis leur fiche contact. Les appartenances sont conservées lors des liaisons et peuvent être retirées.</p><button class="btn btn-brand" data-on-click="saveGroup" ${raw(s.groupBusy || !s.groupName.trim()?'disabled':'')}>Enregistrer le groupe</button>${when(s.groupEditor!=='new',()=>html`<h4>Membres du groupe</h4><input class="input" type="search" aria-label="Rechercher des membres" placeholder="Rechercher une personne…" value="${s.groupQuery}" data-on-input="groupQuery"><div class="group-member-list">${v.contactsMine.filter(c=>!s.groupQuery.trim() || (c.name+' '+c.identities.map(i=>i.value).join(' ')).toLocaleLowerCase().includes(s.groupQuery.trim().toLocaleLowerCase())).map(c=>{const on=(s.data.personGroups || []).find(g=>g.id===s.groupEditor)?.members.includes(c.id);return html`<button class="group-member-row" role="checkbox" aria-checked="${!!on}" data-on-click="toggleGroupMember" data-group="${s.groupEditor}" data-id="${c.id}" data-on="${!on}" ${raw(s.groupBusy?'disabled':'')}><span>${on?'✓':'＋'}</span><strong>${c.name}</strong></button>`;})}</div><button class="btn btn-ghost" data-on-click="closeGroup">Terminer</button>`)}</div></section></div>`;}

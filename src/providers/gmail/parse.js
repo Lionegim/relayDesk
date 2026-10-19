@@ -1,6 +1,5 @@
 import {parseAddressList} from '../../mail/mime.js';
-// Conversion d'une conversation Gmail (format=full) en ligne de messages Relay. Les corps restent en texte brut :
-// le HTML est réduit en texte, jamais rendu.
+// Plain text records for indexing/AI. HTML is sanitized separately for display.
 import { triageEmail } from '../../triage.js';
 
 const MAX_BODY = 20000;
@@ -125,3 +124,5 @@ export function threadToRecord(thread, { ownEmail, labelNames = {}, preferredLab
     ...triageEmail({ labels, headers: h }),
   };
 }
+
+export function bodyHtml(msg) {const part=findPart(msg.payload,'text/html');return part?decodeData(part.body.data,(part.headers || []).find(h=>h.name.toLowerCase()==='content-type')?.value):null;}

@@ -81,14 +81,14 @@ export function createOutlookSync({ store, vault, oauth, fetchImpl = globalThis.
   }
 
   // Dossiers du compte : identifiants système et dossiers personnels (chemins « Parent/Enfant »).
-  async function folderMap(graph,depthLimit=MAX_FOLDER_DEPTH) {
+  async function folderMap(graph,depthLimit=MAX_FOLDER_DEPTH,accountId,live) {
     const visited=new Set();
     const known = {};
     for (const name of WELL_KNOWN) {
       try { known[name] = (await graph.wellKnown(name)).id; } catch (e) { if (e.code !== 'not_found') throw e; }
     }
     const systemIds = new Set(Object.values(known));
-    const user = {};
+    const user = {},tree=[];
     // Les dossiers système ne sont jamais des dossiers Relay, mais leurs sous-dossiers personnels le sont
     // (ex. « Boîte de réception/Projet »), sauf sous les dossiers ignorés (corbeille, indésirables…).
     const skippedIds = new Set(SKIPPED.map(n => known[n]).filter(Boolean));
@@ -98,13 +98,15 @@ export function createOutlookSync({ store, vault, oauth, fetchImpl = globalThis.
         if(visited.size>10000)throw new HttpError(409,'Trop de dossiers Outlook pour cet import.','folder_limit');
         if (skippedIds.has(f.id)) continue;
         const path = prefix ? `${prefix}/${f.displayName}` : f.displayName;
-        if (!systemIds.has(f.id)) user[f.id] = path;
+        if (!systemIds.has(f.id)) {user[f.id] = path;tree.push({externalId:f.id,parentId:f.parentFolderId,name:f.displayName,path});}
         if (depth < depthLimit && f.childFolderCount) await walk((await graph.childFolders(f.id)).value || [], path, depth + 1);
       }
     };
     await walk((await graph.folders()).value || [], '', 1);
+    if(!live())throw gone();
+    store.syncProviderFolders(accountId,tree);
     return {
-      inbox: known.inbox, archive: known.archive, known, user,
+      inbox: known.inbox, archive: known.archive, known, user, tree,
       skip: new Set(SKIPPED.map(n => known[n]).filter(Boolean)),
       // Suivis par delta : tout sauf brouillons et boîte d'envoi (corbeille et indésirables pour voir les suppressions).
       tracked: [...new Set([known.inbox, known.archive, known.sentitems, known.deleteditems, known.junkemail, ...Object.keys(user)].filter(Boolean))],
@@ -113,6 +115,7 @@ export function createOutlookSync({ store, vault, oauth, fetchImpl = globalThis.
 
   async function applyConversation(accountId, c, folders, conversationId, ids) {
     const messages = await c.graph.conversation(conversationId);
+    if(!c.live())throw gone();
     if (!c.live()) throw gone();
     for (const [id, conv] of ids) if (conv === conversationId) ids.delete(id);
     for (const m of messages) if (m.id) ids.set(m.id, conversationId);
@@ -151,7 +154,7 @@ export function createOutlookSync({ store, vault, oauth, fetchImpl = globalThis.
       const me = await c.graph.me();
       c.email = String(me.mail || me.userPrincipalName || '').toLowerCase() || null;
     }
-    const folders = await folderMap(c.graph);
+    const folders = await folderMap(c.graph,Infinity,accountId,c.live);
     const since = new Date(Date.now() - days * 86400000).toISOString();
     // Curseurs pris avant l'import : un changement pendant l'import sera revu au passage suivant.
     const changed = new Set(), links = {}, ids = new Map();
@@ -175,7 +178,7 @@ export function createOutlookSync({ store, vault, oauth, fetchImpl = globalThis.
     const cursor = readCursor(state?.history_id);
     if (!cursor) return initialSync(accountId);
     const c = client(accountId);
-    const folders = await folderMap(c.graph);
+    const folders = await folderMap(c.graph,Infinity,accountId,c.live);
     const since = new Date(Date.now() - (state.window_days || 30) * 86400000).toISOString();
     const changed = new Set(), links = {}, ids = new Map(Object.entries(cursor.ids || {}));
     try {
@@ -268,7 +271,7 @@ export function createOutlookSync({ store, vault, oauth, fetchImpl = globalThis.
     },
     historyPage: (accountId,cursor,guard=()=>true) => serial(accountId,async()=>{
       const c=client(accountId);if(!guard())throw gone();
-      const state=cursor || {folders:(await folderMap(c.graph,Infinity)).tracked,index:0,link:null,links:{}};
+      const state=cursor || {folders:(await folderMap(c.graph,Infinity,accountId,()=>c.live() && guard())).tracked,index:0,link:null,links:{}};
       if(!c.live() || !guard())throw gone();
       if(state.index>=state.folders.length)return {ids:[],next:null};
       const folder=state.folders[state.index];let page;
@@ -290,7 +293,7 @@ export function createOutlookSync({ store, vault, oauth, fetchImpl = globalThis.
     historyApply: (accountId,ids,guard=()=>true) => serial(accountId,async()=>{
       const c=client(accountId);if(!guard())throw gone();
       let cached=archiveMetadata.get(accountId);
-      if(!cached || cached.client!==c || cached.expires<Date.now()){cached={client:c,expires:Date.now()+300000,value:await folderMap(c.graph,Infinity)};archiveMetadata.set(accountId,cached);}
+      if(!cached || cached.client!==c || cached.expires<Date.now()){cached={client:c,expires:Date.now()+300000,value:await folderMap(c.graph,Infinity,accountId,()=>c.live() && guard())};archiveMetadata.set(accountId,cached);}
       const folders=cached.value,live=readCursor(store.getSync(accountId)?.history_id) || {links:{},ids:{}};
       const mapping=new Map(Object.entries(live.ids || {})),scoped={...c,live:()=>c.live() && guard()};
       for(const id of ids){if(!scoped.live())throw gone();await applyConversation(accountId,scoped,folders,id,mapping);}

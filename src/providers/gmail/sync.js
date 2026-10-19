@@ -70,9 +70,13 @@ export function createGmailSync({ store, vault, oauth, fetchImpl = globalThis.fe
   }
   const actions = createGmailActions({ store, client: id => client(id).gmail, permissions });
 
-  async function labelNames(gmail) {
+  async function labelNames(gmail,accountId,live) {
     const { labels = [] } = await gmail.labels();
-    return Object.fromEntries(labels.filter(l => l.type === 'user').map(l => [l.id, l.name]));
+    const names=Object.fromEntries(labels.filter(l => l.type === 'user').map(l => [l.id, l.name]));
+    if(!live())throw gone();
+    const entries=Object.entries(names),byPath=new Map(entries.map(([id,path])=>[path,id]));
+    store.syncProviderFolders(accountId,entries.map(([externalId,path])=>({externalId,path,name:path.split('/').at(-1),parentId:byPath.get(path.split('/').slice(0,-1).join('/')) || null})));
+    return names;
   }
 
   async function applyThread(accountId, { gmail, email, live }, names, threadId) {
@@ -101,7 +105,7 @@ export function createGmailSync({ store, vault, oauth, fetchImpl = globalThis.fe
     store.setSync(accountId, { status: 'syncing', total: 0, done: 0, error: null });
     // historyId relevé avant la liste : aucun changement ne passe entre les deux.
     const profile = await gmail.profile();
-    const names = await labelNames(gmail);
+    const names = await labelNames(gmail,accountId,c.live);
     const ids = [];
     let pageToken;
     do {
@@ -144,8 +148,8 @@ export function createGmailSync({ store, vault, oauth, fetchImpl = globalThis.fe
       if (e.code === 'not_found') return initialSync(accountId);
       throw e;
     }
+    const names = await labelNames(gmail,accountId,c.live);
     if (changed.size) {
-      const names = await labelNames(gmail);
       await pool([...changed], CONCURRENCY, id => applyThread(accountId, c, names, id));
     }
     if (!c.live()) throw gone();
@@ -232,7 +236,7 @@ export function createGmailSync({ store, vault, oauth, fetchImpl = globalThis.fe
     historyApply: (accountId,ids,guard=()=>true) => serial(accountId,async()=>{
       const c=client(accountId);if(!guard())throw gone();
       let cached=archiveMetadata.get(accountId);
-      if(!cached || cached.client!==c || cached.expires<Date.now()){cached={client:c,expires:Date.now()+300000,value:await labelNames(c.gmail)};archiveMetadata.set(accountId,cached);}
+      if(!cached || cached.client!==c || cached.expires<Date.now()){cached={client:c,expires:Date.now()+300000,value:await labelNames(c.gmail,accountId,()=>c.live() && guard())};archiveMetadata.set(accountId,cached);}
       const names=cached.value;
       const scoped={...c,live:()=>c.live() && guard()};
       for(const id of ids){if(!scoped.live())throw gone();await applyThread(accountId,scoped,names,id);}

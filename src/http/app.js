@@ -1,3 +1,4 @@
+import {readMailDisplay} from '../mail/display.js';
 import {importAddressBook} from '../contacts/import.js';
 import http from 'node:http';
 import { readFile } from 'node:fs/promises';
@@ -140,6 +141,11 @@ export function createApp({ store, ai, ownerName, gmail = null, providers = {}, 
 
   // [méthode, motif, gestionnaire(params, body)]
   const routes = [
+    ['POST', /^\/api\/messages\/([^/]+)\/display$/, ([id]) => readMailDisplay({store,mail,id:messageId(id)})],
+    ['GET', /^\/api\/profiles\/([^/]+)\/network$/, ([p],body,session,url) => store.contactNetwork(p,{days:Number(url.searchParams.get('days') || 90)})],
+    ['POST', /^\/api\/profiles\/([^/]+)\/person-groups$/, ([p],body) => store.savePersonGroup(p,body)],
+    ['PATCH', /^\/api\/profiles\/([^/]+)\/person-groups\/([^/]+)$/, ([p,id],body) => store.savePersonGroup(p,body,id)],
+    ['PUT', /^\/api\/profiles\/([^/]+)\/person-groups\/([^/]+)\/members\/([^/]+)$/, ([p,id,person],body) => store.personGroupMembership(p,id,person,body.on)],
     ['GET', /^\/api\/ops\/health$/, () => operations?operations():({status:'unconfigured'})],
     ['GET', /^\/api\/health$/, () => health ? health() : auth ? ({ok:true}) : ({ ok: true, ai: { provider: 'mistral', configured: ai.configured, model: ai.model } })],
     ['GET', /^\/api\/state$/, (_,body,session,url) => {
@@ -244,7 +250,7 @@ export function createApp({ store, ai, ownerName, gmail = null, providers = {}, 
       if(push && await push.handle(req,res,url,readJson,send))return;
       if(!auth && pathname==='/auth/session' && req.method==='GET') return send(res,200,{enabled:false,authenticated:false});
       // Ressources publiques fixes : uniquement du code et des images génériques, jamais index.html ni contenu privé.
-      const publicLogin=['/login','/js/login.js','/js/app.js','/js/api.js','/js/views.js','/js/dom.js','/js/constants.js','/js/pwa.js','/js/live.js','/styles.css','/sw.js','/manifest.webmanifest','/offline.html','/fonts/inter-latin-wght-normal.woff2','/fonts/jetbrains-mono-latin-wght-normal.woff2'].includes(pathname) || /^\/icons\/[a-zA-Z0-9_-]+\.(png|svg)$/.test(pathname);
+      const publicLogin=['/login','/js/login.js','/js/app.js','/js/api.js','/js/views.js','/js/dom.js','/js/constants.js','/js/pwa.js','/js/live.js','/js/network.js','/styles.css','/sw.js','/manifest.webmanifest','/offline.html','/fonts/inter-latin-wght-normal.woff2','/fonts/jetbrains-mono-latin-wght-normal.woff2'].includes(pathname) || /^\/icons\/[a-zA-Z0-9_-]+\.(png|svg)$/.test(pathname);
       const publicHealth=['/api/health','/api/ready'].includes(pathname) && req.method==='GET';
       if(pathname==='/api/ready' && req.method==='GET') {const value=readiness?readiness():{ok:true};return send(res,value.ok?200:503,{ok:!!value.ok});}
       let session=null;

@@ -417,7 +417,7 @@ test('service worker : navigation hors ligne vers la page générique, anciennes
 });
 
 test('confidentialité : aucun contenu dans le stockage du navigateur', () => {
-  for (const file of ['js/app.js', 'js/api.js', 'js/views.js', 'js/dom.js', 'js/constants.js', 'js/pwa.js', 'js/login.js', 'sw.js']) {
+  for (const file of ['js/app.js', 'js/api.js', 'js/views.js', 'js/dom.js', 'js/constants.js', 'js/pwa.js', 'js/login.js', 'js/network.js', 'sw.js']) {
     const code = read(file);
     assert.doesNotMatch(code, /indexedDB|sessionStorage/, file);
     // Un seul point d'écriture, générique (préférences d'affichage), dans app.js.
@@ -425,9 +425,10 @@ test('confidentialité : aucun contenu dans le stockage du navigateur', () => {
     assert.equal(writes, file === 'js/app.js' ? 1 : 0, file);
     if (writes) assert.ok(code.includes('localStorage.setItem(k, String(v))'), file);
   }
-  // Préférences locales seulement : largeur de liste et identifiant de la vue choisie.
+  // Préférences locales seulement : largeur, vue et expansion des dossiers (identifiants, sans contenu).
   assert.match(read('js/app.js'), /const LIST_W_KEY = 'relay\.listW';/);
-  assert.equal((read('js/app.js').match(/storage\.set\(/g) || []).length, 3);
+  assert.equal((read('js/app.js').match(/storage\.set\(/g) || []).length, 4);
+  assert.match(read('js/app.js'), /storage\.set\('relay\.folderExpansion',JSON\.stringify\(collapsed\)\)/);
 });
 
 // ---------- Correctifs de revue : nouveau message, champs du brouillon, aperçu obsolète, hors ligne ----------

@@ -514,3 +514,10 @@ test('libellés importés : renommage externe sans renommer un dossier local par
   store.ensureLabelFolder(second.id, 'Label_autre', 'Nom différent dans le second compte');
   assert.equal(store.snapshot().folders.find(f => f.id === message.folderId).name, 'Clients renommés');
 });
+
+test('folder metadata imports empty labels and refreshes renamed/nested folders without message changes', async()=>{
+ const {store,g,sync,db}=setup();g.threads={};g.labels=[{id:'parent',name:'Projects',type:'user'},{id:'child',name:'Projects/Empty',type:'user'}];
+ const {account,job}=sync.connect({profileId:'perso',name:'Empty test',windowDays:7,refreshToken:'fictional',email:'jh@gmail.com'});await job;
+ let folders=store.snapshot().folders,child=folders.find(f=>f.name==='Empty'),parent=folders.find(f=>f.name==='Projects');assert.equal(child.parent,parent.id);assert.equal(child.accountId,account.id);
+ g.labels[1].name='Projects/Renamed';await sync.syncNow(account.id);folders=store.snapshot().folders;assert.equal(folders.find(f=>f.id===child.id).name,'Renamed');assert.equal(store.countThreads(account.id).threads,0);await sync.stop();db.close();
+});
