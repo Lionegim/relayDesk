@@ -15,6 +15,9 @@ function whenLabel(ms) {
 }
 const timeLabel = m => m.time ?? whenLabel(m.sortAt ?? m.at);
 const icon = name => raw(ICON[name]);
+const channelMark = channel => channel === 'whatsapp'
+  ? html`<img class="wa-brand-glyph" src="/icons/whatsapp-glyph-green.svg" width="24" height="24" alt="" aria-hidden="true">`
+  : CH[channel].mark;
 
 export function renderApp(s, v) {
   const mail = s.app === 'mail', mobile = !!s.mobile;
@@ -103,7 +106,7 @@ function sidebar(s, v) {
         ${v.profile.accounts.map(a => html`
           <div style="position:relative">
           <button class="side-item hov" data-on-click="openAccount" data-name="${a.name}" title="${a.status}">
-            <span class="acct-mark" style="background:${CH[a.channel].tint};color:${CH[a.channel].ink}">${CH[a.channel].mark}</span>
+            <span class="acct-mark" style="background:${CH[a.channel].tint};color:${CH[a.channel].ink}">${channelMark(a.channel)}</span>
             <span class="grow ellipsis">${a.name}</span>
             <span class="acct-dot" style="background:${ACCOUNT_COLORS[a.c] || ACCOUNT_COLORS.muted}"></span>
           </button>
@@ -397,7 +400,7 @@ function whatsappView(s, v, sel) {
         <span class="avatar wa-avatar">${sel.initials}</span>
         <div class="wa-who">
           <strong class="ellipsis">${name}${full?.group ? ' · Groupe' : ''}</strong>
-          <span class="ellipsis"><span class="wa-badge">WhatsApp</span>${sel.account !== 'WhatsApp' ? sel.account : ''}${sel.handle ? ` · ${sel.handle}` : ''}${folderName ? ` · ${folderName}` : ''}</span>
+          <span class="ellipsis"><span class="wa-badge">${channelMark('whatsapp')}WhatsApp</span>${sel.account !== 'WhatsApp' ? sel.account : ''}${sel.handle ? ` · ${sel.handle}` : ''}${folderName ? ` · ${folderName}` : ''}</span>
         </div>
         <div class="wa-head-actions">
           <button class="link-btn" data-on-click="aiClassify">Classer</button>
@@ -571,7 +574,7 @@ function contactsPage(s, v) {
                 <div class="cell-channels">
                   ${CONTACT_CHANNELS.map(k => {
                     const has = c.ch.includes(k);
-                    return html`<span class="ch-mark" title="${CH[k].label}" style="background:${has ? CH[k].tint : 'var(--muted)'};color:${has ? CH[k].ink : 'color-mix(in oklab, var(--muted-foreground) 55%, transparent)'}">${CH[k].mark}</span>`;
+                    return html`<span class="ch-mark" title="${CH[k].label}" style="background:${has ? CH[k].tint : 'var(--muted)'};color:${has ? CH[k].ink : 'color-mix(in oklab, var(--muted-foreground) 55%, transparent)'}">${channelMark(k)}</span>`;
                   })}
                 </div>
                 <span class="cell-last">${c.last}</span>
@@ -621,7 +624,7 @@ function connectWizard(s) {
             <div style="display:flex;flex-direction:column;gap:8px">
               ${Object.entries(s.data.services).map(([k, sv]) => html`
                 <button class="service" data-on-click="pickService" data-svc="${k}" ${raw(sv.disabled ? 'disabled' : '')}>
-                  <span class="service-mark" style="background:${CH[sv.ch].tint};color:${CH[sv.ch].ink}">${CH[sv.ch].mark}</span>
+                  <span class="service-mark" style="background:${CH[sv.ch].tint};color:${CH[sv.ch].ink}">${channelMark(sv.ch)}</span>
                   <span style="display:flex;flex-direction:column;gap:2px;flex:1">
                     <span style="font-size:14px;font-weight:600">${sv.name}</span>
                     <span class="muted" style="font-size:12px">${sv.note}</span>
@@ -633,9 +636,9 @@ function connectWizard(s) {
 
           ${when(d && c.step !== 'pick', () => html`
             <div class="svc-head">
-              <span class="service-mark" style="background:${CH[d.ch].tint};color:${CH[d.ch].ink}">${CH[d.ch].mark}</span>
+              ${when(d.ch !== 'whatsapp', () => html`<span class="service-mark" style="background:${CH[d.ch].tint};color:${CH[d.ch].ink}">${channelMark(d.ch)}</span>`)}
               <div style="display:flex;flex-direction:column;gap:2px">
-                <h3>${d.name}</h3>
+                <h3>${d.ch === 'whatsapp' ? html`<img class="wa-brand-wordmark" src="/icons/whatsapp-wordmark-black.svg" width="156" height="36" alt="WhatsApp">` : d.name}</h3>
                 <span class="muted" style="font-size:13px">${c.step === 'done' ? `Connecté au profil ${profileName(c.profile)}` : d.note}</span>
               </div>
             </div>`)}
