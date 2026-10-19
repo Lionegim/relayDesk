@@ -44,7 +44,7 @@ export function createHistoryWindows(db,changed=()=>{}) {
    });changed();return {settings:this.describe(id),cleanup,changed:true};
   },
   prune(id){const p=policy(id);return prune(id,p.days);},
-  compact(){try{db.exec('PRAGMA wal_checkpoint(TRUNCATE)');db.exec('VACUUM');db.exec('PRAGMA wal_checkpoint(TRUNCATE)');return true;}catch{return false;}},
+  compact(){const before=q('PRAGMA temp_store').get().temp_store;try{db.exec('PRAGMA temp_store=MEMORY');db.exec('PRAGMA wal_checkpoint(TRUNCATE)');db.exec('VACUUM');db.exec('PRAGMA wal_checkpoint(TRUNCATE)');return true;}catch{return false;}finally{db.exec(`PRAGMA temp_store=${before}`);}},
   needsCompaction(){return q('PRAGMA freelist_count').get().freelist_count>128;},
   // Provider payloads are filtered before indexing, storage, AI learning and display.
   gmail(id,thread){const edge=cutoff(id);if(!edge)return thread;const filtered={...thread,messages:(thread.messages || []).filter(m=>Number(m.internalDate)>=edge)};if(!filtered.messages.some(m=>!(m.labelIds || []).some(l=>['DRAFT','TRASH','SPAM'].includes(l))) && (thread.messages || []).some(m=>!(m.labelIds || []).some(l=>['DRAFT','TRASH','SPAM'].includes(l))) && q('SELECT 1 FROM messages WHERE account_id=? AND external_id=? AND draft_saved_at IS NOT NULL').get(id,thread.id))return thread;return filtered;},
