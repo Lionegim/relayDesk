@@ -8,7 +8,7 @@ export function createSessionAccess({clock=Date.now}={}) {
  const approvals=new Map(),oauth=new Map(),limits=new Map();
  const prune=map=>{for(const [key,value] of map) if(value.expires<=clock()) map.delete(key);};
  const bounded=(map,key,value)=>{prune(map);if(map.size>=1000) map.delete(map.keys().next().value);map.set(key,value);};
- const fingerprint=input=>createHash('sha256').update(JSON.stringify({...readComposeInput(input),attachmentId:input.attachmentId ?? null,replyTo:input.replyTo ?? null})).digest('hex');
+ const fingerprint=input=>createHash('sha256').update(JSON.stringify({...readComposeInput(input),attachmentId:input.attachmentId ?? null,replyTo:input.replyTo ?? null,mentions:input.mentions ?? []})).digest('hex');
  return {
   limit(session,path,method) {
    const sensitive=!['GET','HEAD'].includes(method) && /\/(send|whatsapp-reaction|links|start|disconnect)(\/|$)/.test(path);

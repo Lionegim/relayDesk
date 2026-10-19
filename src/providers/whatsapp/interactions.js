@@ -29,7 +29,7 @@ export function createWhatsAppInteractions(db,changed) {
  return {
   waInteractionTarget(account,chat,id){const m=get(account,chat,replyId(id));if(!m)throw new HttpError(409,'Ce message n’est plus disponible.','quote_unavailable');return m;},
   waQuote:quote,
-  waMessageDetails(account,chat,m){return {waId:m.msg_id,canInteract:!groupJid(chat) || !!m.from_me || !!directJid(m.author_jid),quote:quote(account,chat,m.reply_to),reactions:db.prepare("SELECT emoji,count(*) count,MAX(actor='me') mine FROM whatsapp_reactions WHERE account_id=? AND chat_jid=? AND msg_id=? AND emoji<>'' GROUP BY emoji ORDER BY MIN(ts),emoji").all(account,chat,m.msg_id).map(r=>({...r,mine:!!r.mine}))};},
+  waMessageDetails(account,chat,m){return {mentions:JSON.parse(m.mentions || '[]').map(v=>({...v,name:v.name || db.prepare('SELECT name FROM whatsapp_chats WHERE account_id=? AND chat_jid=?').get(account,v.jid)?.name || phoneOf(v.jid) || 'Participant'})),waId:m.msg_id,canInteract:!groupJid(chat) || !!m.from_me || !!directJid(m.author_jid),quote:quote(account,chat,m.reply_to),reactions:db.prepare("SELECT emoji,count(*) count,MAX(actor='me') mine FROM whatsapp_reactions WHERE account_id=? AND chat_jid=? AND msg_id=? AND emoji<>'' GROUP BY emoji ORDER BY MIN(ts),emoji").all(account,chat,m.msg_id).map(r=>({...r,mine:!!r.mine}))};},
   waApplyReaction(account,event){
    if(!event || !get(account,event.chatJid,event.msgId))return false;
    const {chatJid:chat,msgId:id,actor,emoji,ts}=event;

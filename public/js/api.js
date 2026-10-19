@@ -59,6 +59,7 @@ export const api = {
   syncProgress: accountId => call('GET', `/api/accounts/${accountId}/sync`),
   syncNow: accountId => call('POST', `/api/accounts/${accountId}/sync`, {}),
   disconnectAccount: accountId => call('POST', `/api/accounts/${accountId}/disconnect`, {}),
+  whatsAppParticipants:id=>call('GET',`/api/messages/${id}/whatsapp-participants`),
   whatsAppInteractions:(id,ids)=>call('POST',`/api/messages/${id}/whatsapp-interactions`,{ids}),
   reactWhatsApp:(id,input)=>call('POST',`/api/messages/${id}/whatsapp-reaction`,input),
   previewSend: (id, input) => call('POST', `/api/messages/${id}/send/preview`, input),

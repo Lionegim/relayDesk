@@ -100,3 +100,41 @@ test('WhatsApp group UI allows quoted reply and reaction while preserving confir
  await u.c.act.waReact({id:'g1',emoji:'👍'});assert.equal(sent,1);
  s.confirm={kind:'send'};u.c.act.waReplyCancel();await u.c.act.waReact({id:'g1',emoji:'👍'});assert.equal(sent,1);assert.equal(u.c.inspect().draftMeta[42].localReplyTo,'g1');
 });
+
+test('group @ suggestions support keyboard selection and keep mention bindings aligned through edits',async()=>{
+ const u=await ui(),s=u.c.inspect(),m={id:42,p:'anove',accountId:1,channel:'whatsapp',group:true,waId:'g1',sortAt:100,count:1,body:'Bonjour',trail:[],draftVersion:1};
+ s.data.messages.push(m);s.selectedId=42;s.details[42]=m;let calls=0;
+ u.api.whatsAppParticipants=async()=>{calls++;return {scope:undefined,members:[{jid:'33611111111@s.whatsapp.net',name:'Alice',phone:'+33611111111',token:'@33611111111'},{jid:'33622222222@s.whatsapp.net',name:'Bob',phone:'+33622222222',token:'@33622222222'}]};};
+ const type=value=>u.c.act.draft({}, {target:{value,selectionStart:value.length,selectionEnd:value.length}});
+ type('@');await tick();assert.equal(calls,1);assert.equal(u.c.inspect().waMention.query,'');
+ const editor={value:'@',focus(){},setSelectionRange(){}};u.c.document.querySelector=()=>editor;
+ let prevented=0;u.c.act.waMentionKeys({}, {key:'ArrowDown',preventDefault(){prevented++;}});u.c.act.waMentionKeys({}, {key:'Enter',preventDefault(){prevented++;}});
+ assert.equal(prevented,2);assert.equal(editor.value,'@33622222222 ','focused textarea receives the inserted token');assert.equal(u.c.inspect().drafts[42],'@33622222222 ');assert.equal(u.c.inspect().draftMeta[42].localMentions[0].name,'Bob');
+ type('😊 '+u.c.inspect().drafts[42]);assert.equal(u.c.inspect().draftMeta[42].localMentions[0].start,3);
+ type('😊 @3362222222 ');assert.equal(u.c.inspect().draftMeta[42].localMentions.length,0,'edited token loses notification binding');
+ type('@ali');await tick();assert.equal(calls,1,'participant lookup cached while typing');u.c.act.waMentionSelect({jid:'33611111111@s.whatsapp.net'});assert.equal(u.c.inspect().draftMeta[42].localMentions[0].name,'Alice');
+ s.ai={forId:42,mode:'draft',result:{text:'Réponse IA'},loading:false};u.c.act.aiInsert();assert.equal(u.c.inspect().draftMeta[42].localMentions.length,0,'AI replacement never inherits old notification recipients');
+});
+
+test('group suggestions never bind across conversation changes or while preview is locked',async()=>{
+ const u=await ui(),s=u.c.inspect(),m={id:42,p:'anove',accountId:1,channel:'whatsapp',group:true,waId:'g1',sortAt:100,count:1,body:'Bonjour',trail:[]};s.data.messages.push(m);s.selectedId=42;s.details[42]=m;
+ let resolve;u.api.whatsAppParticipants=()=>new Promise(r=>resolve=r);u.c.act.draft({}, {target:{value:'@',selectionStart:1,selectionEnd:1}});
+ s.selectedId=43;resolve({scope:undefined,members:[{jid:'33611111111@s.whatsapp.net',name:'Alice',token:'@33611111111'}]});await tick();u.c.act.waMentionSelect({jid:'33611111111@s.whatsapp.net'});assert.equal(u.c.inspect().drafts[43],undefined);
+ s.selectedId=42;s.confirm={kind:'send'};u.c.act.waMentionSelect({jid:'33611111111@s.whatsapp.net'});assert.equal(u.c.inspect().drafts[42],'@');
+});
+test('extending a selected numeric mention drops binding; replaced account never displays old suggestions',async()=>{
+ const u=await ui(),s=u.c.inspect(),m={id:42,p:'anove',accountId:1,channel:'whatsapp',group:true,waId:'g1',sortAt:100,count:1,body:'Bonjour',trail:[],participantScope:'A',conversationIdentity:'old'};s.data.messages.push(m);s.selectedId=42;s.details[42]=m;
+ const member={jid:'33611111111@s.whatsapp.net',name:'Private old name',token:'@33611111111'};let resolve;u.api.whatsAppParticipants=()=>new Promise(r=>resolve=r);
+ const type=value=>u.c.act.draft({}, {target:{value,selectionStart:value.length,selectionEnd:value.length}});
+ type('@');s.details[42]={...m,participantScope:'B',conversationIdentity:'new'};resolve({scope:'A',members:[member]});await tick();assert.equal(u.c.inspect().waParticipants[42],undefined);
+ s.waParticipants[42]={scope:'A',conversationIdentity:'old',members:[member],loadedAt:Date.now()};u.c.act.waMentionSelect({jid:member.jid});assert.equal(u.c.inspect().drafts[42],'@','stale member cannot be picked');
+ s.waParticipants[42]={scope:'B',conversationIdentity:'new',members:[member],loadedAt:Date.now()};u.c.act.waMentionSelect({jid:member.jid});
+ type('@336111111119');assert.equal(u.c.inspect().draftMeta[42].localMentions.length,0);
+});
+test('late detail read cannot restore old participant scope after same-id conversation replacement',async()=>{
+ const u=await ui(),s=u.c.inspect(),old={id:42,p:'anove',accountId:1,channel:'whatsapp',group:true,conversationIdentity:'old',participantScope:'scope-old',sortAt:100,count:1,trail:[],body:'Old private body'};
+ s.data.messages.push(old);s.selectedId=42;s.details[42]={...old,refreshing:true};
+ let resolve,calls=0;u.api.message=()=>{calls++;return calls===1?new Promise(r=>resolve=r):Promise.resolve({...old,conversationIdentity:'new',participantScope:'scope-new',body:'New conversation'});};
+ const pending=u.c.refreshDetails(42);const fresh=structuredClone(s.data);fresh.messages[0]={...old,conversationIdentity:'new'};u.c.refreshData(fresh);resolve(old);await pending;await tick();
+ assert.equal(u.c.inspect().details[42].conversationIdentity,'new');assert.equal(u.c.inspect().details[42].body,'New conversation');
+});

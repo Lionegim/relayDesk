@@ -98,3 +98,11 @@ La citation est résolue uniquement dans la conversation et le compte conservés
 
 
 Dans les groupes, la citation et la réaction incluent l’identité WhatsApp du participant d’origine ; le navigateur ne peut pas la fournir ni remplacer le groupe destinataire. Si l’auteur d’un ancien message n’est pas connu, Relay refuse de le citer ou d’y réagir plutôt que d’inventer une identité. Le groupe est explicitement nommé dans l’aperçu. Les citations de ses propres messages utilisent l’identité de l’appareil lié. Les restrictions du groupe appliquées par WhatsApp restent en vigueur ; un échec ne déclenche aucun nouvel essai automatique.
+
+### Mentions de participants
+
+Dans un groupe, taper `@` puis un nom ou un numéro ouvre les suggestions des participants actuels. Toucher une personne, ou utiliser les flèches puis Entrée/Tabulation, insère sa mention ; Échap ferme la liste. Le texte utilise l’identifiant natif WhatsApp, avec une pastille nominative pour savoir qui sera notifié. Les messages affichés dans le fil remplacent les identifiants sélectionnés par les noms disponibles.
+
+Les mentions sont enregistrées avec le brouillon. Modifier un identifiant retire sa liaison de notification ; retirer sa pastille enlève la mention. Une proposition IA qui remplace le texte ne récupère jamais silencieusement les anciennes personnes mentionnées : sélectionnez-les dans le nouveau texte. L’aperçu exact affiche les personnes choisies ainsi que le texte natif transmis. Toute modification des mentions invalide l’approbation ; les réponses IA exigent toujours la confirmation de cet aperçu.
+
+Les suggestions proviennent des métadonnées authentifiées du groupe, sans appel IA. Le cache privé est limité à 60 secondes et lié au compte et à l’identité non réutilisable de la conversation. L’appartenance des personnes est recontrôlée auprès de WhatsApp avant aperçu et envoi ; une personne partie du groupe, une connexion changée ou une liste indisponible bloque l’envoi mentionné. Les règles de messages éphémères et vue unique restent appliquées. Les mentions natives des anciens messages sont enrichies à la réception d’un rejeu fiable, uniquement si leur texte conservé correspond encore.

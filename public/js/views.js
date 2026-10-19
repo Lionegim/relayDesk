@@ -384,8 +384,8 @@ const isMine = m => m.fromMe === true;
 
 // Chronologie ancien → récent : le fil est stocké du plus récent au plus ancien, le dernier message est `full`.
 function waMessages(sel, full) {
-  const older = [...(full.trail || [])].reverse().map(t => ({ id:t.waId,canInteract:t.canInteract,quote:t.quote,reactions:t.reactions,mine: isMine(t), at: t.at, body: t.body, media:t.media, author: full.group && !isMine(t) ? t.from : null }));
-  return [...older, { id:full.waId,canInteract:full.canInteract,quote:full.quote,reactions:full.reactions,mine: isMine(full), at: full.at ?? sel.sortAt, body: full.failed ? sel.preview : full.body, media:full.media, author: full.group && !isMine(full) ? full.from : null }];
+  const older = [...(full.trail || [])].reverse().map(t => ({ id:t.waId,mentions:t.mentions,canInteract:t.canInteract,quote:t.quote,reactions:t.reactions,mine: isMine(t), at: t.at, body: t.body, media:t.media, author: full.group && !isMine(t) ? t.from : null }));
+  return [...older, { id:full.waId,mentions:full.mentions,canInteract:full.canInteract,quote:full.quote,reactions:full.reactions,mine: isMine(full), at: full.at ?? sel.sortAt, body: full.failed ? sel.preview : full.body, media:full.media, author: full.group && !isMine(full) ? full.from : null }];
 }
 
 function waMedia(media) {
@@ -399,6 +399,11 @@ function waMedia(media) {
 
 function waQuote(quote) {
   return quote?html`<blockquote class="wa-quote"><strong>${quote.author}</strong><span>${quote.body}</span></blockquote>`:'';
+}
+function waMentionText(body,mentions=[]) {
+ const parts=[];let at=0;
+ for(const m of mentions){if(m.start<at || !Number.isInteger(m.end) || body.slice(m.start,m.end)!=='@'+m.jid?.split('@')[0])continue;parts.push(body.slice(at,m.start),html`<span class="wa-mentioned-person" title="${body.slice(m.start,m.end)}">@${m.name || body.slice(m.start+1,m.end)}</span>`);at=m.end;}
+ parts.push(body.slice(at));return parts;
 }
 function waTimeline(msgs,s={},sel={},canSend=false) {
   let prev = null;
@@ -415,7 +420,7 @@ function waTimeline(msgs,s={},sel={},canSend=false) {
           ${when(m.author && !grouped, () => html`<strong class="wa-author">${m.author}</strong>`)}
           ${waQuote(m.quote)}<span class="sr-only">${m.mine ? 'Vous' : 'Reçu'} :</span>
           ${waMedia(m.media)}
-          ${when(!m.media || !['Photo','GIF'].includes(m.body),()=>html`<span class="wa-text">${m.body}</span>`)}
+          ${when(!m.media || !['Photo','GIF'].includes(m.body),()=>html`<span class="wa-text">${waMentionText(m.body,m.mentions)}</span>`)}
           ${when(at !== null, () => html`<time class="wa-time" datetime="${new Date(at).toISOString()}" title="${fullDate(at)}">${timeOf(at)}</time>`)}
         </div>
         ${when(m.id && canSend && m.canInteract!==false,()=>html`<button class="wa-message-action" data-on-click="waMessageMenu" data-id="${m.id}" aria-label="Actions du message du ${fullDate(at)}" aria-expanded="${s.waMessageMenu?.conversationId===sel.id && s.waMessageMenu?.messageId===m.id}" ${raw(s.confirm?'disabled':'')}>${icon('more')}</button>`)}
@@ -428,6 +433,19 @@ function waTimeline(msgs,s={},sel={},canSend=false) {
 // Nom stable du correspondant, même quand le dernier message est sortant (« WhatsApp · Nom »).
 const waName = (sel, full) => (full?.subject || sel.subject || '').replace(/^WhatsApp · /, '').trim() || sel.from.replace(/^Moi \(à (.*)\)$/, '$1');
 
+function waMentionOptions(s,sel) {
+ const q=s.waMention;if(!q || q.id!==sel.id)return [];
+ const query=q.query.normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase(),cache=s.waParticipants?.[sel.id];
+ return (cache?.scope===s.details[sel.id]?.participantScope?cache?.members || []:[]).filter(p=>(p.name+' '+(p.phone||'')+' '+p.token).normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().includes(query)).slice(0,6);
+}
+function waMentionPicker(s,sel) {
+ const q=s.waMention;if(!q || q.id!==sel.id)return '';
+ const options=waMentionOptions(s,sel);
+ return html`<div class="wa-mention-picker"><header><strong>Mentionner dans ce groupe</strong><button data-on-click="waMentionClose" aria-label="Fermer les suggestions">×</button></header>${s.waParticipantsBusy===sel.id?html`<p role="status">Chargement des participants…</p>`:s.waParticipantsError?.[sel.id]?html`<p role="status">${s.waParticipantsError[sel.id]}</p><button class="link-btn" data-on-click="waMentionRetry">Réessayer</button>`:html`<div role="listbox" id="wa-mention-options" aria-label="Participants à mentionner">${options.map((p,i)=>html`<button id="wa-mention-option-${i}" role="option" aria-selected="${i===q.active%Math.max(1,options.length)}" data-on-click="waMentionSelect" data-jid="${p.jid}"><span class="avatar">${p.name.slice(0,1).toUpperCase()}</span><span><strong>${p.name}</strong><small>${p.phone || 'Membre du groupe'}</small></span></button>`)}</div>${when(!options.length,()=>html`<p role="status">Aucun participant correspondant.</p>`)}`}</div>`;
+}
+function waMentionList(mentions,editable=false) {
+ return mentions?.length?html`<div class="wa-selected-mentions" aria-label="Personnes mentionnées">${mentions.map(m=>editable?html`<button data-on-click="waMentionRemove" data-start="${m.start}" aria-label="Retirer la mention de ${m.name}">@ ${m.name}<span aria-hidden="true">×</span></button>`:html`<span>@ ${m.name}${m.phone?' · '+m.phone:''}</span>`)}</div>`:'';
+}
 function whatsappView(s, v, sel) {
   const full = s.details[sel.id];
   const name = waName(sel, full);
@@ -437,6 +455,8 @@ function whatsappView(s, v, sel) {
   const replyTo=s.draftMeta?.[sel.id]?.localReplyTo!==undefined?s.draftMeta[sel.id].localReplyTo:full?.draft?.replyTo;
   const selectedQuote=replyTo?waMessages(sel,full || {trail:[]}).find(m=>m.id===replyTo):null;
   const quote=selectedQuote?{author:selectedQuote.mine?'Vous':selectedQuote.author || name,body:selectedQuote.body}:full?.draft?.quote;
+  const mentionOptions=waMentionOptions(s,sel);
+  const mentions=s.draftMeta?.[sel.id]?.localMentions ?? full?.draft?.mentions ?? [];
   const tooLong = draft.length > WA_MAX;
   const folderName = s.data.folders.find(f => f.id === sel.folderId)?.name;
   const st = draftState(s, v, sel.id, draft);
@@ -476,6 +496,7 @@ function whatsappView(s, v, sel) {
         </div>
       </div>
       <footer class="wa-composer">
+        ${waMentionPicker(s,sel)}${waMentionList(mentions,!s.confirm)}
         ${when(replyTo,()=>html`<div class="wa-reply-banner" role="region" aria-label="Message cité">${waQuote(quote || {author:'Message indisponible',body:'Choisissez un autre message.'})}<button class="icon-btn" data-on-click="waReplyCancel" aria-label="Annuler la réponse au message" ${raw(s.confirm?'disabled':'')}>×</button></div>`)}
         ${draftConflict(s, sel.id)}
         ${when(s.waAttachments?.[sel.id],()=>html`<div class="wa-attachment">${waMedia(s.waAttachments[sel.id])}<div><strong>${s.waAttachments[sel.id].kind==='gif'?'GIF prêt à envoyer':'Photo prête à envoyer'}</strong><p>Temporaire · à réajouter après actualisation</p><button class="btn btn-ghost" data-on-click="waAttachRemove" ${raw(s.confirm?'disabled':'')}>Retirer</button></div></div>`)}
@@ -483,8 +504,8 @@ function whatsappView(s, v, sel) {
         <div class="wa-compose-row">
           <label class="wa-attach-control" title="Ajouter une photo ou un GIF · 10 Mo · GIF 30 s maximum">${icon('plus')}<input type="file" accept="image/jpeg,image/png,image/webp,image/gif" data-on-change="waAttach" aria-label="Ajouter une photo ou un GIF" ${raw(!canSend||s.confirm||s.waUploading||s.offline?'disabled':'')}></label>
           <div class="wa-input">
-            <textarea data-key="draft-${sel.id}" data-on-input="draft" ${raw(s.confirm?.messageId === sel.id ? 'readonly' : '')} rows="1" aria-label="Réponse à ${name}"
-              placeholder="Écrire un message…">${draft}</textarea>
+            <textarea data-key="draft-${sel.id}" data-on-input="draft" ${raw(s.confirm?.messageId === sel.id ? 'readonly' : '')} rows="1" data-on-keydown="waMentionKeys" data-on-keyup="waMentionCursor" data-on-click="waMentionCursor" aria-autocomplete="list" aria-haspopup="listbox" aria-controls="wa-mention-options" ${raw(mentionOptions.length && s.waParticipantsBusy!==sel.id && !s.waParticipantsError?.[sel.id]?`aria-activedescendant="wa-mention-option-${s.waMention.active%mentionOptions.length}"`:'')} aria-expanded="${s.waMention?.id===sel.id}" aria-label="Réponse à ${name}"
+              placeholder="${full?.group?'Message · @ pour mentionner…':'Écrire un message…'}">${draft}</textarea>
             <button class="icon-btn wa-emoji-toggle" data-on-click="waEmojiToggle" aria-label="Ajouter un emoji" aria-expanded="${!!s.waEmoji}" ${raw(s.confirm?'disabled':'')}>${icon('smile')}</button>
           </div>
           <button class="btn wa-send" data-on-click="sendPreview" aria-label="${needsReview(s,sel.id)?'Aperçu':'Envoyer'}" title="${canSend ? needsReview(s,sel.id)?'Vérifier le message exact avant l’envoi':'Envoyer le message rédigé' : 'L’envoi demande la permission Envoi pour ce compte'}"
@@ -864,8 +885,8 @@ function sendDialog(c, offline = false) {
             ${when(p.cc.length, () => html`<span class="muted">Cc</span><span>${p.cc.join(', ')}</span>`)}
             ${when(p.channel !== 'whatsapp', () => html`<span class="muted">Objet</span><span style="font-weight:600">${p.subject}</span>`)}
           </div>
-          <div class="send-preview-letter"><span class="network-eyebrow">MESSAGE EXACT</span>${waQuote(p.quote)}${waMedia(p.attachment)}<div class="send-body">${p.body}</div></div>
-          <p class="muted" style="margin:0;font-size:12px">${p.quote?'Le message cité, le texte et l’éventuelle pièce jointe affichés correspondent exactement à l’envoi.':'Le texte et la pièce jointe affichés sont exactement ceux qui seront envoyés.'} Toute modification demande une nouvelle vérification.</p>
+          <div class="send-preview-letter"><span class="network-eyebrow">MESSAGE EXACT</span>${waMentionList(p.mentions)}${waQuote(p.quote)}${waMedia(p.attachment)}<div class="send-body">${p.body}</div></div>
+          <p class="muted" style="margin:0;font-size:12px">${p.mentions?.length?'Le texte, les personnes mentionnées et l’éventuel message cité ou média affichés correspondent exactement à l’envoi.':p.quote?'Le message cité, le texte et l’éventuelle pièce jointe affichés correspondent exactement à l’envoi.':'Le texte et la pièce jointe affichés sont exactement ceux qui seront envoyés.'} Toute modification demande une nouvelle vérification.</p>
           ${when(c.error, () => html`<div class="alert">${c.error}</div>`)}
           ${when(offline && !c.error, () => html`<div class="alert">Hors ligne : l’envoi reprendra seulement quand tu le confirmeras en ligne.</div>`)}
         </div>

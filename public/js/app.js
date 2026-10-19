@@ -16,7 +16,7 @@ const state = {
   nav: 'all', folder: null, channel: 'all', query: '', selectedId: null,
   collapsed: (()=>{try{return JSON.parse(storage.get('relay.folderExpansion') || '{}');}catch{return {};}})(), creating: false, folderDraft: '', dragOver: null, moveOpen: false,
   listW: Number(storage.get(LIST_W_KEY)) || 340, resizing: false,
-  composing: null, drafts: {}, expandedTrail: {}, waAttachments:{}, waUploading:null, waEmoji:false, waMessageMenu:null, waReacting:null,
+  composing: null, drafts: {}, expandedTrail: {}, waAttachments:{}, waUploading:null, waEmoji:false, waMessageMenu:null, waReacting:null, waParticipants:{},waParticipantsBusy:null,waParticipantsError:{},waMention:null,
   ai: null, aiTone: 'Cordial', aiIntent: '',
   contactView:globalThis.matchMedia?.('(max-width:600px)').matches?'list':'network',network:null,networkBusy:false,networkError:null,networkDays:90,groupEditor:null,groupName:'',groupQuery:'',groupBusy:false,
   group: 'all', picked: {}, focusId: null, contactQuery: '', contactSearch: false, sort: 'recent',
@@ -112,6 +112,8 @@ function loadDetails(id) {
   const revision = detailRevisions.get(id) || 0;
   const job = api.message(id)
     .then(async full => {
+      const sourceMatches=()=>{const row=state.data.messages.find(m=>m.id===id) || (state.selectedRow?.id===id?state.selectedRow:null);return !row?.conversationIdentity || row.conversationIdentity===full.conversationIdentity;};
+      if(!known(id) || revision!==(detailRevisions.get(id)||0) || !sourceMatches())return true;
       // Refresh interactions on older pages already on screen without downloading their bodies again.
       const old=state.details[id];
       if(full.channel==='whatsapp' && old?.trail?.length && api.whatsAppInteractions) {
@@ -121,7 +123,7 @@ function loadDetails(id) {
         const byId=new Map(updates.map(m=>[m.waId,m]));
         if(known(id) && revision===(detailRevisions.get(id)||0) && state.details[id]===old)state.details={...state.details,[id]:{...old,trail:old.trail.filter(t=>!byId.get(t.waId)?.unavailable).map(t=>({...t,...byId.get(t.waId)}))}};
       }
-      if (!known(id) || revision !== (detailRevisions.get(id) || 0)) return true;
+      if (!known(id) || revision !== (detailRevisions.get(id) || 0) || !sourceMatches()) return true;
       const merged = mergeHistory(state.details[id], full);
       syncDraftMeta(id, merged);
       set(s => ({ details: { ...s.details, [id]: merged } }));
@@ -231,13 +233,15 @@ function filtersChanged(next) {
 function applyData(data, extra = {}) {
   data=withUnified(data);
   // Empreinte d'une ligne : dernier message, nombre et version du brouillon (modifié sur un autre appareil).
-  const mark = m => `${m.sortAt}:${m.count}:${m.interactionVersion ?? 0}:${m.draftVersion ?? ''}`;
+  const mark = m => `${m.sortAt}:${m.count}:${m.conversationIdentity ?? ''}:${m.interactionVersion ?? 0}:${m.draftVersion ?? ''}`;
   const previousAccounts=new Map((state.data?.profiles || []).filter(p=>p.id!=='all').flatMap(p=>p.accounts).map(a=>[a.id,a.historyWindowRevision]));
   const changedWindows=new Set(data.profiles.filter(p=>p.id!=='all').flatMap(p=>p.accounts).filter(a=>previousAccounts.has(a.id) && previousAccounts.get(a.id)!==a.historyWindowRevision).map(a=>a.id));
+  const priorRows=new Map((state.data?.messages || []).map(m=>[m.id,m]));
+  for(const row of data.messages)if(priorRows.has(row.id) && priorRows.get(row.id).conversationIdentity!==row.conversationIdentity)detailRevisions.set(row.id,(detailRevisions.get(row.id)||0)+1);
   const before = new Map((state.data?.messages || []).map(m => [m.id, mark(m)]));
   const details = Object.fromEntries(Object.entries(state.details).flatMap(([id, full]) => {
     const m = data.messages.find(x => x.id === Number(id)) || (Number(id) === state.selectedId && state.selectedRow?.id === state.selectedId ? state.selectedRow : null);
-    if (!m) return [];
+    if (!m || (full.conversationIdentity && full.conversationIdentity!==m.conversationIdentity)) return [];
     if(changedWindows.has(m.accountId)){detailRevisions.set(m.id,(detailRevisions.get(m.id)||0)+1);return [];}
     if (!full.stale && before.get(m.id) === mark(m)) return [[id, full]];
     // Garder les bulles pendant le rechargement préserve l'ancrage de lecture.
@@ -247,7 +251,8 @@ function applyData(data, extra = {}) {
   const ai = a && (!updated || changedWindows.has(updated.accountId) || (before.has(updated.id) && before.get(updated.id).split(':').slice(0,2).join(':') !== `${updated.sortAt}:${updated.count}`)) ? null : a;
   // La ligne sélectionnée reste connue même hors de la page affichée (même profil).
   const row = data.messages.find(m => m.id === state.selectedId);
-  set({ data, details, ai, ...(row ? { selectedRow: row } : {}), ...(changedWindows.size && state.personOpen?{person:null}:{}), ...extra });
+  const waParticipants=Object.fromEntries(Object.entries(state.waParticipants).filter(([id,c])=>{const row=data.messages.find(m=>m.id===Number(id)) || (state.selectedRow?.id===Number(id)?state.selectedRow:null);return row?.conversationIdentity===c.conversationIdentity && details[id]?.participantScope===c.scope;}));
+  set({ data, details, ai,waParticipants, ...(row ? { selectedRow: row } : {}), ...(changedWindows.size && state.personOpen?{person:null}:{}), ...extra });
   if(changedWindows.size && state.personOpen){const id=state.personOpen,profile=state.profileId,versions=JSON.stringify(data.profiles.flatMap(p=>p.accounts).map(a=>[a.id,a.historyWindowRevision]));api.person(profile,id).then(person=>{if(state.personOpen===id && state.profileId===profile && versions===JSON.stringify(state.data.profiles.flatMap(p=>p.accounts).map(a=>[a.id,a.historyWindowRevision])))set({person});}).catch(()=>{});}
 
 }
@@ -288,16 +293,16 @@ const setMeta = (id, patch) => set(s => ({ draftMeta: { ...s.draftMeta, [id]: { 
 // (transférer, répondre à tous) ou le destinataire est une modification à enregistrer comme le texte.
 function serverDraft(full) {
   const mode = full?.draft?.mode || 'reply';
-  return { ...(full?.channel==='whatsapp'?{replyTo:full?.draft?.replyTo ?? null}:{}),text: full?.draft?.text ?? '', mode, to: mode === 'forward' ? (full?.draft?.to ?? '') : null };
+  return { ...(full?.channel==='whatsapp'?{replyTo:full?.draft?.replyTo ?? null,mentions:full?.draft?.mentions || []}:{}),text: full?.draft?.text ?? '', mode, to: mode === 'forward' ? (full?.draft?.to ?? '') : null };
 }
 // Référence : dernier état enregistré connu (pas le détail rechargé, qui peut venir d'un autre appareil).
 const savedDraft = id => state.draftMeta[id]?.saved || serverDraft(state.details[id]);
 const draftText = id => state.drafts[id] ?? savedDraft(id).text;
 function localDraft(id) {
   const base=savedDraft(id),mode=state.draftMeta[id]?.localMode ?? ((state.selectedId===id && state.composing) || base.mode);
-  return { ...(state.details[id]?.channel==='whatsapp'?{replyTo:state.draftMeta[id]?.localReplyTo !== undefined?state.draftMeta[id].localReplyTo:base.replyTo ?? null}:{}),text: draftText(id), mode, to: mode === 'forward' ? (state.composeTo[id] ?? base.to ?? '') : null };
+  return { ...(state.details[id]?.channel==='whatsapp'?{replyTo:state.draftMeta[id]?.localReplyTo !== undefined?state.draftMeta[id].localReplyTo:base.replyTo ?? null,mentions:state.draftMeta[id]?.localMentions ?? base.mentions ?? []}:{}),text: draftText(id), mode, to: mode === 'forward' ? (state.composeTo[id] ?? base.to ?? '') : null };
 }
-const sameDraft = (a, b) => !!a && !!b && a.text === b.text && a.mode === b.mode && a.to === b.to && (a.replyTo ?? null)===(b.replyTo ?? null);
+const sameDraft = (a, b) => !!a && !!b && a.text === b.text && a.mode === b.mode && a.to === b.to && (a.replyTo ?? null)===(b.replyTo ?? null) && JSON.stringify((a.mentions||[]).map(m=>[m.jid,m.start,m.end]))===JSON.stringify((b.mentions||[]).map(m=>[m.jid,m.start,m.end]));
 const changed = id => !!state.draftMeta[id] && !sameDraft(localDraft(id), savedDraft(id));
 const dirty = id => { const m = state.draftMeta[id]; return !!m && (m.saving || m.conflict || changed(id)); };
 
@@ -316,9 +321,46 @@ function syncDraftMeta(id, full) {
   delete drafts[id]; delete composeTo[id];
   state.drafts = drafts; state.composeTo = composeTo;
   if(state.selectedId===id && state.composing) state.composing=saved.mode;
-  state.draftMeta = { ...state.draftMeta, [id]: { ...meta, version, saved, localMode:undefined,localReplyTo:undefined, savedText: saved.text, savedAt: full.draft?.savedAt, conflict: false, error: null } };
+  state.draftMeta = { ...state.draftMeta, [id]: { ...meta, version, saved, localMode:undefined,localReplyTo:undefined,localMentions:undefined, savedText: saved.text, savedAt: full.draft?.savedAt, conflict: false, error: null } };
 }
 
+// Mention ranges are UTF-16 textarea offsets. Any edit touching a token removes its binding.
+function mentionEdits(oldText,text,mentions=[]) {
+ let start=0;while(start<oldText.length && start<text.length && oldText[start]===text[start])start++;
+ let oldEnd=oldText.length,end=text.length;while(oldEnd>start && end>start && oldText[oldEnd-1]===text[end-1]){oldEnd--;end--;}
+ const delta=end-oldEnd;
+ return mentions.flatMap(m=>m.end<=start?[m]:m.start>=oldEnd?[{...m,start:m.start+delta,end:m.end+delta}]:[]).filter(m=>text.slice(m.start,m.end)==='@'+m.jid.split('@')[0] && !/[\p{L}\p{N}_@]/u.test(text[m.start-1] || '') && !/[\p{L}\p{N}_]/u.test(text[m.end] || ''));
+}
+const mentionSearch=value=>String(value||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase();
+function mentionOptions() {
+ const q=state.waMention;if(!q || q.id!==state.selectedId || state.waParticipantsBusy===q.id || state.waParticipantsError[q.id])return [];
+ const query=mentionSearch(q.query);
+ const cache=state.waParticipants[q.id];
+ return (cache?.scope===state.details[q.id]?.participantScope?cache?.members || []:[]).filter(p=>mentionSearch(p.name+' '+(p.phone||'')+' '+p.token).includes(query)).slice(0,6);
+}
+let mentionLookupSeq=0;const mentionLookups=new Map();
+async function loadMentionParticipants(id,force=false) {
+ if(state.offline || state.waParticipantsBusy===id || (!force && state.waParticipants[id]?.scope===state.details[id]?.participantScope && state.waParticipants[id]?.loadedAt>Date.now()-60000))return;
+ const account=state.details[id]?.accountId,scope=state.details[id]?.participantScope,conversationIdentity=state.details[id]?.conversationIdentity,request=++mentionLookupSeq;mentionLookups.set(id,request);
+ set(s=>({waParticipantsBusy:id,waParticipantsError:{...s.waParticipantsError,[id]:null}}));
+ try{const result=await api.whatsAppParticipants(id);if(known(id) && mentionLookups.get(id)===request && state.details[id]?.accountId===account && state.details[id]?.participantScope===scope && result.scope===scope)set(s=>({waParticipants:{...s.waParticipants,[id]:{scope,conversationIdentity,members:result.members,loadedAt:Date.now()}}}));}
+ catch(e){if(known(id) && state.details[id]?.participantScope===scope && mentionLookups.get(id)===request)set(s=>({waParticipantsError:{...s.waParticipantsError,[id]:e.message}}));}
+ finally{if(state.waParticipantsBusy===id && mentionLookups.get(id)===request)set({waParticipantsBusy:null});}
+}
+function updateMentionQuery(el) {
+ const id=state.selectedId,text=el.value,caret=el.selectionStart ?? text.length;
+ if(!state.details[id]?.group || state.confirm || el.selectionEnd!==caret){set({waMention:null});return;}
+ const match=/(?:^|[\s(])@([^\s@]{0,50})$/.exec(text.slice(0,caret));
+ if(!match){if(state.waMention)set({waMention:null});return;}
+ const from=caret-match[1].length-1;
+ if(localDraft(id).mentions?.some(m=>from>=m.start && from<m.end)){set({waMention:null});return;}
+ set({waMention:{id,from,to:caret,query:match[1],active:0}});loadMentionParticipants(id);
+}
+function updateDraftText(id,text) {
+ const old=localDraft(id);
+ if(state.details[id]?.channel==='whatsapp')setMeta(id,{localMentions:mentionEdits(old.text,text,old.mentions)});
+ set(s=>({drafts:{...s.drafts,[id]:text}}));scheduleAutosave(id);
+}
 function scheduleAutosave(id) {
   clearTimeout(draftTimers.get(id));
   draftTimers.set(id, setTimeout(() => { draftTimers.delete(id); saveDraftNow(id); }, AUTOSAVE_MS));
@@ -832,7 +874,7 @@ const actions = {
     duplicateActionVersion++;
     selectionVersion++; rememberComposition();
     if (state.drawer) backFrom('drawer');
-    filtersChanged({contactHistory:null,contactHistoryError:null,historyBusy:false,duplicates:null,duplicatesError:null,duplicatesBusy:false,duplicatesReview:null,duplicatesKeep:null,duplicatesLimit:25, newMailOpen: false, profileId: id, personOpen:null,person:null,personError:null,personMerge:'',personValue:'',personAddOpen:false,personBusy:false,network:null,networkError:null,groupEditor:null,contactImport:false,fromPerson:false, menu: false, accountMenu: null, picked: {}, group: 'all', channel: 'all', query: '', selectedId: state.paged ? null : firstOf(id), selectedRow: null, folder: null, ai: null, moveOpen: false, creating: false, composing: null, pane: 'list' });
+    filtersChanged({waMention:null,waParticipants:{},waParticipantsBusy:null,contactHistory:null,contactHistoryError:null,historyBusy:false,duplicates:null,duplicatesError:null,duplicatesBusy:false,duplicatesReview:null,duplicatesKeep:null,duplicatesLimit:25, newMailOpen: false, profileId: id, personOpen:null,person:null,personError:null,personMerge:'',personValue:'',personAddOpen:false,personBusy:false,network:null,networkError:null,groupEditor:null,contactImport:false,fromPerson:false, menu: false, accountMenu: null, picked: {}, group: 'all', channel: 'all', query: '', selectedId: state.paged ? null : firstOf(id), selectedRow: null, folder: null, ai: null, moveOpen: false, creating: false, composing: null, pane: 'list' });
     if(state.app==='duplicates')loadDuplicates();if(state.app==='history')loadContactHistory();if(state.app==='contacts')loadNetwork();
   },
   selectApp: ({ app }) => { if (state.drawer) backFrom('drawer'); set({ app, ai: null, moveOpen: false,duplicatesReview:null });if(app==='duplicates')loadDuplicates();if(app==='history')loadContactHistory();if(app==='contacts')loadNetwork();if(app==='settings')loadMailSettings(); },
@@ -991,12 +1033,37 @@ const actions = {
     try{await api.reactWhatsApp(conversation,{messageId:id,emoji});if(known(conversation)){set(s=>({details:{...s.details,[conversation]:{...s.details[conversation],refreshing:true}}}));await loadDetails(conversation);}}
     catch(e){fail(e);}finally{set({waReacting:null});}
   },
+  waMentionRetry:()=>{if(state.waMention)loadMentionParticipants(state.waMention.id,true);},
+  waMentionClose:()=>set({waMention:null}),
+  waMentionCursor:(_,e)=>{if(e.type!=='keyup' || ['ArrowLeft','ArrowRight','Home','End'].includes(e.key))updateMentionQuery(e.target);},
+  waMentionKeys:(_,e)=>{
+    if(!state.waMention || state.waMention.id!==state.selectedId || e.isComposing)return;
+    const options=mentionOptions();
+    if(['ArrowDown','ArrowUp'].includes(e.key) && options.length){e.preventDefault();set({waMention:{...state.waMention,active:(state.waMention.active+(e.key==='ArrowDown'?1:-1)+options.length)%options.length}});}
+    else if(['Enter','Tab'].includes(e.key) && options.length){e.preventDefault();actions.waMentionSelect({jid:options[state.waMention.active%options.length].jid});}
+    else if(e.key==='Escape'){e.preventDefault();set({waMention:null});}
+  },
+  waMentionSelect:({jid})=>{
+    const q=state.waMention,id=state.selectedId;if(!q || q.id!==id || state.confirm)return;
+    const member=mentionOptions().find(p=>p.jid===jid),draft=localDraft(id);
+    if(!member || draft.text.slice(q.from,q.to)!=='@'+q.query)return;
+    if((draft.mentions||[]).length>=50)return notify('50 mentions maximum par message.');
+    const text=draft.text.slice(0,q.from)+member.token+' '+draft.text.slice(q.to);
+    const selected={jid,start:q.from,end:q.from+member.token.length,name:member.name,phone:member.phone};
+    const mentions=[...mentionEdits(draft.text,text,draft.mentions),selected].sort((a,b)=>a.start-b.start);
+    setMeta(id,{localMentions:mentions});set(s=>({drafts:{...s.drafts,[id]:text},waMention:null}));scheduleAutosave(id);
+    requestAnimationFrame(()=>{const el=document.querySelector(`textarea[data-key="draft-${id}"]`);if(el && state.selectedId===id && localDraft(id).text===text){el.value=text;el.focus();el.setSelectionRange(selected.end+1,selected.end+1);}});
+  },
+  waMentionRemove:({start})=>{
+    if(state.confirm)return;const id=state.selectedId,draft=localDraft(id),m=draft.mentions?.find(m=>m.start===Number(start));if(!m)return;
+    updateDraftText(id,draft.text.slice(0,m.start)+draft.text.slice(m.end));set({waMention:null});
+  },
   waEmojiToggle:()=>{if(!state.confirm)set({waEmoji:!state.waEmoji});},
   waEmojiInsert:({emoji})=>{
     if(state.confirm)return;const id=state.selectedId,el=document.querySelector(`textarea[data-key="draft-${id}"]`);
     if(!el)return;const text=el.value,start=el.selectionStart ?? text.length,end=el.selectionEnd ?? start;
-    const value=text.slice(0,start)+emoji+text.slice(end);set(s=>({drafts:{...s.drafts,[id]:value},waEmoji:false}));scheduleAutosave(id);
-    requestAnimationFrame(()=>{const node=document.querySelector(`textarea[data-key="draft-${id}"]`);node?.focus();node?.setSelectionRange(start+emoji.length,start+emoji.length);});
+    const value=text.slice(0,start)+emoji+text.slice(end);updateDraftText(id,value);set({waEmoji:false,waMention:null});
+    requestAnimationFrame(()=>{const node=document.querySelector(`textarea[data-key="draft-${id}"]`);if(node && state.selectedId===id && localDraft(id).text===value){node.value=value;node.focus();node.setSelectionRange(start+emoji.length,start+emoji.length);}});
   },
   waAttach:async(_,e)=>{
     const file=e.target.files?.[0],id=state.selectedId;e.target.value='';
@@ -1007,7 +1074,7 @@ const actions = {
     catch(e){fail(e);}finally{set({waUploading:null});}
   },
   waAttachRemove:()=>{if(state.confirm)return;set(s=>({waAttachments:{...s.waAttachments,[s.selectedId]:null}}));},
-  draft: (_, e) => { const id = state.selectedId, v = e.target.value; set(s => ({ drafts: { ...s.drafts, [id]: v } })); scheduleAutosave(id); },
+  draft: (_, e) => {const id=state.selectedId;updateDraftText(id,e.target.value);if(!e.isComposing)updateMentionQuery(e.target);},
   saveDraft: () => {
     const id = derive(state).sel?.id;
     if (id == null) return;
@@ -1065,7 +1132,7 @@ const actions = {
         try { history.replaceState?.({ relay: 'compose', depth: layers.length }, ''); } catch { /* historique indisponible */ }
       } else { layers.pop(); try { history.back?.(); } catch { /* sans historique */ } layers.push('__skip'); }
     }
-    setMeta(id,{localMode:'reply',aiAssisted:true});
+    setMeta(id,{localMode:'reply',aiAssisted:true,localMentions:[]});set({waMention:null});
     set(s => ({ drafts: { ...s.drafts, [id]: text }, ai: null, composing: 'reply' }));
     scheduleAutosave(id);
   },
@@ -1211,7 +1278,7 @@ const actions = {
     compositionBuffers.delete(id);
     for(const [cid,draft] of compositionsByCid) if(draft.messageId===id)compositionsByCid.delete(cid);
     // Texte saisi après l'aperçu : jamais effacé, il reste local et non enregistré (le brouillon envoyé a disparu).
-    const newer = !c.newMail && !sameDraft(localDraft(id), { text: c.input.text, mode: c.input.mode, to: c.input.to ?? null,replyTo:c.input.replyTo ?? null });
+    const newer = !c.newMail && !sameDraft(localDraft(id), { text: c.input.text, mode: c.input.mode, to: c.input.to ?? null,replyTo:c.input.replyTo ?? null,mentions:c.input.mentions || [] });
     clearTimeout(draftTimers.get(id));
     if (layers.at(-1) === 'confirm') { layers.pop(); try { history.back?.(); } catch { /* sans historique */ } layers.push('__skip'); }
     // L'entrée d'historique du compositeur devient neutre : le retour suivant ne rouvre ni ne ferme rien d'autre.
@@ -1295,11 +1362,12 @@ document.addEventListener('error',e=>{
   el.hidden=true;const fallback=el.closest('.wa-media')?.querySelector('.wa-media-error');if(fallback)fallback.hidden=false;
 },true);
 delegate(document, {
-  change: 'change', click: 'click', dblclick: 'dblclick', input: 'input', keydown: 'keydown', focusout: 'blur',
+  change: 'change', click: 'click', dblclick: 'dblclick', input: 'input', keydown: 'keydown',keyup:'keyup', focusout: 'blur',
   dragstart: 'dragstart', dragover: 'dragover', dragleave: 'dragleave', drop: 'drop', pointerdown: 'pointerdown',
 }, actions);
 
 document.addEventListener('keydown', e => {
+  if(e.defaultPrevented)return;
   if (e.key !== 'Escape') return;
   if(state.groupEditor){if(!state.groupBusy)actions.closeGroup();}
   else if(state.mailSettingsPreview){if(!state.mailSettingsBusy)actions.cancelHistoryWindow();}

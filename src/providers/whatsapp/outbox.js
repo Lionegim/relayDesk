@@ -9,10 +9,10 @@ const CONFIRM_TTL_MS = 10 * 60000;
 export const MAX_SEND = 4096; // caractères par message envoyé
 
 // L'empreinte lie compte, génération du compte, discussion et texte exact.
-const digestOf = (accountId, generation, chatJid, text, attachment=null, quote=null) => createHash('sha256')
-  .update(`whatsapp\naccount:${accountId}\ngeneration:${generation}\nchat:${chatJid}\n`).update(text, 'utf8').update(attachment?`\nmedia:${attachment.id}:${attachment.hash}`:'').update(quote?`\nquote:${JSON.stringify(quote)}`:'').digest('hex');
+const digestOf = (accountId, generation, chatJid, text, attachment=null, quote=null, mentions=[]) => createHash('sha256')
+  .update(`whatsapp\naccount:${accountId}\ngeneration:${generation}\nchat:${chatJid}\n`).update(text, 'utf8').update(attachment?`\nmedia:${attachment.id}:${attachment.hash}`:'').update(quote?`\nquote:${JSON.stringify(quote)}`:'').update(mentions.length?`\nmentions:${JSON.stringify(mentions)}`:'').digest('hex');
 
-export function createWhatsAppOutbox({ store, sync, media=null }) {
+export function createWhatsAppOutbox({ store, sync, media=null, mentions=null }) {
   const sending = new Set();
   const confirmations = new Map(); // empreinte -> { messageId, accountId, generation, expires }
   const sweep = () => { const now = Date.now(); for (const [d, c] of confirmations) if (c.expires < now) confirmations.delete(d); };
@@ -75,7 +75,7 @@ export function createWhatsAppOutbox({ store, sync, media=null }) {
     async saveDraft(messageId, input) {
       const { text } = read(input);
       const { accountId } = target(messageId);
-      return sync.serial(accountId, () => {const replyTo=replyId(input?.replyTo);if(replyTo)store.waQuote(accountId,store.composeContext(messageId).threadId,replyTo,true);return store.saveDraft(messageId, text, { mode: 'reply',replyTo,expectedVersion:input?.baseVersion });});
+      return sync.serial(accountId, async () => {const selected=await mentions?.resolve(messageId,input?.mentions,text,{fresh:false}) || [];const replyTo=replyId(input?.replyTo);if(replyTo)store.waQuote(accountId,store.composeContext(messageId).threadId,replyTo,true);return store.saveDraft(messageId, text, { mode: 'reply',replyTo,mentions:selected,expectedVersion:input?.baseVersion });});
     },
 
     async preview(messageId, input) {
@@ -83,12 +83,14 @@ export function createWhatsAppOutbox({ store, sync, media=null }) {
       const { text } = read(input);
       const { accountId, chatJid } = target(messageId);
       const attachment=media?.draft(messageId,input.attachmentId);
+      const selected=await mentions?.resolve(messageId,input?.mentions,text) || [];
+      store.assertDraftVersion(messageId,input?.baseVersion);
       const quote=store.waQuote(accountId,chatJid,replyId(input?.replyTo),true);
       checkSend(accountId, text, attachment);
       const account = store.getAccount(accountId);
       const name = store.waChatName(accountId, chatJid);
       const phone = phoneOf(chatJid);
-      const digest = digestOf(accountId, sync.generation(accountId), chatJid, text, attachment, quote);
+      const digest = digestOf(accountId, sync.generation(accountId), chatJid, text, attachment, quote, selected);
       sweep();
       confirmations.set(digest, { messageId, accountId,draftVersion:store.assertDraftVersion(messageId), generation: sync.generation(accountId), expires: Date.now() + CONFIRM_TTL_MS });
       return {
@@ -99,6 +101,7 @@ export function createWhatsAppOutbox({ store, sync, media=null }) {
         cc: [],
         subject: store.composeContext(messageId).subject, // interne : non affiché pour WhatsApp
         body: text,
+        ...(selected.length?{mentions:selected}:{}),
         ...(quote?{quote}:{}),
         ...(attachment?{attachment:{id:attachment.id,url:attachment.url,mime:attachment.mime,kind:attachment.kind,size:attachment.size}}:{}),
         digest,
@@ -116,10 +119,12 @@ export function createWhatsAppOutbox({ store, sync, media=null }) {
       sending.add(messageId);
       try {
         return await sync.serial(accountId, async () => {
-          checkSend(accountId,text,attachment);
           const generation = sync.generation(accountId);
+          const selected=await mentions?.resolve(messageId,input?.mentions,text) || [];
+          if(generation!==sync.generation(accountId))throw new HttpError(409,'La connexion a changé.','account_changed');
+          checkSend(accountId,text,attachment);
           const quote=store.waQuote(accountId,chatJid,replyId(input?.replyTo),true);
-          const actual = digestOf(accountId, generation, chatJid, text, attachment, quote);
+          const actual = digestOf(accountId, generation, chatJid, text, attachment, quote, selected);
           if (!timingSafeEqual(Buffer.from(actual), Buffer.from(digest))) {
             throw new HttpError(409, 'Le message a changé depuis sa validation : vérifie-le à nouveau avant d’envoyer.', 'digest_mismatch');
           }
@@ -141,6 +146,7 @@ export function createWhatsAppOutbox({ store, sync, media=null }) {
           const quoted=quote?{key:messageKey(chatJid,quote,sock),message:{conversation:quote.body}}:null;
           try {
             const content=attachment ? (attachment.mime==='video/mp4' ? {video:attachment.bytes,mimetype:attachment.mime,gifPlayback:true,caption:text} : {image:attachment.bytes,mimetype:attachment.mime,caption:text}) : { text };
+            if(selected.length)content.mentions=[...new Set(selected.map(m=>m.jid))];
             sent = quoted?await sock.sendMessage(chatJid,content,{quoted}):await sock.sendMessage(chatJid,content);
           } catch {
             // Issue inconnue (le message a pu partir) : nouvelle vérification exigée, jamais de nouvel essai automatique.
@@ -152,7 +158,7 @@ export function createWhatsAppOutbox({ store, sync, media=null }) {
           // Successful delivery must never recreate that purged history.
           if (store.hasAccount(accountId) && generation===sync.generation(accountId) && store.threadState(accountId,chatJid)?.id===messageId && store.assertDraftVersion(messageId)===confirmation.draftVersion) {
             store.rememberReply(messageId,text,{ticket:memoryTicket,at:sendStartedAt});
-            store.waAddMessages(accountId, [{ chatJid, msgId, fromMe: true, ts: sendStartedAt, replyTo:quote?.id, participantJid:groupJid(chatJid)?directJid(sent?.key?.participant || sock.user?.lid || sock.user?.id):null, text:text || (attachment?.kind==='gif'?'GIF':'Photo') }]);
+            store.waAddMessages(accountId, [{ chatJid, msgId, fromMe: true, ts: sendStartedAt, replyTo:quote?.id, mentions:selected, participantJid:groupJid(chatJid)?directJid(sent?.key?.participant || sock.user?.lid || sock.user?.id):null, text:text || (attachment?.kind==='gif'?'GIF':'Photo') }]);
             try {media?.sent(accountId,chatJid,msgId,attachment);}catch { /* Delivery succeeded; never suggest a retry because caching failed. */ }
             store.clearDraft(messageId);
             sync.rebuild(accountId, chatJid);
