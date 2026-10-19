@@ -46,7 +46,7 @@ export function renderApp(s, v) {
     <div class="${cls('app', v.compact && 'compact', mobile && 'is-mobile', mobile && `pane-${mail ? s.pane || 'list' : 'list'}`, mobile && s.drawer && 'drawer-open')}" ${raw(mobile ? '' : `style="grid-template-columns:${cols}"`)}>
       ${sidebar(s, v)}
       ${when(mobile && s.drawer, () => html`<div class="drawer-backdrop" data-on-click="closeDrawer" aria-hidden="true"></div>`)}
-      ${mail ? [messageList(s, v), reader(s, v)] : s.app==='duplicates'?duplicatesPage(s,v):s.app==='history'?contactHistoryPage(s,v):contactsPage(s, v)}
+      ${mail ? [messageList(s, v), reader(s, v)] : s.app==='duplicates'?duplicatesPage(s,v):s.app==='history'?contactHistoryPage(s,v):s.app==='settings'?mailSettingsPage(s,v):contactsPage(s, v)}
     </div>
     ${when(s.newMailOpen, () => newMailDialog(s, v))}
     ${when(s.c, () => connectWizard(s))}
@@ -54,7 +54,7 @@ export function renderApp(s, v) {
     ${when(s.confirm?.kind === 'send' && s.confirm.preview, () => sendDialog(s.confirm, s.offline))}
     ${when(s.authPanel, () => authDevices(s))}
     ${when(s.contactImport, () => contactImportDialog(s,v))}
-    ${when(s.personOpen, () => personDialog(s,v))}${when(s.groupEditor,()=>groupDialog(s,v))}
+    ${when(s.personOpen, () => personDialog(s,v))}${when(s.groupEditor,()=>groupDialog(s,v))}${when(s.mailSettingsPreview,()=>historyWindowReview(s))}
     ${when(s.toast, () => html`<div class="${cls('toast', s.toastOk && 'toast-ok')}" role="status">${s.toast}</div>`)}`;
 }
 
@@ -135,7 +135,7 @@ function sidebar(s, v) {
           ${when(s.data.services[a.svc]?.real && s.accountMenu === a.id, () => html`
             <div class="menu" role="menu" aria-label="Compte de messagerie" style="left:0;right:0;top:100%">
               <button class="side-item hov" role="menuitem" data-on-click="accountSync" data-id="${a.id}">Synchroniser maintenant</button>
-              ${when(['gmail','outlook'].includes(a.svc),()=>html`<button class="side-item hov" role="menuitem" data-on-click="accountHistory" data-id="${a.id}" data-action="${['running','retrying'].includes(a.history?.status)?'pause':'start'}">${['running','retrying'].includes(a.history?.status)?'Mettre l’import en pause':a.history?.status==='paused'?'Reprendre l’import complet':a.history?.status==='complete'?'Historique complet importé':'Importer tout l’historique'}</button>`)}
+              ${when(['gmail','outlook'].includes(a.svc),()=>html`<button class="side-item hov" role="menuitem" data-on-click="openMailSettings">Historique et stockage</button><button class="side-item hov" role="menuitem" data-on-click="accountHistory" data-id="${a.id}" data-action="${['running','retrying'].includes(a.history?.status)?'pause':'start'}">${['running','retrying'].includes(a.history?.status)?'Mettre l’import en pause':a.history?.status==='paused'?'Reprendre l’import choisi':a.history?.status==='complete'?'Historique choisi importé':'Importer l’historique choisi'}</button>`)}
               <button class="side-item hov" role="menuitem" data-on-click="accountPermissions" data-id="${a.id}">${a.svc === 'whatsapp' ? 'Relier l’appareil' : 'Modifier les permissions'}</button>
               <button class="side-item hov" role="menuitem" data-on-click="disconnectAccount" data-id="${a.id}" style="color:var(--destructive)">Déconnecter</button>
             </div>`)}
@@ -144,6 +144,7 @@ function sidebar(s, v) {
           <span class="mark" style="width:18px;height:18px;font-size:15px;font-weight:400">+</span><span class="ellipsis">Ajouter un canal</span>
         </button>
       </div>
+      <div class="side-section"><button class="side-item hov" data-on-click="openMailSettings"><span class="ico">${icon('lines')}</span><span>Paramètres</span></button></div>
       ${when(s.auth?.enabled, () => html`<div class="side-section auth-controls">
         <button class="side-item hov" data-on-click="authDevices">Appareils connectés</button>
         <button class="side-item hov" data-on-click="authLogout">Se déconnecter</button>
@@ -651,7 +652,7 @@ function connectWizard(s) {
   const next = c.svc === 'whatsapp' && c.step === 'auth' && c.linkId ? null : { config: 'Continuer', auth: d?.btn, done: 'Ouvrir la boîte' }[c.step];
   const nextDisabled = c.busy || (c.step === 'auth' ? missing : c.step === 'config' ? !c.name.trim() : false);
   const importMeta = c.real ? `${c.real.done} / ${c.real.total} conversations` : `${Math.round(msgs * c.progress / 100)} / ${msgs}`;
-  const checks = [['Autorisation reçue', 1, ''], ['Capacités vérifiées', c.real ? 2 : 20, `${permsOn.length} accès`], [`Import des ${c.win} derniers jours`, 100, importMeta], ['Triage local', 100, '']];
+  const checks = [['Autorisation reçue', 1, ''], ['Capacités vérifiées', c.real ? 2 : 20, `${permsOn.length} accès`], [`Import des ${c.svc==='whatsapp'?'7 derniers jours':historyLabel(c.historyDays ?? c.win)}`, 100, importMeta], ['Triage local', 100, '']];
   const stats = c.real ? [[c.real.messages, 'messages importés'], [c.real.threads, 'conversations'], [c.real.todo, 'à traiter']]
     : [[msgs, 'messages importés'], [Math.round(msgs / 3.2), 'conversations'], [Math.round(msgs / 22), 'à traiter']];
   const barColor = p => p === 100 ? 'var(--success)' : p >= 75 ? 'var(--primary)' : p >= 50 ? 'var(--warning)' : p >= 25 ? 'var(--status-high)' : 'var(--destructive)';
@@ -721,19 +722,14 @@ function connectWizard(s) {
               </div>
             </div>
             ${when(c.accountId && d.auth === 'oauth', () => html`<p class="muted" style="font-size:12px">Une permission supplémentaire demande une nouvelle autorisation du fournisseur. Décocher un accès déjà accordé ne le révoque pas chez le fournisseur.</p>`)}
-            <div class="field" style="gap:8px">
-              <span class="field-label">Historique à importer</span>
-              <div style="display:flex;gap:6px">
-                ${(d.auth === 'qr' ? [7] : WINDOWS).map(w => html`<button class="${cls('pill', w === c.win && 'is-on')}" data-on-click="cWindow" data-win="${w}">${w} jours</button>`)}
-              </div>
-            </div>`)}
+            ${d.auth==='oauth'?html`<label class="field"><span class="field-label">Historique conservé dans Relay Desk</span><select data-on-change="cHistory" aria-label="Historique du nouveau compte" ${raw(c.accountId?'disabled':'')}>${historyOptions(c.historyDays ?? 365)}</select><small class="muted">${c.accountId?'Modifiable dans Paramètres → Historique et stockage.':'Un an par défaut. Fenêtre glissante, réglable ensuite par compte. Les originaux restent chez le fournisseur.'}</small></label>`:html`<div class="field"><span class="field-label">Historique à importer</span><span>7 jours disponibles</span></div>`}`)}
 
           ${when(c.step === 'auth', () => html`
             <div class="recap">
               <span class="muted">Profil</span><span style="font-weight:600">${profileName(c.profile)}</span>
               <span class="muted">Compte</span><span style="font-weight:600">${c.name}</span>
               <span class="muted">Accès</span><span style="font-weight:600">${permsOn.map(k => PERM[k][0]).join(', ')}</span>
-              <span class="muted">Historique</span><span style="font-weight:600">${c.win} derniers jours</span>
+              <span class="muted">Historique</span><span style="font-weight:600">${c.svc==='whatsapp'?'7 derniers jours':historyLabel(c.historyDays ?? c.win)}</span>
             </div>
             ${when(d.auth === 'qr', () => html`
               ${when(!c.linkId, () => html`<p class="muted" style="margin:0">${d.scopesNote}</p>`)}
@@ -958,3 +954,10 @@ function contactHistoryPage(s,v) {
 }
 
 function groupDialog(s,v){return html`<div class="overlay"><section class="dialog group-dialog" role="dialog" aria-modal="true" aria-label="Groupe de contacts"><header class="composer-head"><h3 class="grow">${s.groupEditor==='new'?'Créer un groupe':'Gérer le groupe'}</h3><button class="close-btn" data-on-click="closeGroup" aria-label="Fermer le groupe">×</button></header><div class="dialog-body"><p class="muted">${v.profile.name} · Vous choisissez les personnes de ce groupe. Les carnets Google et Outlook restent inchangés.</p><label>Nom du groupe<input class="input" data-autofocus value="${s.groupName}" data-on-input="groupName" maxlength="80" placeholder="Famille, équipe, investisseurs…"></label><p class="muted">Ajoutez ou retirez les membres depuis leur fiche contact. Les appartenances sont conservées lors des liaisons et peuvent être retirées.</p><button class="btn btn-brand" data-on-click="saveGroup" ${raw(s.groupBusy || !s.groupName.trim()?'disabled':'')}>Enregistrer le groupe</button>${when(s.groupEditor!=='new',()=>html`<h4>Membres du groupe</h4><input class="input" type="search" aria-label="Rechercher des membres" placeholder="Rechercher une personne…" value="${s.groupQuery}" data-on-input="groupQuery"><div class="group-member-list">${v.contactsMine.filter(c=>!s.groupQuery.trim() || (c.name+' '+c.identities.map(i=>i.value).join(' ')).toLocaleLowerCase().includes(s.groupQuery.trim().toLocaleLowerCase())).map(c=>{const on=(s.data.personGroups || []).find(g=>g.id===s.groupEditor)?.members.includes(c.id);return html`<button class="group-member-row" role="checkbox" aria-checked="${!!on}" data-on-click="toggleGroupMember" data-group="${s.groupEditor}" data-id="${c.id}" data-on="${!on}" ${raw(s.groupBusy?'disabled':'')}><span>${on?'✓':'＋'}</span><strong>${c.name}</strong></button>`;})}</div><button class="btn btn-ghost" data-on-click="closeGroup">Terminer</button>`)}</div></section></div>`;}
+
+const HISTORY_OPTIONS=[[30,'30 jours'],[90,'3 mois'],[180,'6 mois'],[365,'1 an'],[730,'2 ans'],[0,'Tout l’historique']];
+const historyLabel=days=>HISTORY_OPTIONS.find(([d])=>d===days)?.[1] || `${days} jours`;
+const historyOptions=days=>HISTORY_OPTIONS.map(([d,label])=>html`<option value="${d}" ${raw(d===days?'selected':'')}>${label}</option>`);
+const storageLabel=bytes=>bytes<1048576?`${Math.round(bytes/1024)} Ko`:`${(bytes/1048576).toFixed(1)} Mo`;
+function mailSettingsPage(s,v){const accounts=s.data.profiles.filter(p=>p.id!=='all').flatMap(p=>p.accounts.map(a=>({...a,profileName:p.name}))).filter(a=>['gmail','outlook'].includes(a.svc));return html`<main class="contacts settings-page"><div class="contacts-scroll"><header class="settings-heading">${when(s.mobile,()=>html`<button class="icon-btn" data-on-click="openDrawer" aria-label="Ouvrir le menu">${icon('lines')}</button>`)}<div><p class="network-eyebrow">PARAMÈTRES · VOS COMPTES</p><h1>Historique et stockage</h1><p>Gardez le contexte utile, à votre rythme.</p></div></header><p class="settings-intro">Choisissez la période conservée pour chaque compte. La fenêtre avance automatiquement : les messages plus anciens quittent le cache de Relay Desk. Les originaux restent dans Gmail ou Outlook, et les brouillons en cours gardent leur contexte.</p>${when(s.mailSettingsError,()=>html`<p role="alert" class="error">${s.mailSettingsError}</p>`)}<div class="settings-accounts">${accounts.map(a=>{const p=s.mailSettings[a.id],days=s.mailSettingsDays[a.id],busy=s.mailSettingsBusy===a.id;return html`<section class="history-account-card"><header>${providerMark(a.svc,a.channel)}<div><h2>${a.name}</h2><p>${a.address} · ${a.profileName}</p></div></header>${p?html`<div class="history-account-stats"><span><strong>${p.conversations.toLocaleString('fr-FR')}</strong> conversations</span><span><strong>${storageLabel(p.contentBytes)}</strong> de contenu de messages</span><span>Actuellement : <strong>${historyLabel(p.days)}</strong></span></div><div class="history-account-control"><label>Historique à conserver<select data-on-change="historyWindowChange" data-id="${a.id}" aria-label="Historique de ${a.name}" ${raw(busy?'disabled':'')}>${historyOptions(days)}</select></label><button class="btn btn-brand" data-on-click="reviewHistoryWindow" data-id="${a.id}" ${raw(busy || days===p.days || s.offline?'disabled':'')}>${busy?'Préparation…':'Examiner la modification'}</button></div><p class="muted">Réduire la période libère le cache local à l’application du réglage. L’élargir relance l’import en arrière-plan, sans doublons. Les réponses conservent leur validation avant envoi.</p>`:html`<p>Chargement du réglage…</p>`}</section>`;})}${when(!accounts.length,()=>html`<p>Aucun compte Gmail ou Outlook ajouté.</p><button class="btn btn-brand" data-on-click="openConnect">Ajouter un compte</button>`)}</div><p class="settings-footnote">Nouveaux comptes : 1 an par défaut. WhatsApp garde sa fenêtre disponible de 7 jours et reste indépendant de ce réglage. Les contacts, liens entre personnes et groupes sont conservés.</p></div></main>`;}
+function historyWindowReview(s){const r=s.mailSettingsPreview,busy=s.mailSettingsBusy===r.accountId;return html`<div class="overlay"><section class="dialog history-review" role="dialog" aria-modal="true" aria-label="Confirmer la période de conservation"><header class="composer-head"><h3 class="grow">${r.name} · ${historyLabel(r.requestedDays)}</h3><button class="close-btn" data-on-click="cancelHistoryWindow" aria-label="Fermer la modification" ${raw(busy?'disabled':'')}>×</button></header><div class="dialog-body"><p><strong>${r.address}</strong></p><p>${r.removeConversations} conversations et ${r.removeOlderMessages} anciens messages de conversations récentes seront retirés du cache de Relay Desk.</p><p>${r.protectedDrafts} conversation(s) ancienne(s) conservée(s) pour protéger un brouillon et son contexte.</p><p>Les originaux chez Google ou Microsoft restent inchangés. Vous pourrez réimporter une période plus large ensuite. Le réglage s’applique automatiquement aux prochaines synchronisations.</p><p>La mémoire de style et les analyses liées aux anciens contenus sont nettoyées. Aucun message ne sera envoyé.</p>${when(s.mailSettingsError,()=>html`<p role="alert">${s.mailSettingsError}</p>`)}<button class="btn btn-brand" data-on-click="applyHistoryWindow" ${raw(busy?'disabled':'')}>${busy?'Application et optimisation…':'Appliquer cette période'}</button></div></section></div>`;}

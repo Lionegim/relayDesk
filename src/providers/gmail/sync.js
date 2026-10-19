@@ -90,6 +90,7 @@ export function createGmailSync({ store, vault, oauth, fetchImpl = globalThis.fe
     if (!thread) return store.removeThread(accountId, threadId);
     const currentFolder = store.getThreadFolder(accountId, threadId);
     const preferredLabelId = currentFolder && store.folderLabel(currentFolder, accountId);
+    thread=store.mailWindows.gmail(accountId,thread);
     const rec = threadToRecord(thread, { ownEmail: email, labelNames: names, preferredLabelId });
     if (!rec) return store.removeThread(accountId, threadId);
     rec.folderId = rec.labelId ? store.ensureLabelFolder(accountId, rec.labelId, names[rec.labelId]) : null;
@@ -198,7 +199,7 @@ export function createGmailSync({ store, vault, oauth, fetchImpl = globalThis.fe
 
   return {
     // Enregistre le compte après l'autorisation et lance l'import en arrière-plan.
-    connect({profileId,name,windowDays,refreshToken,email,scopes=[GMAIL_SCOPES.read],expectedAccount=null,expectNew=false,authorize=()=>{}}) {
+    connect({profileId,name,windowDays,historyDays=null,refreshToken,email,scopes=[GMAIL_SCOPES.read],expectedAccount=null,expectNew=false,authorize=()=>{}}) {
       const prepared=prepareMailConnection({store,oauth,service:'gmail',profileId,name,email,expectedAccount,expectNew,authorize,assertAccountAllowed,generation:epoch});
       const {account}=prepared;email=prepared.email;
       let accept,reject;const ready=new Promise((resolve,no)=>{accept=resolve;reject=no;});ready.catch(()=>{});
@@ -210,12 +211,14 @@ export function createGmailSync({ store, vault, oauth, fetchImpl = globalThis.fe
           store.transaction(()=>{
             store.putSecret(account.id,vault.seal(account.id,{refreshToken,email,scopes,...(oauth.binding?{oauthBinding:oauth.binding}:{})}));
             store.setAccountStatus(account.id,'Synchronisation…','info');
-            store.setSync(account.id,{status:'syncing',window_days:windowDays,history_id:null,total:0,done:0,error:null});
+            if(historyDays!==null)store.mailWindows.initialize(account.id,historyDays);
+            store.setSync(account.id,{status:'syncing',window_days:historyDays===null?windowDays:(historyDays || 365),history_id:null,total:0,done:0,error:null});
           });
           epochs.set(account.id,epoch(account.id)+1);clients.delete(account.id);failures.delete(account.id);
           accept();
         } catch(error) {reject(error);throw gone();}
         await initialSync(account.id);
+        if(historyDays!==null)store.history.start(account.id);
       },{force:true});
       job.then(()=>{if(connecting.get(account.id)===pending)connecting.delete(account.id);});
       return {account:store.getAccount(account.id),job,ready};
@@ -228,10 +231,11 @@ export function createGmailSync({ store, vault, oauth, fetchImpl = globalThis.fe
     },
     historyPage: (accountId,cursor,guard=()=>true) => serial(accountId,async()=>{
       const c=client(accountId);if(!guard())throw gone();
-      const page=await c.gmail.listThreads(undefined,cursor || undefined);
+      const state=cursor && typeof cursor==='object'?cursor:{token:cursor || null,cutoff:store.mailWindows.cutoff(accountId)};
+      const page=await c.gmail.listThreads(state.cutoff?`after:${Math.floor(state.cutoff/1000)}`:undefined,state.token || undefined);
       if(!c.live() || !guard())throw gone();
-      if(!Array.isArray(page.threads || []) || page.nextPageToken && page.nextPageToken===cursor)throw new HttpError(502,'Pagination Gmail invalide.','retryable');
-      return {ids:(page.threads || []).map(t=>t.id),next:page.nextPageToken || null};
+      if(!Array.isArray(page.threads || []) || page.nextPageToken && page.nextPageToken===state.token)throw new HttpError(502,'Pagination Gmail invalide.','retryable');
+      return {ids:(page.threads || []).map(t=>t.id),next:page.nextPageToken?(state.cutoff?{token:page.nextPageToken,cutoff:state.cutoff}:page.nextPageToken):null};
     }),
     historyApply: (accountId,ids,guard=()=>true) => serial(accountId,async()=>{
       const c=client(accountId);if(!guard())throw gone();

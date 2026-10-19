@@ -29,6 +29,9 @@ const query = params => {
 };
 
 export const api = {
+  historyWindow:id=>call('GET',`/api/accounts/${id}/history-window`),
+  previewHistoryWindow:(id,days)=>call('POST',`/api/accounts/${id}/history-window/preview`,{days}),
+  saveHistoryWindow:(id,days,revision,identity)=>call('PUT',`/api/accounts/${id}/history-window`,{days,revision,identity}),
   mailDisplay:id=>call('POST',`/api/messages/${id}/display`,{}),
   network:(profile,days)=>call('GET',`/api/profiles/${encodeURIComponent(profile)}/network${query({days})}`),
   saveGroup:(profile,input,id)=>call(id?'PATCH':'POST',`/api/profiles/${encodeURIComponent(profile)}/person-groups${id?'/'+encodeURIComponent(id):''}`,input),

@@ -1,6 +1,6 @@
 # Historique Gmail et Outlook en arrière-plan
 
-Les comptes connectés peuvent importer toutes les dates, sans limite de 1 000 conversations, depuis le menu du compte : **Importer tout l’historique**. La carte dans Messages affiche les conversations traitées et la découverte en cours ; une fois l’énumération finie, elle affiche le total exact et une barre de progression. La fermeture du navigateur ne coupe pas l’import. Pause et reprise restent disponibles.
+Les comptes connectés importent la période choisie dans **Paramètres → Historique et stockage** : 30 jours, 3 mois, 6 mois, 1 an, 2 ans ou tout. Les nouveaux comptes utilisent un an par défaut. Le menu du compte permet de reprendre l’import de cette période, sans limite de 1 000 conversations. La carte dans Messages affiche les conversations traitées et la découverte en cours ; une fois l’énumération finie, elle affiche le total exact et une barre de progression. La fermeture du navigateur ne coupe pas l’import. Pause et reprise restent disponibles.
 
 ## Données et périmètre
 
@@ -24,3 +24,9 @@ Les états publics contiennent seulement la progression, jamais les curseurs, se
 Tests synthétiques : plus de 1 000 conversations Gmail, reprise sur disque, absence de doublons, conservation des brouillons, pause pendant une réponse réseau, erreurs 429, changement d’identité, suppression du compte, expiration de curseur, refus des résultats d’une ancienne génération, ancien courrier Outlook, suivi de dossiers profonds et suppressions, contrôles HTTP et confidentialité des états publics. Aucun message réel envoyé.
 
 Références API : [Gmail threads.list](https://developers.google.com/workspace/gmail/api/reference/rest/v1/users.threads/list), [Graph messages delta](https://learn.microsoft.com/en-us/graph/api/message-delta), [Graph list messages](https://learn.microsoft.com/en-us/graph/api/user-list-messages).
+
+## Conservation configurable par compte (schéma 19)
+
+Le réglage est propre à chaque compte Gmail/Outlook. Réduire la période affiche un aperçu des conversations et parties anciennes retirées du cache Relay Desk. Les originaux du fournisseur restent inchangés. Les brouillons enregistrés et leur contexte sont protégés ; ils peuvent donc conserver exceptionnellement des messages plus anciens. Contacts, liens et groupes restent conservés. Augmenter la période relance une importation dédupliquée en arrière-plan.
+
+Le nettoyage glissant s’exécute chaque heure. Le changement immédiat sérialise import et synchronisation, invalide les caches riches et résultats IA concernés et compacte SQLite. Les écrans ouverts détectent la révision de conservation et abandonnent les détails obsolètes. La validation de l’aperçu exact avant chaque envoi reste inchangée.

@@ -121,7 +121,7 @@ export function createOutlookSync({ store, vault, oauth, fetchImpl = globalThis.
     for (const m of messages) if (m.id) ids.set(m.id, conversationId);
     const currentFolder = store.getThreadFolder(accountId, conversationId);
     const preferredLabelId = currentFolder && store.folderLabel(currentFolder, accountId);
-    const rec = conversationToRecord(conversationId, messages, { ownEmail: c.email, folders, preferredLabelId });
+    const rec = conversationToRecord(conversationId, store.mailWindows.outlook(accountId,conversationId,messages,folders.skip), { ownEmail: c.email, folders, preferredLabelId });
     if (!rec) return store.removeThread(accountId, conversationId);
     rec.folderId = rec.labelId ? store.ensureLabelFolder(accountId, rec.labelId, folders.user[rec.labelId]) : null;
     store.upsertThread(accountId, rec, { syncFolder: permissions(accountId).includes('labels') });
@@ -236,7 +236,7 @@ export function createOutlookSync({ store, vault, oauth, fetchImpl = globalThis.
   const actions = createOutlookActions({ store, client: id => client(id).graph, permissions });
 
   return {
-    connect({profileId,name,windowDays,refreshToken,email,scopes=[OUTLOOK_SCOPES.read],expectedAccount=null,expectNew=false,authorize=()=>{}}) {
+    connect({profileId,name,windowDays,historyDays=null,refreshToken,email,scopes=[OUTLOOK_SCOPES.read],expectedAccount=null,expectNew=false,authorize=()=>{}}) {
       const prepared=prepareMailConnection({store,oauth,service:'outlook',profileId,name,email,expectedAccount,expectNew,authorize,assertAccountAllowed,generation:epoch});
       const {account}=prepared;email=prepared.email;
       let accept,reject;const ready=new Promise((resolve,no)=>{accept=resolve;reject=no;});ready.catch(()=>{});
@@ -248,12 +248,14 @@ export function createOutlookSync({ store, vault, oauth, fetchImpl = globalThis.
           store.transaction(()=>{
             store.putSecret(account.id,vault.seal(account.id,{refreshToken,email,scopes,...(oauth.binding?{oauthBinding:oauth.binding}:{})}));
             store.setAccountStatus(account.id,'Synchronisation…','info');
-            store.setSync(account.id,{status:'syncing',window_days:windowDays,history_id:null,total:0,done:0,error:null});
+            if(historyDays!==null)store.mailWindows.initialize(account.id,historyDays);
+            store.setSync(account.id,{status:'syncing',window_days:historyDays===null?windowDays:(historyDays || 365),history_id:null,total:0,done:0,error:null});
           });
           epochs.set(account.id,epoch(account.id)+1);clients.delete(account.id);failures.delete(account.id);
           accept();
         } catch(error) {reject(error);throw gone();}
         await initialSync(account.id);
+        if(historyDays!==null)store.history.start(account.id);
         const c=clients.get(account.id);
         if(!email && c?.email && c.live()) {
           store.upsertAccount(profileId,{name,channel:'email',svc:'outlook',address:c.email});
@@ -271,11 +273,11 @@ export function createOutlookSync({ store, vault, oauth, fetchImpl = globalThis.
     },
     historyPage: (accountId,cursor,guard=()=>true) => serial(accountId,async()=>{
       const c=client(accountId);if(!guard())throw gone();
-      const state=cursor || {folders:(await folderMap(c.graph,Infinity,accountId,()=>c.live() && guard())).tracked,index:0,link:null,links:{}};
+      const state=cursor || {folders:(await folderMap(c.graph,Infinity,accountId,()=>c.live() && guard())).tracked,index:0,link:null,links:{},since:store.mailWindows.cutoff(accountId)};
       if(!c.live() || !guard())throw gone();
       if(state.index>=state.folders.length)return {ids:[],next:null};
       const folder=state.folders[state.index];let page;
-      try{page=await c.graph.delta(folder,state.link);}catch(error){if(error.code==='not_found')throw new HttpError(410,'Dossier d’archive supprimé.','archive_cursor_expired');throw error;}
+      try{page=await c.graph.delta(folder,state.link,state.since?new Date(state.since).toISOString():null);}catch(error){if(error.code==='not_found')throw new HttpError(410,'Dossier d’archive supprimé.','archive_cursor_expired');throw error;}
       if(!c.live() || !guard())throw gone();
       if(!Array.isArray(page.value) || (!page['@odata.nextLink'] && !page['@odata.deltaLink']) || page['@odata.nextLink'] && page['@odata.nextLink']===state.link)throw new HttpError(502,'Pagination Outlook invalide.','retryable');
       // Preserve message→conversation mappings for removals, including old mail.
@@ -315,6 +317,7 @@ export function createOutlookSync({ store, vault, oauth, fetchImpl = globalThis.
       connecting.delete(accountId);
       return serial(accountId, fn);
     },
+    queue: (accountId,fn)=>serial(accountId,fn),
     exclusive: (accountId, fn) => serial(accountId, () => fn(client(accountId))),
     queue: (accountId, fn) => serial(accountId, fn),
     start(intervalMs = 60000) {

@@ -89,7 +89,7 @@ export function createRuntime(config,{providerFactory=assembleProviders,appFacto
         if(!stopRequested) {
           for(const sync of syncs()) await sync.start(config.syncIntervalMs);
           duplicateWorker=createDuplicateWorker(store);duplicateWorker.start();
-          maintenance=setInterval(()=>store.pruneReplyMemory(),3600000);maintenance.unref();
+          maintenance=setInterval(()=>{try{store.pruneReplyMemory();let freed=0;for(const a of db.prepare("SELECT a.id FROM accounts a JOIN mail_history_windows w ON w.account_id=a.id WHERE w.days>0").all()){const r=store.mailWindows.prune(a.id);freed+=r.removed+r.trimmed;}if(freed || store.mailWindows.needsCompaction())store.mailWindows.compact();}catch{log.warn?.('Nettoyage local temporairement indisponible.');}},3600000);maintenance.unref();
         }
         state='running';return {url};
       } catch(error) {

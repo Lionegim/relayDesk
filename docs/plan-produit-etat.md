@@ -52,3 +52,7 @@ Ces lots sont un ordre de suite, pas des travaux déclenchés par cette mise à 
 ## Interface : dossiers, lecture et réseau (19 octobre 2026)
 
 Réorganisation inspirée de Mail et revue avec Claude Desktop : arbres par compte, vrais sous-dossiers et badges non lus ; lecture HTML sémantique nettoyée avec repli texte ; réseau centré sur le propriétaire (30/90/365 jours), liste mobile et groupes manuels persistants avec gestion des membres. Voir [détail et limites](ui-reseau-et-lecture.md). L’approbation de l’aperçu exact demeure obligatoire pour chaque envoi.
+
+### Conservation du courrier configurable
+
+Les imports complets ci-dessus décrivent la vérification initiale. La période conservée est désormais configurable par compte (30 jours à tout), avec un an par défaut pour les nouveaux comptes. La réduction des deux comptes existants à un an est autorisée par le propriétaire. Le nettoyage touche seulement le cache Relay Desk, protège les brouillons et conserve les contacts/liens/groupes. Voir `docs/import-historique-mail.md`.

@@ -1,3 +1,4 @@
+import {createHistoryWindows} from './mail/history/windows.js';
 import {createContactNetwork} from './contacts/network.js';
 import {createPersonHistory} from './ai/person-history.js';
 import {createHistoryRepository} from './mail/history/repository.js';
@@ -80,6 +81,7 @@ export function createStore(db) {
     savePersonGroup:(p,input,id)=>network.save(p,input,id),
     personGroupMembership:(p,id,personId,on)=>network.membership(p,id,personId,on),
     history:createHistoryRepository(db,changed),
+    mailWindows:createHistoryWindows(db,changed),
     contactsBackfill:()=>people.backfill(),
     contactDuplicateProfiles:()=>[...q('SELECT id FROM profiles').all(),{id:'all'}],
     scanContactDuplicates:p=>duplicates.scan(p),
@@ -155,6 +157,7 @@ export function createStore(db) {
     firstProfileId: () => q('SELECT id FROM profiles ORDER BY position, id LIMIT 1').get()?.id ?? null,
     getMessage(id,options=null) {
       const r=row(id),m=toMessage(r,true);
+      if(r.account_id && ['gmail','outlook'].includes(accountOf(r.account_id).svc)){const window=this.mailWindows.policy(r.account_id);m.historyWindowRevision=`${window.days}:${window.contentRevision}`;}
       const revision=fingerprint([id,r.account_id,r.external_id,r.sort_at,r.message_count,r.trail]);
       if (r.channel === 'whatsapp' && r.account_id && r.external_id) {
         const select="SELECT m.rowid AS entry_id,m.msg_id,m.from_me,m.ts,m.text,m.author_jid,COALESCE(c.name,NULLIF(m.sender_name,'Participant'),m.sender_name) AS sender_name FROM whatsapp_messages m LEFT JOIN whatsapp_chats c ON c.account_id=m.account_id AND c.chat_jid=m.author_jid WHERE m.account_id=? AND m.chat_jid=?";

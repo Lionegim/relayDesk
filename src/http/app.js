@@ -1,3 +1,4 @@
+import {HISTORY_WINDOWS} from '../mail/history/windows.js';
 import {readMailDisplay} from '../mail/display.js';
 import {importAddressBook} from '../contacts/import.js';
 import http from 'node:http';
@@ -61,7 +62,7 @@ const messageId = raw => {
   return id;
 };
 
-const WINDOWS = [7, 30, 90];
+const WINDOWS = [0,7,30,90,180,365,730];
 
 function redirect(res, location) {
   res.writeHead(302, { ...SECURITY_HEADERS, location, 'cache-control': 'no-store' });
@@ -115,7 +116,8 @@ export function createApp({ store, ai, ownerName, gmail = null, providers = {}, 
         if (account.svc !== service || account.profileId !== profileId || account.name !== name) throw badRequest('Compte de messagerie invalide');
       }
       if(account && (account.svc!==service || account.profileId!==profileId || account.name!==name)) throw badRequest('Compte de messagerie invalide');
-      const context={profileId,name,win,expectNew:!account,address:account?.address,target:account?{id:account.id,identity:store.accountIdentity(account.id),generation:provider.sync.generation?.(account.id) || 0,address:account.address}:null};
+      const historyDays=account?null:Number(url.searchParams.get('historyDays') ?? 365);if(historyDays!==null && !HISTORY_WINDOWS.includes(historyDays))throw badRequest('Historique invalide');
+      const context={profileId,name,win,historyDays,expectNew:!account,address:account?.address,target:account?{id:account.id,identity:store.accountIdentity(account.id),generation:provider.sync.generation?.(account.id) || 0,address:account.address}:null};
       const location=provider.oauth.start({redirectUri:provider.redirectUri,perms,context});
       if(auth) access.rememberOAuth(session,service,location,context);
       return json?send(res,200,{url:location}):redirect(res,location);
@@ -128,7 +130,7 @@ export function createApp({ store, ai, ownerName, gmail = null, providers = {}, 
         authorize(r.context);
         const email = mailboxAddress(r.email || (provider.oauth.mode!=='web'?emailFromIdToken(r.idToken):null));
         if (r.context.address && mailboxAddress(r.context.address) !== email) throw badRequest('Choisis le compte déjà connecté pour modifier ses permissions.');
-        const {account,ready}=provider.sync.connect({profileId:r.context.profileId,name:r.context.name,windowDays:r.context.win,refreshToken:r.refreshToken,email,scopes:r.scopes,expectedAccount:r.context.target,expectNew:r.context.expectNew,authorize:()=>authorize(r.context)});
+        const {account,ready}=provider.sync.connect({profileId:r.context.profileId,name:r.context.name,windowDays:r.context.win,historyDays:r.context.historyDays ?? (r.context.expectNew?365:null),refreshToken:r.refreshToken,email,scopes:r.scopes,expectedAccount:r.context.target,expectNew:r.context.expectNew,authorize:()=>authorize(r.context)});
         if(ready) await ready;
         return back({ connect: service, account: account.id, profile: r.context.profileId, win: r.context.win });
       } catch (e) {
@@ -153,7 +155,7 @@ export function createApp({ store, ai, ownerName, gmail = null, providers = {}, 
       const snapshot=store.snapshot(paged?{profile:params.profile || store.firstProfileId(),nav:params.nav,channel:params.channel,folder:params.folder || null,q:params.q,limit:params.limit,cursor:params.cursor}:null);
       for (const profile of snapshot.profiles) for (const account of profile.accounts) {
         account.perms = mail.permissions(account);
-        if(['gmail','outlook'].includes(account.svc))account.history=store.history.status(account.id);
+        if(['gmail','outlook'].includes(account.svc)){account.history=store.history.status(account.id);const window=store.mailWindows.policy(account.id);account.historyDays=window.days;account.historyWindowRevision=`${window.days}:${window.contentRevision}`;}
         if(push && ['gmail','outlook'].includes(account.svc)) account.notifications=push.status(account.id);
         if (providers[account.svc]) account.windowDays = account.svc === 'whatsapp' ? 7 : store.getSync(account.id)?.window_days || 30;
         if (account.svc === 'whatsapp' && providers.whatsapp) account.sync = providers.whatsapp.sync.progress?.(account.id) || null;
@@ -182,6 +184,14 @@ export function createApp({ store, ai, ownerName, gmail = null, providers = {}, 
       if (!providers.whatsapp) throw notFound();
       await providers.whatsapp.cancelLink(id);
       return { cancelled: true };
+    }],
+    ['GET', /^\/api\/accounts\/([^/]+)\/history-window$/, ([id])=>store.mailWindows.describe(accountId(id))],
+    ['POST', /^\/api\/accounts\/([^/]+)\/history-window\/preview$/, ([id],body)=>store.mailWindows.preview(accountId(id),body.days)],
+    ['PUT', /^\/api\/accounts\/([^/]+)\/history-window$/, ([id],body)=>{
+      const aid=accountId(id),provider=mail.providerFor(aid),identity=body.identity;
+      if(typeof identity!=='string' || store.accountIdentity(aid)!==identity)throw new HttpError(409,'Le compte a changé : recommence depuis les paramètres.','account_changed');
+      if(!provider.sync.queue)throw badRequest('Réglage indisponible pour ce compte.');
+      return provider.sync.queue(aid,()=>{if(store.accountIdentity(aid)!==identity)throw new HttpError(409,'Le compte a changé.','account_changed');const result=store.mailWindows.set(aid,body.days,body.revision);if(result.changed){store.history.reset(aid);result.storageOptimized=(result.cleanup.removed || result.cleanup.trimmed || store.mailWindows.needsCompaction())?store.mailWindows.compact():true;}return result;});
     }],
     ['POST', /^\/api\/accounts\/([^/]+)\/history$/, ([id],body) => {
       const aid=accountId(id),provider=mail.providerFor(aid);

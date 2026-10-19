@@ -763,3 +763,14 @@ test('unified view retains message account selection and makes equal account nam
  const data={...page([row(1),row(2,{p:'anove',accountId:2})]),unifiedProfile:{id:'all',name:'Tous les profils',initials:'∞'},unifiedContacts:[],profiles:[profiles[0],{id:'anove',name:'Anove',initials:'A',accounts:[{id:2,name:'Mail',channel:'email',svc:'outlook',perms:['read','drafts','send']}]}],services:{gmail:{real:true},outlook:{real:true}}};
  const u=await app({state:data});u.c.act.selectProfile({id:'all'});await tick(6);assert.equal(u.c.view().profile.accounts.length,2);assert.equal(u.c.view().list.length,2);u.c.act.openAccount({id:'2',name:'Mail'});assert.equal(u.s().accountMenu,2);u.c.act.newMessage();u.c.act.newMailField({field:'accountId'},{target:{value:'2'}});assert.equal(u.s().newMail.accountId,2);assert.equal(u.calls.send.length,0);
 });
+
+test('another open screen drops a pruned selected email on account-window revision and confirmed404',async t=>{
+ const state=page([row(1)]);state.profiles=structuredClone(profiles);state.profiles[0].accounts[0].historyWindowRevision='0:0';
+ const u=await app({live:true,state,onMessage:async()=>({id:1,body:'Old cached mail',trail:[{id:'old',at:100,body:'Old tail'}],historyWindowRevision:'0:0',draftVersion:7,draft:null})});t.after(()=>u.listeners.pagehide());
+ for(let i=0;i<100&&!u.s().details[1];i++)await new Promise(r=>setTimeout(r,5));assert.equal(u.s().details[1].body,'Old cached mail');
+ u.api.onState=async()=>{const next=page([]);next.profiles=structuredClone(profiles);next.profiles[0].accounts[0].historyWindowRevision='365:1';return next;};u.api.onMessage=async()=>{throw Object.assign(new Error('Removed'),{status:404});};u.c.liveSource.emit('connected');u.c.liveSource.emit('invalidate');
+ for(let i=0;i<100&&u.s().selectedId!==null;i++)await new Promise(r=>setTimeout(r,5));assert.equal(u.s().selectedId,null);assert.equal(u.s().selectedRow,null);assert.equal(u.s().details[1],undefined);assert.equal(u.calls.send.length,0);
+});
+test('retention revision prevents combining a newly trimmed trail with older client-cached pages',async()=>{
+ const u=await app();u.c.old={historyWindowRevision:'0:0',sortAt:3000,trail:[{id:'old',at:1000,body:'expired'}]};u.c.next={historyWindowRevision:'365:1',sortAt:3000,trail:[{id:'new',at:2000,body:'retained'}]};const result=vm.runInContext('mergeHistory(old,next)',u.c);assert.deepEqual(plain(result.trail).map(m=>m.id),['new']);
+});

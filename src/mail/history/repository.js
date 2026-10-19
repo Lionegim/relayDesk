@@ -17,6 +17,7 @@ export function createHistoryRepository(db,changed=()=>{}) {
    if(j && j.identity===identity(a)){if(j.status!=='complete')q("UPDATE mail_history_imports SET status='running',error=NULL,retry_at=0 WHERE account_id=?").run(id);}
    else transaction(db,()=>{q('DELETE FROM mail_history_imports WHERE account_id=?').run(id);q("INSERT INTO mail_history_imports(account_id,job_id,identity,status,started_at,updated_at) VALUES(?,?,?,'running',?,?)").run(id,randomUUID(),identity(a),now(),now());});touch(id);return this.status(id);
   },
+  reset(id){account(id) || (()=>{throw badRequest('Compte introuvable');})();transaction(db,()=>{q('DELETE FROM mail_history_imports WHERE account_id=?').run(id);});return this.start(id);},
   pause(id){q("UPDATE mail_history_imports SET status='paused' WHERE account_id=? AND status!='complete'").run(id);touch(id);return this.status(id);},
   due(at=Date.now()){return q("SELECT * FROM mail_history_imports WHERE status IN ('running','retrying') AND retry_at<=? ORDER BY updated_at,account_id").all(at);},
   pending(id,limit=5){return q('SELECT external_id FROM mail_history_items WHERE account_id=? AND done=0 ORDER BY external_id LIMIT ?').all(id,limit).map(x=>x.external_id);},

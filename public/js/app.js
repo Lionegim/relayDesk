@@ -23,6 +23,7 @@ const state = {
   contactHistory:null,contactHistoryError:null,historyBusy:false,
   duplicates:null,duplicatesBusy:false,duplicatesError:null,duplicatesReview:null,duplicatesKeep:null,duplicatesTab:'pending',duplicatesLimit:25,
   personOpen:null, person:null, personError:null, personBusy:false, personKind:'email', personValue:'', personMerge:'', contactImport:false, contactImportBusy:null, fromPerson:false,
+  mailSettings:{},mailSettingsDays:{},mailSettingsPreview:null,mailSettingsBusy:null,mailSettingsError:null,
   mailText:{},
   c: null,
   details: {},
@@ -94,7 +95,7 @@ const trailKey = t => t.id != null ? `id:${t.id}` : `${t.at}|${t.fromMe}|${t.fro
 const oldestAt = full => Math.min(...(full.trail || []).map(t => Number.isFinite(t.at) ? t.at : Infinity), Number.isFinite(full.at) ? full.at : Infinity);
 // Une actualisation ne recharge que la page récente : l'historique plus ancien déjà affiché est conservé.
 function mergeHistory(prev, next) {
-  if (!prev || prev.failed || !prev.trail?.length) return next;
+  if (!prev || prev.failed || !prev.trail?.length || prev.historyWindowRevision!==next.historyWindowRevision) return next;
   const seen = new Set((next.trail || []).map(trailKey)), limit = oldestAt(next);
   const extra = prev.trail.filter(t => !seen.has(trailKey(t)) && Number.isFinite(t.at) && t.at <= limit);
   return extra.length ? { ...next, trail: [...(next.trail || []), ...extra], history: prev.history ?? next.history } : next;
@@ -119,6 +120,7 @@ function loadDetails(id) {
     })
     .catch(err => {
       if (!known(id) || revision !== (detailRevisions.get(id) || 0)) return true;
+      if(err.status===404){set(s=>({details:Object.fromEntries(Object.entries(s.details).filter(([key])=>Number(key)!==id)),...(s.selectedId===id?{selectedId:null,selectedRow:null}: {})}));return false;}
       set(s => ({ details: { ...s.details, [id]: s.details[id] && !s.details[id].failed
         ? { ...s.details[id], refreshing: false, stale: true } : { failed: true, trail: [] } } }));
       fail(err);
@@ -151,6 +153,12 @@ let historyRequest=0;
 async function loadContactHistory(){const profile=state.profileId,request=++historyRequest;try{const result=await api.contactHistory(profile);if(state.profileId===profile && request===historyRequest)set({contactHistory:result,contactHistoryError:null});}catch(e){if(state.profileId===profile && request===historyRequest)set({contactHistoryError:e.message});}}
 
 let duplicatesRequest=0,duplicateActionVersion=0;
+let settingsRequest=0;
+async function loadMailSettings(){
+ const version=++settingsRequest;set({mailSettingsError:null});
+ const accounts=state.data.profiles.filter(p=>p.id!=='all').flatMap(p=>p.accounts).filter(a=>['gmail','outlook'].includes(a.svc));
+ try{const results=await Promise.all(accounts.map(a=>api.historyWindow(a.id)));if(version===settingsRequest)set({mailSettings:Object.fromEntries(results.map(r=>[r.accountId,r])),mailSettingsDays:Object.fromEntries(results.map(r=>[r.accountId,r.days]))});}catch(e){if(version===settingsRequest)set({mailSettingsError:e.message});}
+}
 let networkRequest=0;
 async function loadNetwork(){
  const request=++networkRequest,profile=state.profileId,days=state.networkDays;set({networkBusy:true,networkError:null});
@@ -215,19 +223,24 @@ function applyData(data, extra = {}) {
   data=withUnified(data);
   // Empreinte d'une ligne : dernier message, nombre et version du brouillon (modifié sur un autre appareil).
   const mark = m => `${m.sortAt}:${m.count}:${m.draftVersion ?? ''}`;
+  const previousAccounts=new Map((state.data?.profiles || []).filter(p=>p.id!=='all').flatMap(p=>p.accounts).map(a=>[a.id,a.historyWindowRevision]));
+  const changedWindows=new Set(data.profiles.filter(p=>p.id!=='all').flatMap(p=>p.accounts).filter(a=>previousAccounts.has(a.id) && previousAccounts.get(a.id)!==a.historyWindowRevision).map(a=>a.id));
   const before = new Map((state.data?.messages || []).map(m => [m.id, mark(m)]));
   const details = Object.fromEntries(Object.entries(state.details).flatMap(([id, full]) => {
     const m = data.messages.find(x => x.id === Number(id)) || (Number(id) === state.selectedId && state.selectedRow?.id === state.selectedId ? state.selectedRow : null);
     if (!m) return [];
+    if(changedWindows.has(m.accountId)){detailRevisions.set(m.id,(detailRevisions.get(m.id)||0)+1);return [];}
     if (!full.stale && before.get(m.id) === mark(m)) return [[id, full]];
     // Garder les bulles pendant le rechargement préserve l'ancrage de lecture.
     return m.channel === 'whatsapp' && !full.failed ? [[id, { ...full, refreshing: true }]] : [];
   }));
   const a = state.ai, updated = a && (data.messages.find(m => m.id === a.forId) || (state.selectedRow?.id === a.forId ? state.selectedRow : null));
-  const ai = a && (!updated || (before.has(updated.id) && before.get(updated.id).replace(/:[^:]*$/, '') !== `${updated.sortAt}:${updated.count}`)) ? null : a;
+  const ai = a && (!updated || changedWindows.has(updated.accountId) || (before.has(updated.id) && before.get(updated.id).replace(/:[^:]*$/, '') !== `${updated.sortAt}:${updated.count}`)) ? null : a;
   // La ligne sélectionnée reste connue même hors de la page affichée (même profil).
   const row = data.messages.find(m => m.id === state.selectedId);
-  set({ data, details, ai, ...(row ? { selectedRow: row } : {}), ...extra });
+  set({ data, details, ai, ...(row ? { selectedRow: row } : {}), ...(changedWindows.size && state.personOpen?{person:null}:{}), ...extra });
+  if(changedWindows.size && state.personOpen){const id=state.personOpen,profile=state.profileId,versions=JSON.stringify(data.profiles.flatMap(p=>p.accounts).map(a=>[a.id,a.historyWindowRevision]));api.person(profile,id).then(person=>{if(state.personOpen===id && state.profileId===profile && versions===JSON.stringify(state.data.profiles.flatMap(p=>p.accounts).map(a=>[a.id,a.historyWindowRevision])))set({person});}).catch(()=>{});}
+
 }
 
 // ---------- Historique d'un fil ----------
@@ -541,9 +554,9 @@ function svcInit(key, name) {
   return { step: key==='whatsapp'?'auth':'config', svc: key, name: name || (key==='whatsapp'?whatsappAccountName():def.name), fields, perms: def.auth === 'qr' ? { read: true, drafts: true, send: true } : { read: true }, ...(def.auth === 'qr' ? { win: 7 } : {}) };
 }
 function openWizard(svc, name, account = null) {
-  const c = { wizardId: ++wizardVersion, step: 'pick', svc: null, profile: account?.profileId || (state.profileId==='all'?state.data.profiles.find(p=>p.id!=='all')?.id:state.profileId), name: '', perms: { read: true }, win: 30, fields: {}, progress: 0, fromAccount: !!name };
+  const c = { wizardId: ++wizardVersion, step: 'pick', svc: null, profile: account?.profileId || (state.profileId==='all'?state.data.profiles.find(p=>p.id!=='all')?.id:state.profileId), name: '', perms: { read: true }, win: 365,historyDays:365, fields: {}, progress: 0, fromAccount: !!name };
   if (svc) Object.assign(c, svcInit(svc, name));
-  if (account) Object.assign(c, { accountId: account.id, win: svc === 'whatsapp' ? 7 : account.windowDays || 30, perms: Object.fromEntries((svc === 'whatsapp' ? ['read','drafts','send'] : ['read', ...(account.perms || [])]).map(p => [p, true])) });
+  if (account) Object.assign(c, {historyDays:account.historyDays ?? 0, accountId: account.id, win: svc === 'whatsapp' ? 7 : account.windowDays || 30, perms: Object.fromEntries((svc === 'whatsapp' ? ['read','drafts','send'] : ['read', ...(account.perms || [])]).map(p => [p, true])) });
   set({ c, menu: false, accountMenu: null });
   if(svc==='whatsapp') startWhatsAppLink();
 }
@@ -598,8 +611,8 @@ async function startProviderAuth() {
     return;
   }
   const perms = state.data.services[c.svc].available.filter(p => c.perms[p]);
-  if(state.auth?.legacy){location.href=(c.svc==='outlook'?'/oauth/microsoft/start?':'/oauth/google/start?')+new URLSearchParams({profile:c.profile,name:c.name.trim(),win:c.win,perms:perms.join(','),...(c.accountId?{account:c.accountId}:{})});return;}
-  try {const result=await api.startOAuth(c.svc==='outlook'?'microsoft':'google',{ profile:c.profile,name:c.name.trim(),win:c.win,perms:perms.join(','),...(c.accountId?{account:c.accountId}:{}) });location.assign(result.url);}catch(error){setC({busy:false,error:error.message});}
+  if(state.auth?.legacy){location.href=(c.svc==='outlook'?'/oauth/microsoft/start?':'/oauth/google/start?')+new URLSearchParams({profile:c.profile,name:c.name.trim(),win:c.win,historyDays:c.historyDays ?? 365,perms:perms.join(','),...(c.accountId?{account:c.accountId}:{})});return;}
+  try {const result=await api.startOAuth(c.svc==='outlook'?'microsoft':'google',{ profile:c.profile,name:c.name.trim(),win:c.win,historyDays:c.historyDays ?? 365,perms:perms.join(','),...(c.accountId?{account:c.accountId}:{}) });location.assign(result.url);}catch(error){setC({busy:false,error:error.message});}
 }
 function trackImport(accountId) {
   clearInterval(syncTimer);
@@ -816,7 +829,7 @@ const actions = {
     filtersChanged({contactHistory:null,contactHistoryError:null,historyBusy:false,duplicates:null,duplicatesError:null,duplicatesBusy:false,duplicatesReview:null,duplicatesKeep:null,duplicatesLimit:25, newMailOpen: false, profileId: id, personOpen:null,person:null,personError:null,personMerge:'',personValue:'',personBusy:false,network:null,networkError:null,groupEditor:null,contactImport:false,fromPerson:false, menu: false, accountMenu: null, picked: {}, group: 'all', channel: 'all', query: '', selectedId: state.paged ? null : firstOf(id), selectedRow: null, folder: null, ai: null, moveOpen: false, creating: false, composing: null, pane: 'list' });
     if(state.app==='duplicates')loadDuplicates();if(state.app==='history')loadContactHistory();if(state.app==='contacts')loadNetwork();
   },
-  selectApp: ({ app }) => { if (state.drawer) backFrom('drawer'); set({ app, ai: null, moveOpen: false,duplicatesReview:null });if(app==='duplicates')loadDuplicates();if(app==='history')loadContactHistory();if(app==='contacts')loadNetwork(); },
+  selectApp: ({ app }) => { if (state.drawer) backFrom('drawer'); set({ app, ai: null, moveOpen: false,duplicatesReview:null });if(app==='duplicates')loadDuplicates();if(app==='history')loadContactHistory();if(app==='contacts')loadNetwork();if(app==='settings')loadMailSettings(); },
   selectNav: ({ id }) => { if (state.drawer) backFrom('drawer'); filtersChanged({ nav: id, channel: 'all', folder: null }); },
   openDrawer: () => { set({ drawer: true }); pushLayer('drawer'); },
   closeDrawer: () => backFrom('drawer'),
@@ -826,6 +839,11 @@ const actions = {
   loadOlder: ({ id }) => loadOlder(Number(id)),
   draftReload: ({ id }) => resolveConflict(Number(id), false),
   draftKeepMine: ({ id }) => resolveConflict(Number(id), true),
+  openMailSettings:()=>{if(state.drawer)backFrom('drawer');set({app:'settings',accountMenu:null,mailSettingsPreview:null});loadMailSettings();},
+  historyWindowChange:({id},e)=>set({mailSettingsDays:{...state.mailSettingsDays,[id]:Number(e.target.value)},mailSettingsPreview:null}),
+  reviewHistoryWindow:async({id})=>{if(state.mailSettingsBusy)return;set({mailSettingsBusy:Number(id),mailSettingsError:null});try{const review=await api.previewHistoryWindow(Number(id),state.mailSettingsDays[id]);set({mailSettingsPreview:review});}catch(e){set({mailSettingsError:e.message});}finally{set({mailSettingsBusy:null});}},
+  cancelHistoryWindow:()=>set({mailSettingsPreview:null}),
+  applyHistoryWindow:async()=>{const r=state.mailSettingsPreview;if(!r || state.mailSettingsBusy)return;set({mailSettingsBusy:r.accountId,mailSettingsError:null});try{const result=await api.saveHistoryWindow(r.accountId,r.requestedDays,r.revision,r.identity);set({mailSettingsPreview:null,details:{},person:null,personOpen:null,network:null,ai:null});await reload({refresh:true});await loadMailSettings();notify(`Historique enregistré : ${result.cleanup.removed} conversations retirées du cache. Tes messages chez le fournisseur et tes brouillons sont conservés.`);}catch(e){set({mailSettingsError:e.message,mailSettingsPreview:null});}finally{set({mailSettingsBusy:null});}},
   retryMailDisplay:({id})=>{const full=state.details[id];if(full)loadMailDisplay(Number(id),full);},
   toggleMailText:({id})=>set({mailText:{...state.mailText,[id]:!state.mailText[id]}}),
   contactView:({view})=>{set({contactView:view});if(!state.network)loadNetwork();},
@@ -880,7 +898,7 @@ const actions = {
   },
   accountHistory: async ({id,action}) => {
     set({accountMenu:null});
-    try {await api.importHistory(Number(id),action || 'start');await reload({refresh:true});set({toast:action==='pause'?'Import en pause.':'Import de tout l’historique en arrière-plan.'});}catch(e){fail(e);}
+    try {await api.importHistory(Number(id),action || 'start');await reload({refresh:true});set({toast:action==='pause'?'Import en pause.':'Import de l’historique choisi en arrière-plan.'});}catch(e){fail(e);}
   },
   accountSync: async ({ id }) => {
     set({ accountMenu: null });
@@ -1206,6 +1224,7 @@ const actions = {
     if (def.available && !def.available.includes(perm)) return;
     setC(c => ({ perms: { ...c.perms, [perm]: !c.perms[perm] } }));
   },
+  cHistory:(_,e)=>{const days=Number(e.target.value);if([0,30,90,180,365,730].includes(days))setC({historyDays:days,win:days || 365});},
   cWindow: ({ win }) => { const w = Number(win); if (WINDOWS.includes(w)) setC({ win: w }); },
   cField: ({ field }, e) => { const v = e.target.value; setC(c => ({ fields: { ...c.fields, [field]: v } })); },
   cBack: () => {
@@ -1239,6 +1258,7 @@ delegate(document, {
 document.addEventListener('keydown', e => {
   if (e.key !== 'Escape') return;
   if(state.groupEditor){if(!state.groupBusy)actions.closeGroup();}
+  else if(state.mailSettingsPreview){if(!state.mailSettingsBusy)actions.cancelHistoryWindow();}
   else if(state.personOpen){if(!state.personBusy)actions.closePerson();}
   else if (state.confirm) actions.confirmCancel();
   else if (state.newMailOpen) actions.closeNewMail();
