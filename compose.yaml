@@ -1,6 +1,6 @@
 # Relay Desk hébergé : fichier PRÉPARATOIRE, non déployé.
 # - Le serveur refuse le mode hébergé sans configuration OIDC complète et propriétaire/MFA explicites.
-# - Les deux services sont dans le profil « hosted » : un simple « docker compose up » ne démarre rien.
+# - Les services relay/proxy sont dans le profil « hosted » ; backup est dans son profil séparé : un simple « docker compose up » ne démarre rien.
 # - Les variables obligatoires (${...:?}) n'ont pas de valeur par défaut : sans configuration explicite, Compose s'arrête.
 # - Toujours passer le fichier d'environnement hors dépôt : --env-file /etc/relay-desk/hosted.env (voir docs/operations.md),
 #   après « node deploy/preflight.mjs --env-file … ». Aucune valeur secrète dans ce fichier d'environnement.

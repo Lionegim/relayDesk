@@ -182,3 +182,13 @@ test('ligne de commande : code 1 et aucun secret affiché en cas de refus ; code
   assert.equal(good.status, 0, good.stdout);
   assert.match(good.stdout, /FICTIVE : non déployable/);
 });
+
+
+test('clé de sauvegarde : format invalide et même clé encodée autrement refusés avant démarrage', { skip }, async t=>{
+  for(const equivalent of [false,true]){
+    const s=await setup(t);chmodSync(s.backupKey,0o600);
+    const value=equivalent?Buffer.from(readFileSync(join(s.secrets,'relay_secret_key'),'utf8').trim(),'base64').toString('hex'):'invalid-backup-key';
+    writeFileSync(s.backupKey,value);chmodSync(s.backupKey,0o400);
+    const r=await s.run();assert.ok(has(r.errors,equivalent?/distincte de la clé du coffre/:/32 octets/));assert.ok(!has(r.notes,/validation du runtime/));
+  }
+});

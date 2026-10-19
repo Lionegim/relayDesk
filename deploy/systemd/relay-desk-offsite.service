@@ -13,7 +13,7 @@ ConditionPathExists=/etc/relay-desk/offsite.env
 Type=oneshot
 # hosted.env fournit RELAY_BACKUP_DIR. offsite.env (root, 0600) fournit :
 #   OFFSITE_RCLONE_REMOTE=nom-du-remote:conteneur/relay-desk
-#   RCLONE_CONFIG=/etc/relay-desk/rclone.conf   (root, 0600 ; jeton limité à l'écriture sur ce conteneur)
+#   RCLONE_CONFIG=/etc/relay-desk/rclone.conf   (root, 0600 ; jeton limité à liste/lecture/écriture sur ce conteneur)
 EnvironmentFile=/etc/relay-desk/hosted.env
 EnvironmentFile=/etc/relay-desk/offsite.env
 UMask=0077

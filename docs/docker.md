@@ -12,7 +12,7 @@ Aucun de ces fichiers ne lit le `.env` réel, ni les données ou secrets du Mac.
 | Fichier | Rôle |
 | --- | --- |
 | `Dockerfile` | Étapes `deps` (dépendances de production), `test` (suite complète) et `runtime` (image finale). Image de base épinglée par version et empreinte. |
-| `.dockerignore` | Liste blanche : seuls `package*.json`, `server.js`, `src/`, `public/`, `test/`, la sonde de santé et `scripts/backup.mjs` entrent dans le contexte. `.env*`, `*.key`, `*.pem`, `data/`, `backups/`, `exports/`, archives et bases SQLite sont exclus partout. |
+| `.dockerignore` | Liste blanche : seuls `package*.json`, `server.js`, `src/`, `public/`, `test/`, `scripts/backup.mjs` et les fichiers déclaratifs d’exploitation nécessaires à la recette (Compose, préflight, modèles, guide) entrent dans le contexte. `.env*`, `*.key`, `*.pem`, `data/`, `backups/`, `exports/`, archives et bases SQLite sont exclus partout. |
 | `deploy/healthcheck.mjs` | Sonde `GET /api/ready` en local, avec le Host de `PUBLIC_BASE_URL`. |
 | `deploy/test/compose.env` | Fichier d'environnement de Compose pour le test : il remplace la lecture automatique du `.env` du projet. Aucun secret. |
 | `compose.dev.yaml` | Test local. Une clé de coffre aléatoire est générée dans un volume Docker dédié, jamais dans le dépôt. |

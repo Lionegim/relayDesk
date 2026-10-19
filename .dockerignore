@@ -8,6 +8,14 @@
 !test/**
 !deploy/healthcheck.mjs
 !scripts/backup.mjs
+!compose.yaml
+!deploy/Caddyfile
+!deploy/preflight.mjs
+!deploy/fictif/make-hosting.mjs
+!deploy/hosted.env.example
+!deploy/systemd/*.service
+!deploy/systemd/*.timer
+!docs/operations.md
 
 # Exclusions prioritaires, même à l'intérieur des dossiers autorisés : secrets, données, sauvegardes, exports, archives.
 **/.env

@@ -221,11 +221,13 @@ $DC create --data-dir /data --archive /backups/archives/relay-$(date -u +%Y%m%dT
 **Restauration**, toujours dans une nouvelle génération :
 
 1. Arrêter l'application (`docker compose --env-file /etc/relay-desk/hosted.env --profile hosted stop relay`) et confirmer qu'aucune autre instance ne tourne nulle part, y compris sur le Mac.
-2. Créer la génération : `install -d -o 1000 -g 1000 -m 0700 /srv/relay-desk/data/AAAAMMJJ-n`.
-3. Restaurer dans ce répertoire. La variable du shell remplace celle du fichier d'environnement pour cette seule commande ; la génération en service n'est pas montée.
+2. Préparer seulement le **parent** : `install -d -o 1000 -g 1000 -m 0700 /srv/relay-desk/data`. La nouvelle génération `/srv/relay-desk/data/AAAAMMJJ-n` ne doit pas exister.
+3. Monter ce parent en supplément et restaurer dans un enfant absent. Le montage `/data` conserve la génération arrêtée, mais la commande ne la lit ni ne la modifie. Ne pas utiliser `/data` comme destination : un point de montage existe déjà et serait refusé.
 
    ```sh
-   RELAY_DATA_DIR=/srv/relay-desk/data/AAAAMMJJ-n $DC restore --data-dir /data \
+   docker compose --env-file /etc/relay-desk/hosted.env -f /opt/relay-desk/compose.yaml --profile backup \
+     run --rm --no-deps --volume /srv/relay-desk/data:/restore-generations backup \
+     restore --data-dir /restore-generations/AAAAMMJJ-n \
      --archive /backups/archives/relay-<horodatage>.rlybak $KEYS
    ```
 
@@ -251,7 +253,7 @@ Seules les archives chiffrées `archives/*.rlybak` quittent la VM. Ni la clé de
   - l'unité est ignorée tant que `/etc/relay-desk/offsite.env` n'existe pas ;
   - une fois configurée, elle lance `rclone copy --checksum`, puis `rclone check --one-way --checksum`, qui relit les empreintes côté stockage ;
   - il n'y a ni `sync` ni suppression distante : la rétention se règle côté stockage (versions, verrouillage d'objets) ;
-  - le jeton est limité à l'écriture sur le conteneur dédié.
+  - le jeton est limité à la lecture, la liste et l'écriture sur le conteneur dédié, nécessaires à la copie puis à la vérification.
 - **Variante rsync sur SSH** vers un hôte de sauvegarde :
   - clé SSH dédiée, restreinte côté serveur (`command=` vers `rrsync` en écriture seule sur un répertoire) ;
   - `rsync --checksum --ignore-existing` sur `archives/` ;
@@ -259,18 +261,22 @@ Seules les archives chiffrées `archives/*.rlybak` quittent la VM. Ni la clé de
 
 La sauvegarde déclenche la copie (`ExecStartPost`) sans attendre son résultat. Une archive locale ne prouve pas l'existence d'une copie hors VM. Tant qu'aucun transport n'est configuré et vérifié, l'état hors VM et le test de restauration restent **non vérifiés** dans `/api/ops/health`. Il ne faut pas les présenter comme acquis.
 
+### Mesure synthétique de stockage
+
+`node scripts/benchmark-storage.mjs 10000` sur le Mac (Node 24.13) : 10 000 textes, 100 conversations dont 50 groupes, base 5 296 128 octets, archive 5 296 164 octets, import 1 007 ms, sauvegarde 103 ms, restauration 58 ms, pic RSS 134 987 776 octets. Cette mesure exclut décodage de l’historique du téléphone, réseau, fournisseurs et IA. Elle ne dimensionne pas le futur serveur ; refaire une mesure sur sa base fictive puis dimensionner avec marge avant l’import réel autorisé.
+
 ## Mises à jour et retour arrière
 
 Les migrations SQL (`src/db/migrations/`) sont appliquées **automatiquement au démarrage**. Elles vont **uniquement vers l'avant** et ne prévoient pas de migration inverse.
 
-Point d'attention : le code actuel ne refuse pas encore une base dont la version (`PRAGMA user_version`) dépasse la dernière migration connue. Une image plus ancienne démarrerait donc sur une base migrée. **Ne jamais redémarrer une version antérieure sur une génération déjà migrée.** Un refus explicite au démarrage est recommandé dans le runtime.
+Le runtime refuse une base dont la version (`PRAGMA user_version`) dépasse la dernière migration connue. **Ne jamais redémarrer une version antérieure sur une génération déjà migrée.** Restaurer la sauvegarde compatible dans une nouvelle génération.
 
 **Mise à jour :**
 
 1. Récupérer le nouveau commit dans `/opt/relay-desk` (ou en préparer une copie à côté) et noter l'étiquette en service.
 2. Lister les migrations ajoutées : `git diff --name-only <ancien>..<nouveau> -- src/db/migrations/`.
 3. Construire et tester : `docker build --target test .`, puis construire l'image avec la nouvelle étiquette.
-4. **Sauvegarde avant mise à jour**, obligatoire : `$DC create …` (voir « Sauvegardes »), puis `$DC status …` sans alerte. Noter le nom de l'archive.
+4. **Sauvegarde avant mise à jour**, obligatoire : `$DC create …` (voir « Sauvegardes »), vérifier la taille, la somme et une restauration de contrôle. `$DC status …` doit montrer `database.status=ok` et `backups.status=ok` ; son code 2 reste attendu pour `process_unobserved`, `offsite_unverified` et `restore_test_unverified`. Ces contrôles demandent leurs preuves indépendantes. Noter le nom de l'archive.
 5. Mettre à jour `RELAY_IMAGE_TAG` puis lancer le préflight.
 6. Exécuter `docker compose --env-file /etc/relay-desk/hosted.env --profile hosted up -d relay`. L'arrêt du conteneur précédent est propre (SIGTERM, 45 s), et WhatsApp n'est pas déconnecté.
 7. Vérifier la santé, la connexion et la synchronisation. Conserver l'image précédente et sa sauvegarde jusqu'à validation.
@@ -304,13 +310,17 @@ Une restauration ne réutilise jamais la génération migrée : elle reste intac
 
 ## Ce qui est validé, et ce qui ne l'est pas
 
-**Validé sur valeurs fictives**, sans démarrer de service ni contacter de réseau :
+**Validé localement sur valeurs fictives**, sans service public ni réseau sortant :
 
 - le préflight et ses refus (`test/deploy-preflight.test.js`) ;
 - les propriétés statiques de `compose.yaml`, du `Caddyfile` et des modèles systemd (`test/deploy-config.test.js`) ;
 - l'analyse de `compose.yaml` par `docker compose config` (profils `hosted` et `backup`) avec la configuration générée par `deploy/fictif/make-hosting.mjs` : clé de sauvegarde montée seulement dans `backup`, aucun port publié hors du proxy ;
 - `caddy adapt` du `Caddyfile` avec Caddy 2.10.2, et le filtre des journaux d'erreurs (`deploy/caddy-logs-check.mjs`, local uniquement, sans ACME) ;
-- la syntaxe des unités systemd (`systemd-analyze verify`, hors présence de `rclone`).
+- la syntaxe des unités systemd (`systemd-analyze verify`, hors présence de `rclone`) ;
+- 311 tests sur Mac et dans l’image Linux, sans test ignoré ;
+- recette Docker avec volumes éphémères : snapshot WAL actif, brouillons/mémoire/jetons restaurés, clés incorrectes et écrasement refusés, suspension des connecteurs et de l’IA, reprise à froid explicite ;
+- exécution du seul service Compose `backup` avec configuration fictive et `network_mode: none`, vérification du statut et restauration dans un enfant absent monté depuis son parent ; aucun service `relay` ou `proxy` de cette configuration démarré ;
+- `caddy validate` hors réseau puis test du journal 502 sur boucle locale interne au conteneur, sans port publié ni ACME.
 
 **Non validé** :
 

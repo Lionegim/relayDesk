@@ -13,6 +13,7 @@ import { resolve, relative, isAbsolute, join, dirname } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import { isIP } from 'node:net';
+import {timingSafeEqual} from 'node:crypto';
 
 export const PROJECT_DIR = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -228,8 +229,11 @@ export async function preflight({ envFile, uid = 1000, fictif = false, compose =
         const text = readFileSync(path, 'utf8').trim();
         if (!text) err('RELAY_BACKUP_KEY_FILE vide.');
         else {
-          if (values.relay_secret_key && text === values.relay_secret_key) err('la clé de sauvegarde doit être distincte de la clé du coffre.');
-          if (!vaultKeyValid(text)) warn('RELAY_BACKUP_KEY_FILE : format différent de 32 octets base64/hexadécimal, à confirmer avec l’outil de sauvegarde.');
+          if (!vaultKeyValid(text)) err('RELAY_BACKUP_KEY_FILE : 32 octets en base64 canonique ou hexadécimal requis.');
+          else if (values.relay_secret_key && vaultKeyValid(values.relay_secret_key)) {
+            const decode=value=>Buffer.from(value,/^[0-9a-f]{64}$/i.test(value)?'hex':'base64');
+            if(timingSafeEqual(decode(text),decode(values.relay_secret_key)))err('la clé de sauvegarde doit être distincte de la clé du coffre.');
+          }
         }
       } catch { err('RELAY_BACKUP_KEY_FILE absent ou illisible.'); }
     }

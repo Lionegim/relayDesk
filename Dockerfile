@@ -24,6 +24,10 @@ COPY server.js ./
 COPY src ./src
 COPY public ./public
 COPY test ./test
+# Configuration déclarative et outils hors ligne pour les tests de préflight ; exclus de l’image runtime.
+COPY compose.yaml ./
+COPY deploy ./deploy
+COPY docs/operations.md ./docs/operations.md
 COPY scripts/backup.mjs ./scripts/backup.mjs
 USER node
 ENV RELAY_CONNECTORS_ENABLED=false RELAY_AI_ENABLED=false DEMO_DATA=1
