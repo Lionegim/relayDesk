@@ -1,0 +1,5 @@
+#!/bin/sh
+# Root-only operator wrapper; never reads the local Mac configuration.
+set -eu
+cd /opt/relay-desk
+exec docker compose --env-file /etc/relay-desk-test/hosted.env -f compose.yaml -f deploy/hosted-test/relay.compose.yaml -f deploy/hosted-test/identity.compose.yaml "$@"

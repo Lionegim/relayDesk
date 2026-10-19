@@ -1,0 +1,10 @@
+[Unit]
+Description=Relay Desk synthetic test encrypted application backup
+Requires=docker.service
+After=docker.service
+
+[Service]
+Type=oneshot
+UMask=0077
+ExecStart=/opt/relay-desk/deploy/hosted-test/backup.sh
+TimeoutStartSec=600
