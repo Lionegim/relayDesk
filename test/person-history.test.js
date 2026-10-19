@@ -45,3 +45,6 @@ test('a fresh reply after a memory reset never reintroduces pre-reset or undated
 test('established current-conversation style is not diluted by other conversations',t=>{
  const f=setup(t);msg(f,'other',{sent:'Different old style'});const id=msg(f,'current');for(let i=0;i<5;i++)f.store.rememberReply(id,'Current conversation phrase number '+i);assert.equal(f.store.getReplyMemory(id).sampleCount,5);assert.equal(ctx(f,id).styleExamples.length,0);
 });
+test('historical source subjects are bounded and each excerpt component retains its own date',t=>{
+ const f=setup(t),past=msg(f,'dated-source',{subject:'Orchid '.repeat(5000),at:Date.parse('2025-01-01')}),current=msg(f,'current',{subject:'Orchid'});f.db.prepare('UPDATE messages SET reply_meta=?,trail=? WHERE id=?').run(JSON.stringify({at:Date.parse('2025-01-01')}),JSON.stringify([{id:'earlier',from:'Alex',at:Date.parse('2011-01-01'),body:'Old dated fact'}]),past);const h=ctx(f,current);assert.ok(h.sources[0].subject.length<=200);assert.match(h.sources[0].excerpt,/\[2011-01-01\]/);assert.match(h.sources[0].excerpt,/\[2025-01-01\]/);
+});
