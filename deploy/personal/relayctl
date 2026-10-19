@@ -1,4 +1,7 @@
 #!/bin/sh
 set -eu
 cd /opt/relay-desk
+if [ -f /etc/relay-desk-personal/mail.compose.yaml ]; then
+  exec docker compose --env-file /etc/relay-desk-personal/hosted.env -f compose.yaml -f deploy/personal/relay.compose.yaml -f deploy/hosted-test/identity.compose.yaml -f /etc/relay-desk-personal/mail.compose.yaml "$@"
+fi
 exec docker compose --env-file /etc/relay-desk-personal/hosted.env -f compose.yaml -f deploy/personal/relay.compose.yaml -f deploy/hosted-test/identity.compose.yaml "$@"
