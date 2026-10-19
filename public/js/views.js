@@ -383,8 +383,17 @@ const isMine = m => m.fromMe === true;
 
 // Chronologie ancien → récent : le fil est stocké du plus récent au plus ancien, le dernier message est `full`.
 function waMessages(sel, full) {
-  const older = [...(full.trail || [])].reverse().map(t => ({ mine: isMine(t), at: t.at, body: t.body, author: full.group && !isMine(t) ? t.from : null }));
-  return [...older, { mine: isMine(full), at: full.at ?? sel.sortAt, body: full.failed ? sel.preview : full.body, author: full.group && !isMine(full) ? full.from : null }];
+  const older = [...(full.trail || [])].reverse().map(t => ({ mine: isMine(t), at: t.at, body: t.body, media:t.media, author: full.group && !isMine(t) ? t.from : null }));
+  return [...older, { mine: isMine(full), at: full.at ?? sel.sortAt, body: full.failed ? sel.preview : full.body, media:full.media, author: full.group && !isMine(full) ? full.from : null }];
+}
+
+function waMedia(media) {
+  if(!media || !/^\/api\/whatsapp\/media\/[0-9a-f-]{36}$/.test(media.url))return '';
+  return html`<figure class="wa-media" data-key="media-${media.id}">
+    ${media.mime==='video/mp4'?html`<video src="${media.url}" controls loop playsinline preload="metadata" aria-label="GIF WhatsApp"></video>`:html`<a href="${media.url}" target="_blank" rel="noopener" aria-label="Ouvrir ${media.kind==='gif'?'le GIF':'la photo'}"><img src="${media.url}" alt="${media.kind==='gif'?'GIF animé':'Photo WhatsApp'}" loading="lazy" decoding="async"></a>`}
+    <figcaption class="wa-media-error" hidden>Média indisponible ou expiré sur WhatsApp.</figcaption>
+    <span class="wa-media-label">${media.kind==='gif'?'GIF':'Photo'}</span>
+  </figure>`;
 }
 
 function waTimeline(msgs) {
@@ -401,7 +410,8 @@ function waTimeline(msgs) {
         <div class="wa-bubble">
           ${when(m.author, () => html`<strong class="wa-author">${m.author}</strong>`)}
           <span class="sr-only">${m.mine ? 'Vous' : 'Reçu'} :</span>
-          <span class="wa-text">${m.body}</span>
+          ${waMedia(m.media)}
+          ${when(!m.media || !['Photo','GIF'].includes(m.body),()=>html`<span class="wa-text">${m.body}</span>`)}
           ${when(at !== null, () => html`<time class="wa-time" datetime="${new Date(at).toISOString()}" title="${fullDate(at)}">${timeOf(at)}</time>`)}
         </div>
       </div>`;
@@ -445,6 +455,13 @@ function whatsappView(s, v, sel) {
       </div>
       <footer class="wa-composer">
         ${draftConflict(s, sel.id)}
+        ${when(s.waAttachments?.[sel.id],()=>html`<div class="wa-attachment">${waMedia(s.waAttachments[sel.id])}<div><strong>${s.waAttachments[sel.id].kind==='gif'?'GIF prêt à envoyer':'Photo prête à envoyer'}</strong><p>Temporaire · à réajouter après actualisation</p><button class="btn btn-ghost" data-on-click="waAttachRemove" ${raw(s.confirm?'disabled':'')}>Retirer</button></div></div>`)}
+        <div class="wa-tools">
+          <button class="btn btn-ghost" data-on-click="waEmojiToggle" aria-label="Ajouter un emoji" aria-expanded="${!!s.waEmoji}" ${raw(s.confirm?'disabled':'')}>☺</button>
+          <label class="btn btn-ghost wa-add-photo">＋ Photo / GIF<input type="file" accept="image/jpeg,image/png,image/webp,image/gif" data-on-change="waAttach" aria-label="Ajouter une photo ou un GIF" ${raw(!canSend||s.confirm||s.waUploading||s.offline?'disabled':'')}></label>
+          <span class="wa-upload-note" role="status">${s.waUploading===sel.id?'Ajout de l’image…':'10 Mo · GIF 30 s max.'}</span>
+        </div>
+        ${when(s.waEmoji,()=>html`<div class="wa-emoji" role="group" aria-label="Emojis">${['😀','😊','😂','❤️','👍','🙏','🎉','👋','✅','🤔','😘','🔥','🙌','🙂','😅','💪'].map(emoji=>html`<button data-on-click="waEmojiInsert" data-emoji="${emoji}" aria-label="${emoji}">${emoji}</button>`)}</div>`)}
         <div class="wa-input">
           <textarea data-key="draft-${sel.id}" data-on-input="draft" ${raw(s.confirm?.messageId === sel.id ? 'readonly' : '')} rows="2" aria-label="Réponse à ${name}"
             placeholder="Écrire à ${name.split(' ')[0]} depuis ${sel.account}…">${draft}</textarea>
@@ -454,7 +471,7 @@ function whatsappView(s, v, sel) {
           <span class="${cls('wa-status ellipsis', (tooLong || st?.tone === 'error') && 'is-error', st?.tone === 'warn' && 'is-warn')}" role="status">${tooLong ? `${draft.length} / ${WA_MAX} caractères : trop long` : `${status} · ${hint}`}</span>
           <button class="btn btn-ghost" data-on-click="saveDraft">Enregistrer</button>
           <button class="btn wa-send" data-on-click="sendPreview" title="${canSend ? needsReview(s,sel.id)?'Vérifier le message exact avant l’envoi':'Envoyer le message rédigé' : 'L’envoi demande la permission Envoi pour ce compte'}"
-            ${raw(canSend && draft.trim() && !tooLong && !s.confirm && !conflict && !s.offline ? '' : 'disabled')}>${needsReview(s,sel.id)?'Aperçu':'Envoyer'}</button>
+            ${raw(canSend && (draft.trim() || s.waAttachments?.[sel.id]) && !s.waUploading && !tooLong && !s.confirm && !conflict && !s.offline ? '' : 'disabled')}>${needsReview(s,sel.id)?'Aperçu':'Envoyer'}</button>
         </div>
       </footer>
     </section>`;
@@ -829,8 +846,8 @@ function sendDialog(c, offline = false) {
             ${when(p.cc.length, () => html`<span class="muted">Cc</span><span>${p.cc.join(', ')}</span>`)}
             ${when(p.channel !== 'whatsapp', () => html`<span class="muted">Objet</span><span style="font-weight:600">${p.subject}</span>`)}
           </div>
-          <div class="send-preview-letter"><span class="network-eyebrow">MESSAGE EXACT</span><div class="send-body">${p.body}</div></div>
-          <p class="muted" style="margin:0;font-size:12px">Ce texte est exactement celui qui sera envoyé. Toute modification demande une nouvelle vérification.</p>
+          <div class="send-preview-letter"><span class="network-eyebrow">MESSAGE EXACT</span>${waMedia(p.attachment)}<div class="send-body">${p.body}</div></div>
+          <p class="muted" style="margin:0;font-size:12px">Le texte et la pièce jointe affichés sont exactement ceux qui seront envoyés. Toute modification demande une nouvelle vérification.</p>
           ${when(c.error, () => html`<div class="alert">${c.error}</div>`)}
           ${when(offline && !c.error, () => html`<div class="alert">Hors ligne : l’envoi reprendra seulement quand tu le confirmeras en ligne.</div>`)}
         </div>

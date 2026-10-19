@@ -23,14 +23,25 @@ const WRAPPERS_REFUSED = ['ephemeralMessage', 'viewOnceMessage', 'viewOnceMessag
 // Texte d'un message, ou null s'il n'est pas importable.
 export function textOf(message) {
   if (!message || typeof message !== 'object') return null;
-  if (WRAPPERS_REFUSED.some(k => message[k])) return null;
-  const ctx = message.extendedTextMessage?.contextInfo;
+  if (WRAPPERS_REFUSED.some(k => message[k]) || [message.imageMessage,message.videoMessage,message.documentMessage].some(v=>v?.viewOnce || Number(v?.contextInfo?.expiration)>0)) return null;
+  const ctx = message.extendedTextMessage?.contextInfo || message.imageMessage?.contextInfo || message.videoMessage?.contextInfo || message.documentMessage?.contextInfo;
   if (ctx && Number(ctx.expiration) > 0) return null; // discussion en mode messages éphémères
-  let text = null;
+  let text = mediaOf(message) ? (message.imageMessage?.caption ?? message.videoMessage?.caption ?? message.documentMessage?.caption ?? null) : null;
   if (typeof message.conversation === 'string') text = message.conversation;
   else if (typeof message.extendedTextMessage?.text === 'string') text = message.extendedTextMessage.text;
   text = text?.replace(/\r\n?/g, '\n').replace(/[\u0000-\u0008\u000b-\u001f\u007f]/g, ' ').trim();
   return text ? text.slice(0, MAX_TEXT) : null;
+}
+
+export function mediaOf(message) {
+  if(!message || WRAPPERS_REFUSED.some(k=>message[k]))return null;
+  const item=message.imageMessage || (message.videoMessage?.gifPlayback?message.videoMessage:null) || (message.documentMessage?.mimetype==='image/gif'?message.documentMessage:null);
+  if(!item || item.viewOnce || Number(item.contextInfo?.expiration)>0)return null;
+  const mime=message.videoMessage?'video/mp4':item.mimetype;
+  if(!['image/jpeg','image/png','image/webp','image/gif','video/mp4'].includes(mime))return null;
+  const size=Number(item.fileLength?.toNumber?.() ?? item.fileLength ?? 0);
+  if(!Number.isSafeInteger(size) || size<=0 || size>10*1024*1024)return null;
+  return {mime,size,kind:mime==='image/gif'||mime==='video/mp4'?'gif':'image'};
 }
 
 // Horodatage en millisecondes (nombre, chaîne ou Long de protobufjs).
@@ -47,12 +58,13 @@ export function parseMessage(m, { since = 0 } = {}) {
   if (m.messageStubType || m.broadcast) return null;
   const ts = tsOf(m.messageTimestamp);
   if (!ts || ts < since) return null;
-  const text = textOf(m.message);
+  const media = mediaOf(m.message);
+  const text = textOf(m.message) || (media ? (media.kind==='gif'?'GIF':'Photo') : null);
   if (!text) return null;
   const pushName = !key.fromMe && typeof m.pushName === 'string' ? m.pushName.trim().slice(0, 80) : '';
   const participantJid = groupJid(conversation) ? directJid(key.participant || m.participant) : null;
   const senderName = groupJid(conversation) && !key.fromMe ? pushName || phoneOf(participantJid) || 'Participant' : null;
-  return { chatJid: conversation, msgId: key.id, fromMe: !!key.fromMe, ts, text, pushName, participantJid, senderName };
+  return { chatJid: conversation, msgId: key.id, fromMe: !!key.fromMe, ts, text, pushName, participantJid, senderName, ...(media?{media}:{} ) };
 }
 
 // Nom d'un contact WhatsApp (carnet, nom public, nom vérifié).

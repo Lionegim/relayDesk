@@ -16,7 +16,7 @@ const state = {
   nav: 'all', folder: null, channel: 'all', query: '', selectedId: null,
   collapsed: (()=>{try{return JSON.parse(storage.get('relay.folderExpansion') || '{}');}catch{return {};}})(), creating: false, folderDraft: '', dragOver: null, moveOpen: false,
   listW: Number(storage.get(LIST_W_KEY)) || 340, resizing: false,
-  composing: null, drafts: {}, expandedTrail: {},
+  composing: null, drafts: {}, expandedTrail: {}, waAttachments:{}, waUploading:null, waEmoji:false,
   ai: null, aiTone: 'Cordial', aiIntent: '',
   contactView:globalThis.matchMedia?.('(max-width:600px)').matches?'list':'network',network:null,networkBusy:false,networkError:null,networkDays:90,groupEditor:null,groupName:'',groupQuery:'',groupBusy:false,
   group: 'all', picked: {}, focusId: null, contactQuery: '', contactSearch: false, sort: 'recent',
@@ -967,6 +967,22 @@ const actions = {
   },
   closeComposer: () => { if (layers.includes('compose')) backFrom('compose'); else set({ composing: null }); },
   composeTo: (_, e) => { const id = state.selectedId, v = e.target.value; set(s => ({ composeTo: { ...s.composeTo, [id]: v } })); scheduleAutosave(id); },
+  waEmojiToggle:()=>{if(!state.confirm)set({waEmoji:!state.waEmoji});},
+  waEmojiInsert:({emoji})=>{
+    if(state.confirm)return;const id=state.selectedId,el=document.querySelector(`textarea[data-key="draft-${id}"]`);
+    if(!el)return;const text=el.value,start=el.selectionStart ?? text.length,end=el.selectionEnd ?? start;
+    const value=text.slice(0,start)+emoji+text.slice(end);set(s=>({drafts:{...s.drafts,[id]:value},waEmoji:false}));scheduleAutosave(id);
+    requestAnimationFrame(()=>{const node=document.querySelector(`textarea[data-key="draft-${id}"]`);node?.focus();node?.setSelectionRange(start+emoji.length,start+emoji.length);});
+  },
+  waAttach:async(_,e)=>{
+    const file=e.target.files?.[0],id=state.selectedId;e.target.value='';
+    if(!file || state.confirm || state.waUploading)return;
+    if(file.size>10*1024*1024)return notify('Image trop volumineuse (10 Mo maximum).');
+    set({waUploading:id});
+    try {const attachment=await api.uploadWhatsApp(id,file);set(s=>({waAttachments:{...s.waAttachments,[id]:attachment}}));}
+    catch(e){fail(e);}finally{set({waUploading:null});}
+  },
+  waAttachRemove:()=>{if(state.confirm)return;set(s=>({waAttachments:{...s.waAttachments,[s.selectedId]:null}}));},
   draft: (_, e) => { const id = state.selectedId, v = e.target.value; set(s => ({ drafts: { ...s.drafts, [id]: v } })); scheduleAutosave(id); },
   saveDraft: () => {
     const id = derive(state).sel?.id;
@@ -1115,7 +1131,7 @@ const actions = {
   // un appareil dont le texte est dépassé ne peut ni fabriquer d'aperçu ni effacer un brouillon plus récent.
   sendPreview: async () => {
     const sel = derive(state).sel;
-    if (!sel || state.confirm) return;
+    if (!sel || state.confirm || state.waUploading) return;
     if (state.offline) return notify('Hors ligne : la vérification avant l’envoi demande le réseau.');
     const id = sel.id, profileId = state.profileId, request = ++previewRequest;
     clearTimeout(draftTimers.get(id));
@@ -1133,7 +1149,7 @@ const actions = {
       return;
     }
     const sent = localDraft(id);
-    const input = withBase({ text: sent.text, mode: sent.mode, to: sent.to }, meta.version);
+    const input = withBase({ text: sent.text, mode: sent.mode, to: sent.to, ...(state.waAttachments[id]?{attachmentId:state.waAttachments[id].id}:{}) }, meta.version);
     try {
       const preview = await api.previewSend(id, input);
       if (!ours()) return;
@@ -1182,7 +1198,7 @@ const actions = {
       delete details[id];
       if(newer) draftMeta[id]={...draftMeta[id],saving:false,again:false,conflict:true,error:null};
       else delete draftMeta[id];
-      return { confirm: null, composing: newer ? s.composing : null, drafts, composeTo, details, draftMeta, ...(c.newMail ? { newMail: null, newMailOpen: false, selectedId: s.selectedId === id ? null : s.selectedId, data: { ...s.data, messages: s.data.messages.filter(m => m.id !== id) } } : {}) };
+      return { waAttachments:{...s.waAttachments,[id]:null}, confirm: null, composing: newer ? s.composing : null, drafts, composeTo, details, draftMeta, ...(c.newMail ? { newMail: null, newMailOpen: false, selectedId: s.selectedId === id ? null : s.selectedId, data: { ...s.data, messages: s.data.messages.filter(m => m.id !== id) } } : {}) };
     });
     const m = state.data.messages.find(x => x.id === id);
     if (m) m.draft = null;
@@ -1250,6 +1266,10 @@ const actions = {
   },
 };
 
+document.addEventListener('error',e=>{
+  const el=e.target;if(!el?.matches?.('.wa-media img,.wa-media video'))return;
+  el.hidden=true;const fallback=el.closest('.wa-media')?.querySelector('.wa-media-error');if(fallback)fallback.hidden=false;
+},true);
 delegate(document, {
   change: 'change', click: 'click', dblclick: 'dblclick', input: 'input', keydown: 'keydown', focusout: 'blur',
   dragstart: 'dragstart', dragover: 'dragover', dragleave: 'dragleave', drop: 'drop', pointerdown: 'pointerdown',

@@ -63,6 +63,7 @@ function morphNode(cur, next) {
     return;
   }
   if (cur.nodeName === 'INPUT') {
+    if(cur.type==='file')return;
     const v = next.getAttribute('value') ?? '';
     if (!editing && cur.value !== v) cur.value = v;
     return;

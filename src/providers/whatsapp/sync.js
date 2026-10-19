@@ -32,7 +32,7 @@ const FULL_RESPONSE = {
 };
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 
-export function createWhatsAppSync({ store, vault, lib, makeSocket, log = console, timing = {}, assertAccountAllowed=()=>{}, requireLinkedIdentity=false }) {
+export function createWhatsAppSync({ store, vault, lib, makeSocket, log = console, timing = {}, assertAccountAllowed=()=>{}, requireLinkedIdentity=false, media=null }) {
   const T = {
     linkTtlMs: 5 * 60000,       // durée maximale d'une liaison avant validation sur le téléphone
     qrTtlMs: 60000,             // durée d'affichage d'un QR (Baileys le renouvelle avant)
@@ -495,6 +495,10 @@ export function createWhatsAppSync({ store, vault, lib, makeSocket, log = consol
       job.perChat.set(m.chatJid, c);
     }
     const inserted = store.waAddMessages(accountId, list);
+    if(media)for(const raw of job.raw.slice(job.i-CHUNK,job.i)) {
+      const m=list.find(m=>m.msgId===raw.key?.id && m.chatJid===chatJid(raw.key?.remoteJid));
+      if(m?.media)media.capture(accountId,m,raw);
+    }
     for (const jid of inserted) job.changed.add(jid);
     if (job.notify) for (const m of list) if (!m.fromMe && inserted.has(m.chatJid)) job.incoming.add(m.chatJid);
     job.added += list.length;

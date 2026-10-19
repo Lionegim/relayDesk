@@ -15,6 +15,7 @@ RUN --mount=type=secret,id=build_ca,required=false \
     npm ci --omit=dev --ignore-scripts --no-audit --no-fund && npm cache clean --force
 
 FROM ${NODE_IMAGE} AS test
+RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 COPY package.json package-lock.json ./
 RUN --mount=type=secret,id=build_ca,required=false \
@@ -34,6 +35,7 @@ ENV RELAY_CONNECTORS_ENABLED=false RELAY_AI_ENABLED=false DEMO_DATA=1
 RUN --network=none npm test
 
 FROM ${NODE_IMAGE} AS runtime
+RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg && rm -rf /var/lib/apt/lists/*
 ENV NODE_ENV=production \
     DATA_DIR=/data \
     HOST=0.0.0.0 \

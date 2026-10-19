@@ -9,10 +9,10 @@ const CONFIRM_TTL_MS = 10 * 60000;
 export const MAX_SEND = 4096; // caractères par message envoyé
 
 // L'empreinte lie compte, génération du compte, discussion et texte exact.
-const digestOf = (accountId, generation, chatJid, text) => createHash('sha256')
-  .update(`whatsapp\naccount:${accountId}\ngeneration:${generation}\nchat:${chatJid}\n`).update(text, 'utf8').digest('hex');
+const digestOf = (accountId, generation, chatJid, text, attachment=null) => createHash('sha256')
+  .update(`whatsapp\naccount:${accountId}\ngeneration:${generation}\nchat:${chatJid}\n`).update(text, 'utf8').update(attachment?`\nmedia:${attachment.id}:${attachment.hash}`:'').digest('hex');
 
-export function createWhatsAppOutbox({ store, sync }) {
+export function createWhatsAppOutbox({ store, sync, media=null }) {
   const sending = new Set();
   const confirmations = new Map(); // empreinte -> { messageId, accountId, generation, expires }
   const sweep = () => { const now = Date.now(); for (const [d, c] of confirmations) if (c.expires < now) confirmations.delete(d); };
@@ -31,9 +31,9 @@ export function createWhatsAppOutbox({ store, sync }) {
     if (!isDirectJid(ctx.threadId) && !(allowGroup && groupJid(ctx.threadId))) throw new HttpError(409, 'Discussion WhatsApp invalide.', 'compose_unavailable');
     return { accountId: ctx.accountId, chatJid: ctx.threadId };
   }
-  function checkSend(accountId, text) {
+  function checkSend(accountId, text, attachment) {
     if (!sync.permissions(accountId).includes('send')) throw new HttpError(403, 'La permission Envoi n’est pas accordée pour ce compte.', 'send_forbidden');
-    if (!text.trim()) throw badRequest('Le message est vide.');
+    if (!text.trim() && !attachment) throw badRequest('Le message est vide.');
     if (text.length > MAX_SEND) throw badRequest(`Message trop long (${MAX_SEND} caractères au plus).`);
   }
 
@@ -49,11 +49,12 @@ export function createWhatsAppOutbox({ store, sync }) {
       store.assertDraftVersion(messageId,input?.baseVersion);
       const { text } = read(input);
       const { accountId, chatJid } = target(messageId);
-      checkSend(accountId, text);
+      const attachment=media?.draft(messageId,input.attachmentId);
+      checkSend(accountId, text, attachment);
       const account = store.getAccount(accountId);
       const name = store.waChatName(accountId, chatJid);
       const phone = phoneOf(chatJid);
-      const digest = digestOf(accountId, sync.generation(accountId), chatJid, text);
+      const digest = digestOf(accountId, sync.generation(accountId), chatJid, text, attachment);
       sweep();
       confirmations.set(digest, { messageId, accountId,draftVersion:store.assertDraftVersion(messageId), generation: sync.generation(accountId), expires: Date.now() + CONFIRM_TTL_MS });
       return {
@@ -63,6 +64,7 @@ export function createWhatsAppOutbox({ store, sync }) {
         cc: [],
         subject: store.composeContext(messageId).subject, // interne : non affiché pour WhatsApp
         body: text,
+        ...(attachment?{attachment:{id:attachment.id,url:attachment.url,mime:attachment.mime,kind:attachment.kind,size:attachment.size}}:{}),
         digest,
       };
     },
@@ -72,13 +74,14 @@ export function createWhatsAppOutbox({ store, sync }) {
       const digest = input?.digest;
       if (typeof digest !== 'string' || !/^[0-9a-f]{64}$/.test(digest)) throw badRequest('Empreinte de validation manquante.');
       const { accountId, chatJid } = target(messageId);
-      checkSend(accountId, text);
+      const attachment=media?.draft(messageId,input.attachmentId);
+      checkSend(accountId, text, attachment);
       if (sending.has(messageId)) throw new HttpError(409, 'Un envoi est déjà en cours pour ce message.', 'send_in_progress');
       sending.add(messageId);
       try {
         return await sync.serial(accountId, async () => {
           const generation = sync.generation(accountId);
-          const actual = digestOf(accountId, generation, chatJid, text);
+          const actual = digestOf(accountId, generation, chatJid, text, attachment);
           if (!timingSafeEqual(Buffer.from(actual), Buffer.from(digest))) {
             throw new HttpError(409, 'Le message a changé depuis sa validation : vérifie-le à nouveau avant d’envoyer.', 'digest_mismatch');
           }
@@ -98,7 +101,7 @@ export function createWhatsAppOutbox({ store, sync }) {
           const memoryTicket=store.getReplyMemory(messageId,{internal:true});
           const sendStartedAt=Date.now();
           try {
-            sent = await sock.sendMessage(chatJid, { text });
+            sent = await sock.sendMessage(chatJid, attachment ? (attachment.mime==='video/mp4' ? {video:attachment.bytes,mimetype:attachment.mime,gifPlayback:true,caption:text} : {image:attachment.bytes,mimetype:attachment.mime,caption:text}) : { text });
           } catch {
             // Issue inconnue (le message a pu partir) : nouvelle vérification exigée, jamais de nouvel essai automatique.
             throw new HttpError(502, 'Envoi WhatsApp incertain : vérifie la discussion sur le téléphone avant de renvoyer.', 'send_uncertain');
@@ -107,7 +110,8 @@ export function createWhatsAppOutbox({ store, sync }) {
           const msgId = typeof sent?.key?.id === 'string' && sent.key.id ? sent.key.id : `relay-${digest.slice(0, 24)}`;
           if (store.hasAccount(accountId)) {
             store.rememberReply(messageId,text,{ticket:memoryTicket,at:sendStartedAt});
-            store.waAddMessages(accountId, [{ chatJid, msgId, fromMe: true, ts: sendStartedAt, text }]);
+            store.waAddMessages(accountId, [{ chatJid, msgId, fromMe: true, ts: sendStartedAt, text:text || (attachment?.kind==='gif'?'GIF':'Photo') }]);
+            try {media?.sent(accountId,chatJid,msgId,attachment);}catch { /* Delivery succeeded; never suggest a retry because caching failed. */ }
             store.clearDraft(messageId);
             sync.rebuild(accountId, chatJid);
           }

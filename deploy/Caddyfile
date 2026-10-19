@@ -37,7 +37,7 @@
 	}
 
 	request_body {
-		max_size 2MB
+		max_size 10MB
 	}
 
 	# Host d'origine transmis tel quel : l'application le compare à PUBLIC_BASE_URL.

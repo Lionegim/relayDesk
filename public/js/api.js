@@ -29,6 +29,10 @@ const query = params => {
 };
 
 export const api = {
+  async uploadWhatsApp(id,file) {
+    const res=await fetch(`/api/messages/${id}/whatsapp-media`,{method:'POST',credentials:'same-origin',headers:{'content-type':'application/octet-stream',...(csrfToken?{'x-csrf-token':csrfToken}:{})},body:file});
+    const data=await res.json();if(!res.ok)throw new Error(data?.error?.message || 'Image indisponible');return data;
+  },
   historyWindow:id=>call('GET',`/api/accounts/${id}/history-window`),
   previewHistoryWindow:(id,days)=>call('POST',`/api/accounts/${id}/history-window/preview`,{days}),
   saveHistoryWindow:(id,days,revision,identity)=>call('PUT',`/api/accounts/${id}/history-window`,{days,revision,identity}),

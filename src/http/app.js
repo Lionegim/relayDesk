@@ -278,6 +278,19 @@ export function createApp({ store, ai, ownerName, gmail = null, providers = {}, 
         if(!['GET','HEAD'].includes(req.method)) throw new HttpError(405,'Méthode non autorisée','method_not_allowed');
         return await serveStatic(req,res,pathname==='/login'?'/login.html':pathname);
       }
+      const mediaPath=/^\/api\/whatsapp\/media\/([0-9a-f-]{36})$/.exec(pathname);
+      const uploadPath=/^\/api\/messages\/(\d+)\/whatsapp-media$/.exec(pathname);
+      if(mediaPath && req.method==='GET') {
+        const media=await providers.whatsapp?.media?.get(mediaPath[1]);
+        if(!media)throw notFound();
+        return send(res,200,media.bytes,media.mime);
+      }
+      if(uploadPath && req.method==='POST') {
+        if(!providers.whatsapp?.media)throw notFound();
+        const chunks=[];let size=0;
+        for await(const chunk of req){size+=chunk.length;if(size>10*1024*1024)throw new HttpError(413,'Image trop volumineuse (10 Mo maximum).','too_large');chunks.push(chunk);}
+        return send(res,200,await providers.whatsapp.media.upload(messageId(uploadPath[1]),Buffer.concat(chunks)));
+      }
       if (pathname === '/api/events') {
         if (req.method !== 'GET') throw new HttpError(405, 'Méthode non autorisée', 'method_not_allowed');
         return live.connect(req, res, session);

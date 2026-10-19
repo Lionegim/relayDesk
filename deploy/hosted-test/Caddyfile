@@ -28,7 +28,7 @@
 		-Server
 	}
 	request_body {
-		max_size 2MB
+		max_size 10MB
 	}
 	reverse_proxy relay:4310
 }
