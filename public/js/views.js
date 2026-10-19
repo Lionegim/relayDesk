@@ -15,9 +15,14 @@ function whenLabel(ms) {
 }
 const timeLabel = m => m.time ?? whenLabel(m.sortAt ?? m.at);
 const icon = name => raw(ICON[name]);
+const SOCIAL_BRANDS = {
+  instagram: { icon: '/icons/instagram-glyph-black.svg', label: 'Instagram' },
+  linkedin: { icon: '/icons/linkedin-in-blue.png', label: 'LinkedIn' },
+};
+const socialMark = channel => html`<img class="social-brand-icon" src="${SOCIAL_BRANDS[channel].icon}" width="32" height="32" alt="" aria-hidden="true">`;
 const channelMark = channel => channel === 'whatsapp'
   ? html`<img class="wa-brand-glyph" src="/icons/whatsapp-glyph-green.svg" width="24" height="24" alt="" aria-hidden="true">`
-  : CH[channel].mark;
+  : SOCIAL_BRANDS[channel] ? socialMark(channel) : CH[channel].mark;
 // Marques officielles : le fournisseur identifie le compte, le canal reste générique.
 const PROVIDER_BRANDS = {
   gmail: { icon: '/icons/gmail.webp', label: 'Gmail' },
@@ -26,7 +31,10 @@ const PROVIDER_BRANDS = {
 const providerMark = (svc, channel) => PROVIDER_BRANDS[svc]
   ? html`<img class="provider-brand-icon" src="${PROVIDER_BRANDS[svc].icon}" width="24" height="24" alt="" aria-hidden="true">`
   : channelMark(channel);
-const providerBadge = account => when(PROVIDER_BRANDS[account?.svc], () => html`<span class="provider-badge">${providerMark(account.svc, account.channel)}<span>${PROVIDER_BRANDS[account.svc].label}</span></span>`);
+const providerBadge = account => {
+  const brand = PROVIDER_BRANDS[account?.svc] || SOCIAL_BRANDS[account?.channel];
+  return when(brand, () => html`<span class="provider-badge">${providerMark(account.svc, account.channel)}<span>${brand.label}</span></span>`);
+};
 
 export function renderApp(s, v) {
   const mail = s.app === 'mail', mobile = !!s.mobile;
@@ -584,7 +592,7 @@ function contactsPage(s, v) {
                 <div class="cell-channels">
                   ${CONTACT_CHANNELS.map(k => {
                     const has = c.ch.includes(k);
-                    return html`<span class="ch-mark" title="${CH[k].label}" style="background:${has ? CH[k].tint : 'var(--muted)'};color:${has ? CH[k].ink : 'color-mix(in oklab, var(--muted-foreground) 55%, transparent)'}">${channelMark(k)}</span>`;
+                    return html`<span class="ch-mark" role="img" aria-label="${CH[k].label} : ${has ? 'présent' : 'absent'}" title="${CH[k].label} : ${has ? 'présent' : 'absent'}" style="background:${has ? CH[k].tint : 'var(--muted)'};color:${has ? CH[k].ink : 'color-mix(in oklab, var(--muted-foreground) 55%, transparent)'}">${has ? channelMark(k) : '—'}</span>`;
                   })}
                 </div>
                 <span class="cell-last">${c.last}</span>

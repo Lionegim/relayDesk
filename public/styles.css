@@ -263,8 +263,8 @@ svg { display: block; }
 .contacts-actions { display: flex; align-items: center; gap: 2px; flex: none; }
 .contacts-actions .icon-btn { width: 30px; height: 30px; }
 .picked-bar { display: flex; align-items: center; gap: 10px; margin-top: 12px; padding: 8px 12px; border-radius: 8px; background: var(--muted); font-size: 13px; }
-.table { margin-top: 14px; min-width: 760px; }
-.trow { display: grid; grid-template-columns: 36px minmax(170px,1.2fr) minmax(140px,1.4fr) 160px 120px 110px; align-items: center; border-bottom: 1px solid var(--border); }
+.table { margin-top: 14px; min-width: 800px; }
+.trow { display: grid; grid-template-columns: 36px minmax(170px,1.2fr) minmax(140px,1.4fr) 160px 184px 110px; align-items: center; border-bottom: 1px solid var(--border); }
 .trow.body { min-height: 46px; }
 .trow.body:hover { background: var(--accent); }
 .trow.body.is-picked { background: var(--accent); }
@@ -278,8 +278,8 @@ svg { display: block; }
 .freq { padding: 3px 10px; border: 1px solid transparent; border-radius: 999px; background: transparent; font-size: 12px; color: var(--muted-foreground); white-space: nowrap; cursor: pointer; }
 .freq.is-set { border-color: var(--border); color: var(--foreground); }
 .freq:hover { background: var(--card); }
-.cell-channels { display: flex; gap: 4px; padding: 0 12px; }
-.ch-mark { display: grid; place-items: center; width: 22px; height: 22px; border-radius: 6px; font-size: 9px; font-weight: 700; }
+.cell-channels { display: flex; align-items:center; gap: 4px; padding: 0 12px; }
+.ch-mark { display: grid; place-items: center; flex:none; width: 36px; height: 36px; border-radius: 6px; font-size: 9px; font-weight: 700; }
 .cell-last { padding: 0 16px; font-size: 13px; color: var(--muted-foreground); text-align: right; white-space: nowrap; }
 
 /* Assistant de connexion */
@@ -568,3 +568,12 @@ svg { display: block; }
 .provider-auth-button img { display:block; height:40px; width:auto; max-width:100%; }
 .provider-auth-button:focus-visible { outline:2px solid var(--ring); outline-offset:3px; }
 .provider-auth-button:disabled { cursor:default; opacity:.55; }
+
+/* Glyphes sociaux officiels : pas de recadrage, filtre ni recoloration. */
+.social-brand-icon { display:inline-block; width:32px; height:32px; object-fit:contain; flex:none; vertical-align:middle; }
+.acct-mark:has(.social-brand-icon), .ch-mark:has(.social-brand-icon) { width:36px; height:36px; flex-shrink:0; background:transparent !important; border-radius:0; }
+.service-mark:has(.social-brand-icon) { background:transparent !important; border-radius:0; }
+.provider-badge:has(.social-brand-icon) { gap:8px; }
+
+.service:disabled:has(.social-brand-icon) { opacity:1; }
+.service:disabled:has(.social-brand-icon) > :not(.service-mark) { opacity:.55; }
