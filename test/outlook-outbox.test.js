@@ -204,3 +204,5 @@ test('mémoire Outlook : apprentissage seulement après sendMail confirmé, aucu
  ms.fail=(method,path)=>path==='me/sendMail';ms.failStatus=503;await assert.rejects(outbox.send(msg.id,{...input,digest:p.digest}));assert.equal(store.getReplyMemory(msg.id).sampleCount,before);
  ms.fail=null;const fresh=await outbox.preview(msg.id,input);await outbox.send(msg.id,{...input,digest:fresh.digest});assert.equal(store.getReplyMemory(msg.id).sampleCount,before+1);sync.stop();
 });
+
+test('direct send rechecks AI provenance after waiting for the Outlook queue',async()=>{const{outbox,msg,ms,store,sync,account}=await ready();const input={text:'Typed reply',mode:'reply'};const p=await outbox.preview(msg.id,input);let release;const blocked=sync.queue(account.id,()=>new Promise(r=>{release=r;}));await new Promise(setImmediate);const pending=outbox.send(msg.id,{...input,digest:p.digest,direct:true});store.markDraftAI(msg.id);release();await blocked;await assert.rejects(pending,e=>e.code==='preview_required');assert.equal(ms.calls.filter(c=>c.path?.endsWith('/send') || c.path==='me/sendMail').length,0);});

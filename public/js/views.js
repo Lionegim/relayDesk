@@ -32,6 +32,8 @@ const PROVIDER_BRANDS = {
 const providerMark = (svc, channel) => PROVIDER_BRANDS[svc]
   ? html`<img class="provider-brand-icon" src="${PROVIDER_BRANDS[svc].icon}" width="24" height="24" alt="" aria-hidden="true">`
   : channelMark(channel);
+const needsReview=(s,id)=>!!s.draftMeta?.[id]?.aiAssisted || s.details[id]?.requiresPreview!==false;
+const assistantButton=(action='aiSummary')=>html`<button class="icon-btn ai-launch" data-on-click="${action}" title="Ouvrir l’assistant IA" aria-label="Ouvrir l’assistant IA">${icon('sparkle')}</button>`;
 const providerBadge = account => {
   const brand = PROVIDER_BRANDS[account?.svc] || SOCIAL_BRANDS[account?.channel];
   return when(brand, () => html`<span class="provider-badge">${providerMark(account.svc, account.channel)}<span>${brand.label}</span></span>`);
@@ -51,7 +53,7 @@ export function renderApp(s, v) {
     ${when(s.newMailOpen, () => newMailDialog(s, v))}
     ${when(s.c, () => connectWizard(s))}
     ${when(s.confirm?.kind === 'disconnect', () => disconnectDialog(s.confirm))}
-    ${when(s.confirm?.kind === 'send' && s.confirm.preview, () => sendDialog(s.confirm, s.offline))}
+    ${when(s.confirm?.kind === 'send' && s.confirm.preview && !s.confirm.direct, () => sendDialog(s.confirm, s.offline))}
     ${when(s.authPanel, () => authDevices(s))}
     ${when(s.contactImport, () => contactImportDialog(s,v))}
     ${when(s.personOpen, () => personDialog(s,v))}${when(s.groupEditor,()=>groupDialog(s,v))}${when(s.mailSettingsPreview,()=>historyWindowReview(s))}
@@ -264,7 +266,7 @@ function reader(s, v) {
         <div class="grow"></div>
       </div>
       ${sel ? (sel.channel === 'whatsapp' ? whatsappView(s, v, sel) : messageView(s, v, sel)) : html`<div class="no-selection">Aucun message sélectionné</div>`}
-      ${when(s.ai && sel && s.ai.forId === sel.id, () => aiPanel(s, sel))}
+      ${when(s.ai && !s.ai.newMail && sel && s.ai.forId === sel.id, () => aiPanel(s, sel))}
     </main>`;
 }
 
@@ -304,7 +306,7 @@ function messageView(s, v, sel) {
     <div class="reader-scroll">
       <div class="reader-top">
         <span>${plural(sel.count || 1, 'message')}</span>
-        <div style="display:flex;gap:12px"><button class="link-btn" data-on-click="aiClassify">Classer</button><button class="link-btn" data-on-click="aiSummary">${icon('sparkle')}Résumer</button></div>
+        ${assistantButton()}
       </div>
       <h1 class="mail-subject">${sel.subject || 'Sans objet'}</h1><div class="msg-head">
         <span class="avatar">${sel.initials}</span>
@@ -347,7 +349,7 @@ function messageView(s, v, sel) {
           ${draftConflict(s, sel.id)}
           <textarea data-autofocus data-key="draft-${sel.id}" data-on-input="draft" ${raw(s.confirm?.messageId === sel.id ? 'readonly' : '')} placeholder="Répondre à ${sel.from.split(' ')[0]} depuis ${sel.account}…">${draft}</textarea>
           <div class="composer-foot">
-            <button class="btn btn-ghost" data-on-click="aiDraft">✳ Aider à rédiger</button>
+
             ${(() => {
               const st = draftState(s, v, sel.id, draft);
               return html`<span class="${cls('composer-status ellipsis', st && `is-${st.tone}`)}" role="status">${st ? st.label : sel.draft ? `${sel.draft.synced ? 'Brouillon synchronisé' : 'Brouillon'} enregistré à ${timeOf(sel.draft.savedAt)}` : 'Brouillon'}</span>`;
@@ -356,8 +358,8 @@ function messageView(s, v, sel) {
             ${(() => {
               const acc = v.profile.accounts.find(a => a.id === sel.accountId);
               const allowed = !!acc?.perms?.includes('send');
-              const title = allowed ? 'Vérifier puis envoyer' : 'L’envoi demande un compte de messagerie avec la permission Envoi';
-              return html`<button class="btn btn-brand" data-on-click="sendPreview" title="${title}" ${raw(allowed && draft.trim() && !s.confirm && !(s.draftMeta || {})[sel.id]?.conflict && !s.offline ? '' : 'disabled')}>Vérifier avant l’envoi</button>`;
+              const title = allowed ? needsReview(s,sel.id)?'Vérifier puis envoyer':'Envoyer le message rédigé' : 'L’envoi demande un compte de messagerie avec la permission Envoi';
+              return html`<button class="btn btn-brand" data-on-click="sendPreview" title="${title}" ${raw(allowed && draft.trim() && !s.confirm && !(s.draftMeta || {})[sel.id]?.conflict && !s.offline ? '' : 'disabled')}>${needsReview(s,sel.id)?'Vérifier avant l’envoi':'Envoyer'}</button>`;
             })()}
           </div>
         </div>`)}
@@ -420,7 +422,7 @@ function whatsappView(s, v, sel) {
   const st = draftState(s, v, sel.id, draft);
   const status = st ? st.label : sel.draft ? `Brouillon enregistré à ${timeOf(sel.draft.savedAt)}` : 'Brouillon';
   const conflict = !!(s.draftMeta || {})[sel.id]?.conflict;
-  const hint = full?.group ? 'Groupe : lecture et IA · envoi non activé' : !canSend ? 'Envoi non autorisé pour ce compte' : s.confirm ? 'Vérification en cours' : 'Envoi seulement après l’aperçu exact';
+  const hint = full?.group ? 'Groupe : lecture et IA · envoi non activé' : !canSend ? 'Envoi non autorisé pour ce compte' : s.confirm ? 'Vérification en cours' : needsReview(s,sel.id)?'Aperçu requis pour ce brouillon':'Envoi au clic sur Envoyer';
   return html`
     <section class="wa" aria-label="Discussion WhatsApp avec ${name}">
       <header class="wa-head">
@@ -430,8 +432,7 @@ function whatsappView(s, v, sel) {
           <span class="ellipsis"><span class="wa-badge">${channelMark('whatsapp')}WhatsApp</span>${sel.account !== 'WhatsApp' ? sel.account : ''}${sel.handle ? ` · ${sel.handle}` : ''}${folderName ? ` · ${folderName}` : ''}</span>
         </div>
         <div class="wa-head-actions">
-          <button class="link-btn" data-on-click="aiClassify">Classer</button>
-          <button class="link-btn" data-on-click="aiSummary">${icon('sparkle')}Résumer</button>
+          ${assistantButton()}
         </div>
       </header>
       <div class="wa-timeline" data-key="wa-timeline-${sel.id}" data-chat-id="${sel.id}" data-ready="${String(!!full && !full.failed)}" role="log" aria-label="Messages, du plus ancien au plus récent">
@@ -449,11 +450,11 @@ function whatsappView(s, v, sel) {
             placeholder="Écrire à ${name.split(' ')[0]} depuis ${sel.account}…">${draft}</textarea>
         </div>
         <div class="wa-actions">
-          <button class="btn btn-ghost" data-on-click="aiDraft" title="Proposer une réponse avec l’assistant">✳ Aider à rédiger</button>
+
           <span class="${cls('wa-status ellipsis', (tooLong || st?.tone === 'error') && 'is-error', st?.tone === 'warn' && 'is-warn')}" role="status">${tooLong ? `${draft.length} / ${WA_MAX} caractères : trop long` : `${status} · ${hint}`}</span>
           <button class="btn btn-ghost" data-on-click="saveDraft">Enregistrer</button>
-          <button class="btn wa-send" data-on-click="sendPreview" title="${canSend ? 'Vérifier le message exact avant l’envoi' : 'L’envoi demande la permission Envoi pour ce compte'}"
-            ${raw(canSend && draft.trim() && !tooLong && !s.confirm && !conflict && !s.offline ? '' : 'disabled')}>Aperçu</button>
+          <button class="btn wa-send" data-on-click="sendPreview" title="${canSend ? needsReview(s,sel.id)?'Vérifier le message exact avant l’envoi':'Envoyer le message rédigé' : 'L’envoi demande la permission Envoi pour ce compte'}"
+            ${raw(canSend && draft.trim() && !tooLong && !s.confirm && !conflict && !s.offline ? '' : 'disabled')}>${needsReview(s,sel.id)?'Aperçu':'Envoyer'}</button>
         </div>
       </footer>
     </section>`;
@@ -498,13 +499,13 @@ function aiPanel(s, sel) {
         <button class="close-btn" data-on-click="aiClose" aria-label="Fermer">×</button>
       </div>
       <div class="ai-tabs">
-        ${[['summary', 'Résumer'], ['classify', 'Classer'], ['draft', 'Répondre']].map(([mode, label]) => html`
+        ${(ai.newMail?[['draft','Rédiger']]:[['summary', 'Résumer'], ['classify', 'Classer'], ['draft', 'Répondre']]).map(([mode, label]) => html`
           <button class="${cls('ai-tab', ai.mode === mode && 'is-on')}" data-on-click="aiTab" data-mode="${mode}">${label}</button>`)}
       </div>
       <div class="ai-body">
-        <p class="muted" style="font-size:12px;margin:0">${configured ? (draftMode ? 'À ta demande, le fil est transmis à Mistral. Avec la mémoire active, jusqu’à cinq exemples de ton style et des échanges pertinents de la personne dans le profil d’envoi peuvent le compléter. Aucun envoi automatique.' : 'À ta demande, le texte de ce fil est transmis à Mistral. Aucun déplacement ni envoi automatique.') : 'L’IA attend sa configuration. Ajoute MISTRAL_API_KEY au fichier .env sur ton Mac, puis redémarre Relay Desk.'}</p>
+        <p class="muted" style="font-size:12px;margin:0">${configured ? (draftMode ? ai.newMail?'À ta demande, ce brouillon est transmis à Mistral pour proposer un texte. Une proposition insérée demande ta validation de l’aperçu exact avant envoi.':'À ta demande, le fil est transmis à Mistral. Avec la mémoire active, jusqu’à cinq exemples de ton style et des échanges pertinents de la personne dans le profil d’envoi peuvent le compléter. Aucun envoi automatique.' : 'À ta demande, le texte de ce fil est transmis à Mistral. Aucun déplacement ni envoi automatique.') : 'L’IA attend sa configuration. Ajoute MISTRAL_API_KEY au fichier .env sur ton Mac, puis redémarre Relay Desk.'}</p>
         ${when(draftMode, () => html`
-          ${replyMemoryPanel(s,sel)}
+          ${when(!ai.newMail,()=>replyMemoryPanel(s,sel))}
           <label class="field">
             <span class="field-label">Intention</span>
             <textarea data-on-input="aiIntent" maxlength="500" placeholder="Ex : valider, demander une dernière relecture du titre">${s.aiIntent}</textarea>
@@ -536,7 +537,7 @@ function aiPanel(s, sel) {
       <div class="ai-foot">
         ${when(result, () => html`<button class="btn btn-ghost" data-on-click="aiRegenerate" ${raw(ai.loading || ai.memoryBusy || !configured ? 'disabled' : '')}>Régénérer</button>`)}
         <div class="grow"></div>
-        ${when(draftMode && result, () => html`<button class="btn btn-brand" data-on-click="aiInsert" ${raw(ai.loading ? 'disabled' : '')}>Insérer dans la réponse</button>`)}
+        ${when(draftMode && result, () => html`<button class="btn btn-brand" data-on-click="aiInsert" ${raw(ai.loading ? 'disabled' : '')}>${ai.newMail?'Insérer dans le message':'Insérer dans la réponse'}</button>`)}
         ${when(classifyMode && result && !result.appliedAt, () => html`<button class="btn btn-brand" data-on-click="aiApply" ${raw(ai.loading ? 'disabled' : '')}>Appliquer le classement</button>`)}
         ${when(!result, () => html`
           <button class="btn btn-brand" data-on-click="aiRun" ${raw(ai.loading || ai.memoryBusy || !configured ? 'disabled' : '')}>
@@ -631,7 +632,7 @@ function whatsappConnectDialog(s) {
       <div><h3>Scanne pour connecter ton compte</h3><ol class="wa-link-steps"><li>Ouvre WhatsApp sur ton téléphone.</li><li>Va dans <strong>Réglages → Appareils connectés</strong> (sur Android : menu ⋮).</li><li>Choisis <strong>Connecter un appareil</strong> et scanne ce QR code.</li></ol><p class="muted">Le compte est identifié automatiquement après le scan.</p></div>
     </div>
     <p class="muted wa-connect-note">Les textes individuels et de groupe disponibles sur les 7 derniers jours seront synchronisés. L’historique reçu peut rester partiel.</p>
-    <p class="wa-connect-note"><strong>Tu gardes le contrôle.</strong> Chaque envoi exige ton approbation de l’aperçu exact. Les groupes restent en lecture et analyse.</p>
+    <p class="wa-connect-note"><strong>Tu gardes le contrôle.</strong> Les propositions IA exigent ton approbation de l’aperçu exact. Les groupes restent en lecture et analyse.</p>
     <p class="muted wa-connect-note">Connecteur communautaire non officiel. Relie uniquement un compte que tu possèdes ou es autorisé à connecter.</p>`}
    ${when(c.error,()=>html`<div class="alert" role="alert">${c.error}</div>`)}
   </div><footer class="dialog-foot">${done?html`<button class="btn btn-primary" data-on-click="cNext">Ouvrir la boîte</button>`:html`${when(c.error,()=>html`<button class="btn btn-primary" data-on-click="refreshWhatsAppQR">Réessayer</button>`)}<button class="btn btn-ghost" data-on-click="closeConnect">Fermer</button>`}</footer>
@@ -736,7 +737,7 @@ function connectWizard(s) {
               <p class="muted" style="font-size:12px;margin:0">Connecteur communautaire non officiel : la liaison peut être interrompue ou limitée par WhatsApp.</p>
               <div class="whatsapp-link">
                 ${when(c.busy || (c.linkId && !c.link?.qrDataUrl && !c.error && c.link?.status !== 'connected'), () => html`<span class="spinner"></span><span>${c.link?.status === 'syncing' ? 'Liaison reçue, synchronisation en cours…' : 'Préparation de la liaison…'}</span>`)}
-                ${when(c.link?.qrDataUrl && !c.error, () => html`<img class="whatsapp-qr" src="${c.link.qrDataUrl}" alt="QR code pour lier WhatsApp à Relay Desk"><ol class="wa-link-steps"><li>Ouvre WhatsApp sur le téléphone de ce compte.</li><li>Va dans <strong>Réglages → Appareils connectés</strong> (sur Android : menu ⋮).</li><li>Choisis <strong>Connecter un appareil</strong> et scanne ce QR code.</li></ol><span class="muted" style="font-size:12px">Ce QR code donne à cet appareil Relay Desk accès à la lecture et à l’envoi. Relay Desk demande ta validation avant chaque envoi.</span>`)}
+                ${when(c.link?.qrDataUrl && !c.error, () => html`<img class="whatsapp-qr" src="${c.link.qrDataUrl}" alt="QR code pour lier WhatsApp à Relay Desk"><ol class="wa-link-steps"><li>Ouvre WhatsApp sur le téléphone de ce compte.</li><li>Va dans <strong>Réglages → Appareils connectés</strong> (sur Android : menu ⋮).</li><li>Choisis <strong>Connecter un appareil</strong> et scanne ce QR code.</li></ol><span class="muted" style="font-size:12px">Ce QR code donne à cet appareil Relay Desk accès à la lecture et à l’envoi. Les propositions IA demandent la validation de leur aperçu exact.</span>`)}
                 ${when(c.linkId && c.error, () => html`<button class="btn btn-ghost" data-on-click="refreshWhatsAppQR">Obtenir un nouveau QR code</button>`)}
               </div>`)}
             ${when(d.auth === 'oauth', () => html`
@@ -857,8 +858,8 @@ function newMailDialog(s, v) {
   const c = s.newMail;
   const accounts = v.profile.accounts.filter(a => a.channel === 'email' && a.perms?.includes('read'));
   const account = accounts.find(a => a.id === c.accountId);
-  const disabled = raw(c.busy ? 'disabled' : '');
-  return html`<div class="overlay"><section class="dialog new-mail-dialog" role="dialog" aria-modal="true" aria-label="Nouveau message">
+  const disabled = raw(c.busy || s.ai?.newMail ? 'disabled' : '');
+  return html`<div class="overlay"><section class="dialog new-mail-dialog" ${raw(s.ai?.newMail?'inert':'')} role="dialog" aria-modal="${!s.ai?.newMail}" aria-label="Nouveau message">
     <div class="composer-head writing-head"><div class="grow"><span class="network-eyebrow">PRENDRE LE TEMPS D’ÉCRIRE</span><h3>Nouveau message</h3></div><button class="composer-close" data-on-click="closeNewMail" aria-label="Fermer le nouveau message" ${disabled}>×</button></div>
     ${accounts.length ? html`<div class="compose-fields">
       <label>De<select data-on-change="newMailField" data-field="accountId" ${raw(c.busy || c.saving || c.messageId ? 'disabled' : '')}>
@@ -875,15 +876,15 @@ function newMailDialog(s, v) {
         <button class="btn btn-ghost" data-on-click="newMailKeepMine" ${raw(c.saving || c.busy ? 'disabled' : '')}>Garder ma version</button></div>
       </div>`)}
       ${when(c.error || c.saveError, () => html`<p role="alert" class="error">${c.error || `Non enregistré : ${c.saveError}`}</p>`)}
-      </div><div class="composer-foot"><button class="btn btn-ghost" data-on-click="aiNewMail" ${raw(c.busy || !s.data.ai?.configured ? 'disabled' : '')}>✳ Améliorer avec l’IA</button>
+      </div><div class="composer-foot">${assistantButton('aiNewMail')}
         <span class="composer-status" role="status">${newMailStatus(c)}</span>
         <button class="btn btn-ghost" data-on-click="saveNewMail" ${raw(c.busy || c.conflict || s.offline ? 'disabled' : '')}>Enregistrer</button>
-        <button class="btn btn-brand" data-on-click="previewNewMail" ${raw(!c.busy && !c.saving && !c.conflict && !s.offline && account?.perms?.includes('send') && c.text.trim() && c.to.trim() ? '' : 'disabled')}>Vérifier avant l’envoi</button>
+        <button class="btn btn-brand" data-on-click="previewNewMail" ${raw(!c.busy && !c.saving && !c.conflict && !s.offline && account?.perms?.includes('send') && c.text.trim() && c.to.trim() ? '' : 'disabled')}>${c.aiAssisted?'Vérifier avant l’envoi':'Envoyer'}</button>
       </div>
       ${when(!account?.perms?.includes('send'), () => html`<p class="muted">Active la permission Envoi pour envoyer depuis ce compte.</p>`)}
       ${when(!s.data.ai?.configured, () => html`<p class="muted">L’assistant sera disponible après configuration de l’IA.</p>`)}
     ` : html`<p>Connecte un compte Gmail ou Outlook pour rédiger un message.</p><button class="btn btn-brand" data-on-click="newMailConnect">Connecter un compte</button>`}
-  </section></div>`;
+  </section>${when(s.ai?.newMail && s.details[c.messageId],()=>html`<div class="compose-ai-layer"><div class="compose-ai-backdrop" data-on-click="aiClose"></div>${aiPanel(s,s.details[c.messageId])}</div>`)}</div>`;
 }
 
 
@@ -929,7 +930,7 @@ function personDialog(s,v) {
  ${when(p.identities.some(i=>i.sharedWith>1),()=>html`<p class="muted">Les identifiants partagés ne regroupent pas les échanges automatiquement. Lie les fiches après vérification si elles représentent la même personne.</p>`)}<div class="person-timeline">${p.timeline.items.map(m=>html`<button class="person-exchange" data-on-click="personConversation" data-id="${m.id}"><span class="person-exchange-meta">${providerMark(v.profile.accounts.find(a=>a.id===m.accountId)?.svc || m.channel,m.channel)}<span>${m.profileName?m.profileName+' · ':''}${m.account}</span><time>${whenLabel(m.sortAt)}</time></span><strong>${m.subject || CH[m.channel]?.label || 'Conversation'}</strong>${when(m.preview,()=>html`<span class="person-exchange-preview">${m.preview}</span>`)}<span class="person-exchange-count">${plural(m.count,'message')} <span aria-hidden="true">↗</span></span></button>`)}</div>
  ${when(!p.timeline.items.length,()=>html`<p>Aucun échange correspondant dans l’historique importé. Ajoute un email ou téléphone connu, ou lie une autre fiche de cette personne.</p>`)}
  ${when(p.timeline.nextOffset!==null,()=>html`<button class="btn btn-ghost" data-on-click="personMore" ${disabled}>Afficher les conversations plus anciennes</button>`)}
- <p class="person-history-footnote">Ouvrez un échange pour répondre. Chaque envoi exige votre validation de l’aperçu exact.</p></section></div>`:html`<p>Chargement de la fiche…</p>`}</div></section></div>`;
+ <p class="person-history-footnote">Ouvrez un échange pour répondre. Les propositions IA exigent votre validation de l’aperçu exact.</p></section></div>`:html`<p>Chargement de la fiche…</p>`}</div></section></div>`;
 }
 
 // Duplicate workbench: evidence remains visible; every merge has its own review step.
@@ -956,5 +957,5 @@ const HISTORY_OPTIONS=[[30,'30 jours'],[90,'3 mois'],[180,'6 mois'],[365,'1 an']
 const historyLabel=days=>HISTORY_OPTIONS.find(([d])=>d===days)?.[1] || `${days} jours`;
 const historyOptions=days=>HISTORY_OPTIONS.map(([d,label])=>html`<option value="${d}" ${raw(d===days?'selected':'')}>${label}</option>`);
 const storageLabel=bytes=>bytes<1048576?`${Math.round(bytes/1024)} Ko`:`${(bytes/1048576).toFixed(1)} Mo`;
-function mailSettingsPage(s,v){const accounts=s.data.profiles.filter(p=>p.id!=='all').flatMap(p=>p.accounts.map(a=>({...a,profileName:p.name}))).filter(a=>['gmail','outlook'].includes(a.svc));return html`<main class="contacts settings-page"><div class="contacts-scroll"><header class="settings-heading">${when(s.mobile,()=>html`<button class="icon-btn" data-on-click="openDrawer" aria-label="Ouvrir le menu">${icon('lines')}</button>`)}<div><p class="network-eyebrow">PARAMÈTRES · VOS COMPTES</p><h1>Historique et stockage</h1><p>Gardez le contexte utile, à votre rythme.</p></div></header><p class="settings-intro">Choisissez la période conservée pour chaque compte. La fenêtre avance automatiquement : les messages plus anciens quittent le cache de Relay Desk. Les originaux restent dans Gmail ou Outlook, et les brouillons en cours gardent leur contexte.</p>${when(s.mailSettingsError,()=>html`<p role="alert" class="error">${s.mailSettingsError}</p>`)}<div class="settings-accounts">${accounts.map(a=>{const p=s.mailSettings[a.id],days=s.mailSettingsDays[a.id],busy=s.mailSettingsBusy===a.id;return html`<section class="history-account-card"><header>${providerMark(a.svc,a.channel)}<div><h2>${a.name}</h2><p>${a.address} · ${a.profileName}</p></div></header>${p?html`<div class="history-account-stats"><span><strong>${p.conversations.toLocaleString('fr-FR')}</strong> conversations</span><span><strong>${storageLabel(p.contentBytes)}</strong> de contenu de messages</span><span>Actuellement : <strong>${historyLabel(p.days)}</strong></span></div><div class="history-account-control"><label>Historique à conserver<select data-on-change="historyWindowChange" data-id="${a.id}" aria-label="Historique de ${a.name}" ${raw(busy?'disabled':'')}>${historyOptions(days)}</select></label><button class="btn btn-brand" data-on-click="reviewHistoryWindow" data-id="${a.id}" ${raw(busy || days===p.days || s.offline?'disabled':'')}>${busy?'Préparation…':'Examiner la modification'}</button></div><p class="muted">Réduire la période libère le cache local à l’application du réglage. L’élargir relance l’import en arrière-plan, sans doublons. Les réponses conservent leur validation avant envoi.</p>`:html`<p>Chargement du réglage…</p>`}</section>`;})}${when(!accounts.length,()=>html`<p>Aucun compte Gmail ou Outlook ajouté.</p><button class="btn btn-brand" data-on-click="openConnect">Ajouter un compte</button>`)}</div><p class="settings-footnote">Nouveaux comptes : 1 an par défaut. WhatsApp garde sa fenêtre disponible de 7 jours et reste indépendant de ce réglage. Les contacts, liens entre personnes et groupes sont conservés.</p></div></main>`;}
+function mailSettingsPage(s,v){const accounts=s.data.profiles.filter(p=>p.id!=='all').flatMap(p=>p.accounts.map(a=>({...a,profileName:p.name}))).filter(a=>['gmail','outlook'].includes(a.svc));return html`<main class="contacts settings-page"><div class="contacts-scroll"><header class="settings-heading">${when(s.mobile,()=>html`<button class="icon-btn" data-on-click="openDrawer" aria-label="Ouvrir le menu">${icon('lines')}</button>`)}<div><p class="network-eyebrow">PARAMÈTRES · VOS COMPTES</p><h1>Historique et stockage</h1><p>Gardez le contexte utile, à votre rythme.</p></div></header><p class="settings-intro">Choisissez la période conservée pour chaque compte. La fenêtre avance automatiquement : les messages plus anciens quittent le cache de Relay Desk. Les originaux restent dans Gmail ou Outlook, et les brouillons en cours gardent leur contexte.</p>${when(s.mailSettingsError,()=>html`<p role="alert" class="error">${s.mailSettingsError}</p>`)}<div class="settings-accounts">${accounts.map(a=>{const p=s.mailSettings[a.id],days=s.mailSettingsDays[a.id],busy=s.mailSettingsBusy===a.id;return html`<section class="history-account-card"><header>${providerMark(a.svc,a.channel)}<div><h2>${a.name}</h2><p>${a.address} · ${a.profileName}</p></div></header>${p?html`<div class="history-account-stats"><span><strong>${p.conversations.toLocaleString('fr-FR')}</strong> conversations</span><span><strong>${storageLabel(p.contentBytes)}</strong> de contenu de messages</span><span>Actuellement : <strong>${historyLabel(p.days)}</strong></span></div><div class="history-account-control"><label>Historique à conserver<select data-on-change="historyWindowChange" data-id="${a.id}" aria-label="Historique de ${a.name}" ${raw(busy?'disabled':'')}>${historyOptions(days)}</select></label><button class="btn btn-brand" data-on-click="reviewHistoryWindow" data-id="${a.id}" ${raw(busy || days===p.days || s.offline?'disabled':'')}>${busy?'Préparation…':'Examiner la modification'}</button></div><p class="muted">Réduire la période libère le cache local à l’application du réglage. L’élargir relance l’import en arrière-plan, sans doublons. Les propositions IA conservent leur validation avant envoi.</p>`:html`<p>Chargement du réglage…</p>`}</section>`;})}${when(!accounts.length,()=>html`<p>Aucun compte Gmail ou Outlook ajouté.</p><button class="btn btn-brand" data-on-click="openConnect">Ajouter un compte</button>`)}</div><p class="settings-footnote">Nouveaux comptes : 1 an par défaut. WhatsApp garde sa fenêtre disponible de 7 jours et reste indépendant de ce réglage. Les contacts, liens entre personnes et groupes sont conservés.</p></div></main>`;}
 function historyWindowReview(s){const r=s.mailSettingsPreview,busy=s.mailSettingsBusy===r.accountId;return html`<div class="overlay"><section class="dialog history-review" role="dialog" aria-modal="true" aria-label="Confirmer la période de conservation"><header class="composer-head"><h3 class="grow">${r.name} · ${historyLabel(r.requestedDays)}</h3><button class="close-btn" data-on-click="cancelHistoryWindow" aria-label="Fermer la modification" ${raw(busy?'disabled':'')}>×</button></header><div class="dialog-body"><p><strong>${r.address}</strong></p><p>${r.removeConversations} conversations et ${r.removeOlderMessages} anciens messages de conversations récentes seront retirés du cache de Relay Desk.</p><p>${r.protectedDrafts} conversation(s) ancienne(s) conservée(s) pour protéger un brouillon et son contexte.</p><p>Les originaux chez Google ou Microsoft restent inchangés. Vous pourrez réimporter une période plus large ensuite. Le réglage s’applique automatiquement aux prochaines synchronisations.</p><p>La mémoire de style et les analyses liées aux anciens contenus sont nettoyées. Aucun message ne sera envoyé.</p>${when(s.mailSettingsError,()=>html`<p role="alert">${s.mailSettingsError}</p>`)}<button class="btn btn-brand" data-on-click="applyHistoryWindow" ${raw(busy?'disabled':'')}>${busy?'Application et optimisation…':'Appliquer cette période'}</button></div></section></div>`;}

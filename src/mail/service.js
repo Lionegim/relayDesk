@@ -19,6 +19,8 @@ export function createMailService({ store, providers }) {
       return store.createComposition(accountId);
     },
     saveDraft(id, input) {
+      if(input.aiAssisted!==undefined && typeof input.aiAssisted!=='boolean')throw badRequest('Origine du brouillon invalide');
+      if(input.aiAssisted){store.assertDraftVersion(id,input.baseVersion);store.markDraftAI(id);}
       const {accountId} = store.getMessageSource(id);
       const p = accountId && providers[store.getAccount(accountId).svc];
       if (p) return p.outbox.saveDraft(id, input);

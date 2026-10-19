@@ -88,6 +88,7 @@ export function createWhatsAppOutbox({ store, sync }) {
             throw new HttpError(409, 'Validation absente, expirée ou déjà utilisée : vérifie le message à nouveau.', 'confirmation_invalid');
           }
           store.assertDraftVersion(messageId,confirmation.draftVersion);
+          if(input.direct===true && store.requiresDraftReview(messageId))throw new HttpError(409,'Ce brouillon utilise une proposition IA : valide son aperçu exact.','preview_required');
           // Hors ligne : rien n'est tenté, la validation reste utilisable.
           const sock = sync.liveSocket(accountId);
           if (!sock) throw new HttpError(409, 'WhatsApp n’est pas connecté : réessaie quand le compte est en ligne.', 'whatsapp_offline');

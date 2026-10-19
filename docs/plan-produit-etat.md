@@ -8,7 +8,7 @@ Mise à jour : 19 octobre 2026. Ce suivi réconcilie le plan d’implémentation
 - Application web utilisable sur ordinateur et mobile, Docker Compose, un runtime Node 24 et SQLite persistante. Keycloak et MFA protègent l’accès.
 - Le propriétaire peut choisir une vue d’origine ou **Tous les profils**. Les sources Anove, Personnel et autres restent identifiables ; les comptes ne sont pas déplacés.
 - Contacts et liens sont persistants, sauvegardés et réversibles. Les suggestions ne fusionnent jamais automatiquement.
-- IA Mistral à la demande ; contexte du compte/conversation d’origine. Aucun envoi autonome : aperçu exact, validation explicite, usage unique et absence de relance aveugle après résultat incertain.
+- IA Mistral à la demande ; contexte du compte/conversation d’origine. Aucun envoi autonome : clic Envoyer pour la rédaction manuelle ; aperçu exact et confirmation distincte pour une proposition IA insérée. Tickets à usage unique et absence de relance aveugle après résultat incertain.
 
 ## Plan initial : ce qui est réellement livré
 
@@ -44,14 +44,14 @@ Mise à jour : 19 octobre 2026. Ce suivi réconcilie le plan d’implémentation
 
 1. **Historique progressif et qualité des personnes.** Import complet Gmail/Outlook implémenté : tâche persistante par compte, progression, pause/reprise, déduplication et reprise après erreur ; voir `docs/import-historique-mail.md`. Imports hébergés démarrés : Gmail et Outlook terminés : 2 734 et 26 932 conversations traitées, avec vérifications de doublons à zéro. Les timelines et suggestions exploitent désormais les échanges importés par identité confirmée ; voir `docs/historique-personnes-ia.md`. Le périmètre WhatsApp reste celui disponible auprès du téléphone. Utiliser ensuite cet historique dans les timelines et la mémoire, sans analyser automatiquement tout le passé avec Mistral.
 2. **Sauvegarde hors serveur automatique et recette de récupération.** Mettre en place une destination indépendante, vérifier la livraison quotidienne et tester la restauration du schéma courant avec liens, audit, brouillons et mémoire. L’envoi et les connecteurs restent arrêtés pendant la recette.
-3. **Pièces jointes et médias utiles**, puis **Instagram Business** lorsque ses accès sont prêts. Définir d’abord les capacités réelles et conserver la validation exacte de chaque envoi.
+3. **Pièces jointes et médias utiles**, puis **Instagram Business** lorsque ses accès sont prêts. Définir d’abord les capacités réelles et conserver la validation exacte des propositions IA.
 4. **MCP par compte / Proton / LinkedIn**, selon leur utilité et les accès disponibles. Aucun de ces services ne doit être annoncé comme connecté avant une recette réelle.
 
 Ces lots sont un ordre de suite, pas des travaux déclenchés par cette mise à jour du plan. Le périmètre actuel reste la vue unifiée, la conservation des rapprochements et le bilan du plan.
 
 ## Interface : dossiers, lecture et réseau (19 octobre 2026)
 
-Réorganisation inspirée de Mail et revue avec Claude Desktop : arbres par compte, vrais sous-dossiers et badges non lus ; lecture HTML sémantique nettoyée avec repli texte ; réseau centré sur le propriétaire (30/90/365 jours), liste mobile et groupes manuels persistants avec gestion des membres. Voir [détail et limites](ui-reseau-et-lecture.md). L’approbation de l’aperçu exact demeure obligatoire pour chaque envoi.
+Réorganisation inspirée de Mail et revue avec Claude Desktop : arbres par compte, vrais sous-dossiers et badges non lus ; lecture HTML sémantique nettoyée avec repli texte ; réseau centré sur le propriétaire (30/90/365 jours), liste mobile et groupes manuels persistants avec gestion des membres. Voir [détail et limites](ui-reseau-et-lecture.md). La rédaction suit désormais la décision UX du propriétaire : envoi manuel au clic, confirmation de l’aperçu pour les propositions IA ; voir `redaction-et-assistant.md`.
 
 ### Conservation du courrier configurable
 

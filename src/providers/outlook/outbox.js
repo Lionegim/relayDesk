@@ -152,6 +152,7 @@ export function createOutlookOutbox({ store, sync, ownerName = '' }) {
             throw new HttpError(409, 'Validation absente, expirée ou déjà utilisée : vérifie le message à nouveau.', 'confirmation_invalid');
           }
           store.assertDraftVersion(messageId,confirmation.draftVersion);
+          if(raw.direct===true && store.requiresDraftReview(messageId))throw new HttpError(409,'Ce brouillon utilise une proposition IA : valide son aperçu exact.','preview_required');
           confirmations.delete(digest);
           const memoryTicket=store.getReplyMemory(messageId,{internal:true});
           const sendStartedAt=Date.now();

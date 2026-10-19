@@ -219,10 +219,11 @@ export function createApp({ store, ai, ownerName, gmail = null, providers = {}, 
     ['PUT', /^\/api\/messages\/([^/]+)\/draft$/, ([id], body) => {if(!Number.isSafeInteger(body.baseVersion) || body.baseVersion<0) throw badRequest('Version du brouillon requise');return mail.saveDraft(messageId(id),body);}],
     ['POST', /^\/api\/messages\/([^/]+)\/send\/preview$/, async ([id], body, session) => {
       if(!Number.isSafeInteger(body.baseVersion) || body.baseVersion<0) throw badRequest('Version du brouillon requise');
-      const preview=await mail.preview(messageId(id),body);
+      const preview={...await mail.preview(messageId(id),body),requiresConfirmation:store.requiresDraftReview(messageId(id))};
       return auth?access.rememberPreview(session,messageId(id),body,preview):preview;
     }],
     ['POST', /^\/api\/messages\/([^/]+)\/send$/, ([id], body, session) => {
+      if(body.direct===true && store.requiresDraftReview(messageId(id)))throw new HttpError(409,'Ce brouillon utilise une proposition IA : valide son aperçu exact.','preview_required');
       if(auth) access.consumePreview(session,messageId(id),body);
       return mail.send(messageId(id), body);
     }],

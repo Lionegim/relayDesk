@@ -199,3 +199,5 @@ test('mémoire : effacement pendant un envoi Gmail en cours empêche son apprent
  g.fail=(method,path)=>{if(method==='POST'&&path==='messages/send')store.changeReplyMemory(msg.id,{reset:true});return false;};
  assert.equal((await outbox.send(msg.id,{...input,digest:p.digest})).sent,true);assert.equal(store.getReplyMemory(msg.id).sampleCount,0);sync.stop();
 });
+
+test('direct send rechecks AI provenance after waiting for the Gmail queue',async()=>{const{outbox,msg,g,store,sync,account}=await ready();const input={text:'Typed reply',mode:'reply'};const p=await outbox.preview(msg.id,input);let release;const blocked=sync.queue(account.id,()=>new Promise(r=>{release=r;}));await new Promise(setImmediate);const pending=outbox.send(msg.id,{...input,digest:p.digest,direct:true});store.markDraftAI(msg.id);release();await blocked;await assert.rejects(pending,e=>e.code==='preview_required');assert.equal(g.sent.length,0);});

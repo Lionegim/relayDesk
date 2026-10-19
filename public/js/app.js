@@ -87,7 +87,7 @@ let compositionSeq = 0;
 const EMPTY_MAIL = { to: '', cc: '', subject: '', text: '' };
 const mailFields = c => ({ to: c.to, cc: c.cc, subject: c.subject, text: c.text });
 const newComposition = fields => ({ ...EMPTY_MAIL, saved: EMPTY_MAIL, busy: false, saving: false, ...fields, cid: ++compositionSeq });
-const mailChanged = c => !!c && ['to', 'cc', 'subject', 'text'].some(k => c[k] !== (c.saved || EMPTY_MAIL)[k]);
+const mailChanged = c => !!c && (c.aiAssisted && !c.aiPersisted || ['to', 'cc', 'subject', 'text'].some(k => c[k] !== (c.saved || EMPTY_MAIL)[k]));
 let prependAnchor = null;
 const known = id => state.data.messages.some(m => m.id === id) || (state.selectedRow?.id === id && state.selectedId === id);
 // Identité d'un élément du fil, pour fusionner des pages sans doublon.
@@ -323,10 +323,10 @@ async function saveDraftNow(id, { overwrite = false } = {}) {
   if (meta.saving) { setMeta(id, { again: true }); return; }
   if (meta.conflict && !overwrite) return;
   const local = localDraft(id);
-  if (!overwrite && sameDraft(local, savedDraft(id)) && !meta.error) return;
+  if (!overwrite && sameDraft(local, savedDraft(id)) && !meta.error && !meta.aiAssisted) return;
   setMeta(id, { saving: true, again: false, error: null });
   try {
-    const draft = await api.saveDraft(id, withBase({ text: local.text, mode: local.mode, to: local.to }, meta.version));
+    const draft = await api.saveDraft(id, withBase({ text: local.text, mode: local.mode, to: local.to, ...(meta.aiAssisted?{aiAssisted:true}:{}) }, meta.version));
     if (draft.previousDraftKept) notify('Un ancien brouillon est conservé chez le fournisseur.');
     const cur = state.details[id];
     if (cur) cur.draft = draft;
@@ -499,8 +499,9 @@ function commitFolder() {
 
 let aiRequest = 0;
 async function aiRun(regenerate = false) {
-  const s = state, sel = derive(s).sel;
+  const s = state, sel = s.ai?.newMail?state.details[s.ai.forId]:derive(s).sel;
   if (!s.ai || !sel || s.ai.loading || s.ai.memoryBusy || !s.data.ai?.configured) return;
+  const newMail=!!s.ai.newMail,cid=newMail?s.newMail?.cid:null,fields=newMail?JSON.stringify(mailFields(s.newMail)):null;
   const mode = s.ai.mode, forId = sel.id, request = ++aiRequest, version = selectionVersion, profileId = s.profileId;
   set({ ai: { ...s.ai, loading: true, result: null, error: null, forId } });
   let result = null, error = null;
@@ -510,7 +511,7 @@ async function aiRun(regenerate = false) {
   } catch (e) {
     error = e.message;
   }
-  if (request === aiRequest && version === selectionVersion && profileId === state.profileId && state.selectedId === forId && state.ai?.forId === forId && state.ai.mode === mode) {
+  if (request === aiRequest && version === selectionVersion && profileId === state.profileId && (newMail ? state.newMailOpen && state.newMail?.messageId===forId && state.newMail.cid===cid && JSON.stringify(mailFields(state.newMail))===fields : state.selectedId === forId) && state.ai?.forId === forId && state.ai.mode === mode) {
     if (result && state.details[forId] && mode !== 'draft') state.details[forId].aiResults = { ...state.details[forId].aiResults, [mode]: result };
     set({ ai: { ...state.ai, loading: false, result, error, folderId: result?.folderId ?? null } });
   }
@@ -532,12 +533,12 @@ async function changeReplyMemory(input) {
 }
 
 function aiOpen(mode) {
-  const sel = derive(state).sel;
+  const sel = state.ai?.newMail && state.newMailOpen?state.details[state.ai.forId]:derive(state).sel;
   if (!sel) return;
   aiRequest++;
   const result = state.details[sel.id]?.aiResults?.[mode] || null;
   const wasOpen = !!state.ai;
-  set({ ai: { mode, result, folderId: result?.folderId ?? null, error: null, loading: false, forId: sel.id }, moveOpen: false });
+  set({ ai: { ...(state.ai?.newMail && state.newMailOpen?{newMail:true}:{}), mode, result, folderId: result?.folderId ?? null, error: null, loading: false, forId: sel.id }, moveOpen: false });
   if (!wasOpen) pushLayer('ai');
 }
 
@@ -677,7 +678,7 @@ function startSync() {
 // Jamais d'écriture automatique après une erreur, un conflit, ou hors ligne.
 let newMailTimer = null, newMailFlight = null;
 const accountKnown = id => state.data?.profiles?.some(p => p.accounts.some(a => a.id === id));
-const compositionFromServer=full=>{const c=newComposition({ messageId: full.id, version: versionOf(full), accountId: full.accountId, to: full.draft?.to || '', cc: full.draft?.cc || '', subject: full.subject || '', text: full.draft?.text || '', savedAt: full.draft?.savedAt, synced: full.draft?.synced });return {...c,saved:mailFields(c)};};
+const compositionFromServer=full=>{const c=newComposition({ messageId: full.id, version: versionOf(full), accountId: full.accountId, to: full.draft?.to || '', cc: full.draft?.cc || '', subject: full.subject || '', text: full.draft?.text || '', savedAt: full.draft?.savedAt, synced: full.draft?.synced, aiAssisted:full.requiresPreview!==false,aiPersisted:true });return {...c,saved:mailFields(c)};};
 // Le buffer existe dès sa création locale, avant même que POST /drafts fournisse un identifiant.
 function patchComposition(cid,patch,fallback=null) {
   const current=state.newMail?.cid===cid;
@@ -720,11 +721,11 @@ async function writeNewMail(start) {
       c = { ...c, messageId: m.id, version: versionOf(m) };
       patchComposition(cid, { messageId: c.messageId, version: c.version }, c);
     }
-    const input = { mode: 'new', ...sent };
+    const input = { mode: 'new', ...sent, ...(c.aiAssisted?{aiAssisted:true}:{}) };
     const draft = await api.saveDraft(c.messageId, withBase(input, c.version));
     if (draft.previousDraftKept) notify('Un ancien brouillon est conservé chez le fournisseur.');
     const version = Number.isInteger(draft.version) ? draft.version : c.version;
-    patchComposition(cid, { messageId: c.messageId, version, saving: false, saved: sent, savedAt: draft.savedAt, synced: draft.synced ?? draft.gmail, saveError: null, conflict: false }, { ...c, ...sent });
+    patchComposition(cid, { messageId: c.messageId, version, saving: false, saved: sent, savedAt: draft.savedAt, synced: draft.synced ?? draft.gmail, aiPersisted:!!c.aiAssisted, saveError: null, conflict: false }, { ...c, ...sent });
     reload({ refresh: true }).catch(() => { /* l'enregistrement est déjà confirmé */ });
     return { c: { ...c, ...sent, version }, input: withBase(input, version) };
   } catch (e) {
@@ -781,7 +782,7 @@ const actions = {
     set({ newMail: { ...c, [field]: field === 'accountId' ? Number(e.target.value) : e.target.value, error: null } });
     scheduleNewMailSave();
   },
-  closeNewMail: () => { if (!state.newMail?.busy) { rememberComposition(); set({ newMailOpen: false }); } },
+  closeNewMail: () => { if (!state.newMail?.busy) { aiRequest++;rememberComposition(); set({ newMailOpen: false, ...(state.ai?.newMail?{ai:null}:{}) }); } },
   newMailReload: () => resolveNewMail(false),
   newMailKeepMine: () => resolveNewMail(true),
   newMailConnect: () => { set({ newMailOpen: false }); openWizard(); },
@@ -799,26 +800,22 @@ const actions = {
     try {
       const preview = await api.previewSend(c.messageId, input);
       if (!ours() || state.confirm) { patchComposition(cid, { busy: false }); return; }
-      set({ newMailOpen: false, newMail: { ...state.newMail, busy: false }, confirm: { kind: 'send', newMail: true, messageId: c.messageId, input, preview, busy: false, error: null } });
-      pushLayer('confirm');
+      set({ newMailOpen: false, newMail: { ...state.newMail, busy: false }, confirm: { kind: 'send', direct:preview.requiresConfirmation===false && !c.aiAssisted, newMail: true, messageId: c.messageId, input, preview, busy: false, error: null } });
+      if(state.confirm.direct)await actions.confirmSend();
+      else pushLayer('confirm');
     } catch (e) {
       const conflict = e.status === 409 && e.code === 'draft_conflict';
       patchComposition(cid, { busy: false, ...(conflict ? { conflict: true } : { error: e.message }) });
     }
   },
   aiNewMail: async () => {
-    const c0 = state.newMail;
-    if (!c0 || c0.busy) return;
-    const cid = c0.cid;
-    set({ newMail: { ...c0, busy: true, error: null } });
-    const saved = await saveNewMail();
-    if (!saved || state.newMail?.cid !== cid) { patchComposition(cid, { busy: false }); return; }
-    try {
-      const r = await api.draftReply(saved.c.messageId, 'Cordial', 'Améliore ce nouveau message sans inventer de faits.');
-      if (state.newMail?.cid !== cid) return patchComposition(cid, { busy: false });
-      set({ newMail: { ...state.newMail, busy: false, text: r.text } });
-      scheduleNewMailSave();
-    } catch (e) { patchComposition(cid, { busy: false, error: e.message }); }
+    const c0=state.newMail;if(!c0 || c0.busy || state.ai?.newMail)return;
+    aiRequest++;const cid=c0.cid;set({newMail:{...c0,busy:true,error:null}});
+    const saved=await saveNewMail();
+    if(!saved || state.newMail?.cid!==cid || !state.newMailOpen){patchComposition(cid,{busy:false});return;}
+    try{const full=await api.message(saved.c.messageId);if(state.newMail?.cid!==cid || !state.newMailOpen)return;
+      set(s=>({details:{...s.details,[full.id]:full},newMail:{...s.newMail,busy:false},ai:{newMail:true,mode:'draft',forId:full.id,result:null,error:null,loading:false}}));
+    }catch(e){patchComposition(cid,{busy:false,error:e.message});}
   },
   toggleProfileMenu: () => set({ menu: !state.menu, accountMenu: null }),
   selectProfile: ({ id }) => {
@@ -998,7 +995,7 @@ const actions = {
   aiMemoryConfirm: () => changeReplyMemory({reset:true}),
   aiClassify: () => aiOpen('classify'),
   aiTab: ({ mode }) => { if (state.ai?.mode !== mode) aiOpen(mode); },
-  aiClose: () => { if (layers.includes('ai')) backFrom('ai'); else { aiRequest++; set({ ai: null }); } },
+  aiClose: () => { if(state.ai?.newMail){aiRequest++;set({ai:null});return;} if (layers.includes('ai')) backFrom('ai'); else { aiRequest++; set({ ai: null }); } },
   aiTone: ({ tone }) => { aiRequest++; set({ aiTone: tone, ai: state.ai ? { ...state.ai, loading: false, result: null } : null }); },
   aiIntent: (_, e) => { aiRequest++; set({ aiIntent: e.target.value, ai: state.ai ? { ...state.ai, loading: false, result: null } : null }); },
   aiRun: () => aiRun(),
@@ -1018,6 +1015,7 @@ const actions = {
   },
   aiInsert: () => {
     const id = state.ai?.forId, text = state.ai?.result?.text;
+    if(state.ai?.newMail && state.newMailOpen && state.newMail?.messageId===id && text && !state.ai.loading){set({newMail:{...state.newMail,text,aiAssisted:true},ai:null});scheduleNewMailSave();return;}
     if (id == null || !text || state.selectedId !== id || state.ai?.mode !== 'draft' || state.ai.loading) return;
     const email = derive(state).sel?.channel !== 'whatsapp';
     if (layers.at(-1) === 'ai') {
@@ -1027,7 +1025,7 @@ const actions = {
         try { history.replaceState?.({ relay: 'compose', depth: layers.length }, ''); } catch { /* historique indisponible */ }
       } else { layers.pop(); try { history.back?.(); } catch { /* sans historique */ } layers.push('__skip'); }
     }
-    setMeta(id,{localMode:'reply'});
+    setMeta(id,{localMode:'reply',aiAssisted:true});
     set(s => ({ drafts: { ...s.drafts, [id]: text }, ai: null, composing: 'reply' }));
     scheduleAutosave(id);
   },
@@ -1125,7 +1123,7 @@ const actions = {
     set({ confirm: { kind: 'send', messageId: id, request, input: null, preview: null, busy: true, error: null } });
     const ours = () => state.confirm?.request === request;
     if (state.draftMeta[id]?.saving) await new Promise(r => { const t = setInterval(() => { if (!state.draftMeta[id]?.saving) { clearInterval(t); r(); } }, 50); });
-    if (state.draftMeta[id]?.version !== undefined && changed(id)) await saveDraftNow(id);
+    if (state.draftMeta[id]?.version !== undefined && (changed(id) || state.draftMeta[id]?.aiAssisted)) await saveDraftNow(id);
     const meta = state.draftMeta[id] || {};
     if (!ours()) return;
     if (meta.conflict || meta.error || (meta.version !== undefined && changed(id))) {
@@ -1144,8 +1142,9 @@ const actions = {
         set({ confirm: null });
         return notify('Le brouillon a changé pendant la vérification : vérifie à nouveau avant d’envoyer.');
       }
-      set({ confirm: { kind: 'send', messageId: id, request, input, preview, busy: false, error: null } });
-      pushLayer('confirm');
+      set({ confirm: { kind: 'send', direct:preview.requiresConfirmation===false && !meta.aiAssisted, messageId: id, request, input, preview, busy: false, error: null } });
+      if(state.confirm.direct)await actions.confirmSend();
+      else pushLayer('confirm');
     } catch (e) {
       if (!ours()) return;
       set({ confirm: null });
@@ -1155,16 +1154,16 @@ const actions = {
   },
   confirmSend: async () => {
     const c = state.confirm;
-    if (c?.kind !== 'send' || c.busy || !c.preview) return;
+    if (c?.kind !== 'send' || c.busy || c.stale || !c.preview) return;
     if (state.offline) return set({ confirm: { ...c, error: 'Hors ligne : rien n’a été envoyé.' } });
     set({ confirm: { ...c, busy: true, error: null } });
     let r;
     try {
-      r = await api.send(c.messageId, { ...c.input, digest: c.preview.digest, ...(c.preview.approvalToken?{approvalToken:c.preview.approvalToken}:{}) });
+      r = await api.send(c.messageId, { ...c.input, ...(c.direct?{direct:true}:{}), digest: c.preview.digest, ...(c.preview.approvalToken?{approvalToken:c.preview.approvalToken}:{}) });
     } catch (e) {
       // 409 : le contenu ou le fil a changé, il faut revérifier ; le bouton de confirmation est désactivé.
       // Une erreur Gmail incertaine (réseau, 5xx) consomme aussi la validation : vérifier à nouveau avant tout nouvel essai.
-      set({ confirm: { ...c, busy: false, stale: !/^Erreur (Gmail|Outlook)/.test(e.message), error: e.message } });
+      set({ confirm: { ...c, direct:false, busy: false, stale: !/^Erreur (Gmail|Outlook)/.test(e.message), error: e.message } });
       return;
     }
     // Envoi confirmé par le serveur : plus rien ici ne doit inviter à renvoyer.
@@ -1262,9 +1261,10 @@ document.addEventListener('keydown', e => {
   else if(state.mailSettingsPreview){if(!state.mailSettingsBusy)actions.cancelHistoryWindow();}
   else if(state.personOpen){if(!state.personBusy)actions.closePerson();}
   else if (state.confirm) actions.confirmCancel();
+  else if (state.ai?.newMail) actions.aiClose();
   else if (state.newMailOpen) actions.closeNewMail();
   else if (state.c) closeWizard();
-  else if (state.ai) set({ ai: null });
+  else if (state.ai) actions.aiClose();
   else if (state.menu || state.moveOpen || state.accountMenu) set({ menu: false, moveOpen: false, accountMenu: null });
 });
 

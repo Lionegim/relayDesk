@@ -19,7 +19,7 @@ const FREQ_COUNT = 4;
 const bool = v => !!v;
 const toMessage = (r, full) => {
   const m = {
-    draftVersion:r.draft_version, id: r.id, kind: r.compose_kind, p: r.profile_id, accountId: r.account_id, from: r.from_name, initials: r.initials, handle: r.handle, channel: r.channel,
+    requiresPreview:!!r.draft_ai_assisted, draftVersion:r.draft_version, id: r.id, kind: r.compose_kind, p: r.profile_id, accountId: r.account_id, from: r.from_name, initials: r.initials, handle: r.handle, channel: r.channel,
     account: r.account, time: r.time_label, sortAt: r.sort_at, unread: bool(r.unread), flagged: bool(r.flagged), archived: bool(r.archived),
     folderId: r.folder_id, label: r.label, subject: r.subject, preview: r.preview, triage: r.triage, count: r.message_count,
     draft: r.draft_saved_at ? { version:r.draft_version,savedAt: r.draft_saved_at, gmail: !!r.draft_synced, synced: !!r.draft_synced, ...(full ? { text: r.draft_text, mode: r.draft_mode, to: r.draft_to, cc: r.draft_cc, subject: r.subject } : {}) } : null,
@@ -260,6 +260,8 @@ export function createStore(db) {
       if(expected!==undefined && current!==expected) throw new HttpError(409,'Le brouillon a été modifié sur un autre appareil. Ton texte est conservé : recharge la version serveur avant de choisir.','draft_conflict');
       return current;
     },
+    markDraftAI(id) {row(id);q('UPDATE messages SET draft_ai_assisted=1 WHERE id=?').run(id);},
+    requiresDraftReview(id) {return !!row(id).draft_ai_assisted;},
     saveDraft(id, text, { expectedVersion, mode = null, to = null, cc = null, subject, externalId, synced = false, threadKey } = {}) {
       this.assertDraftVersion(id,expectedVersion);
       const r = row(id);
@@ -290,7 +292,7 @@ export function createStore(db) {
     },
     clearDraft(id) {
       if (row(id).compose_kind === 'new') { q('DELETE FROM messages WHERE id = ?').run(id); return; }
-      q('UPDATE messages SET draft_text = NULL, draft_saved_at = NULL, draft_mode = NULL, draft_to = NULL, draft_external_id = NULL, draft_synced = 0, draft_thread_key = NULL WHERE id = ?').run(id);
+      q('UPDATE messages SET draft_text = NULL, draft_saved_at = NULL, draft_mode = NULL, draft_to = NULL, draft_external_id = NULL, draft_synced = 0, draft_thread_key = NULL, draft_ai_assisted = 0 WHERE id = ?').run(id);
     },
     // Lots C et D : de quoi construire une réponse dans le fil.
     composeContext(id) {
