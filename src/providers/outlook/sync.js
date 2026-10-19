@@ -31,7 +31,7 @@ async function pool(items, size, fn) {
 const readCursor = raw => { try { const c = JSON.parse(raw); return c && c.v === 1 && c.links ? c : null; } catch { return null; } };
 const writeCursor = (links, ids) => JSON.stringify({ v: 1, links, ids: Object.fromEntries(ids) });
 
-export function createOutlookSync({ store, vault, oauth, fetchImpl = globalThis.fetch, log = console, assertAccountAllowed=()=>{} }) {
+export function createOutlookSync({ store, vault, oauth, fetchImpl = globalThis.fetch, log = console, assertAccountAllowed=()=>{}, shouldPoll=()=>true }) {
   const clients = new Map();
   const running = new Map();
   const connecting = new Map();
@@ -190,6 +190,7 @@ export function createOutlookSync({ store, vault, oauth, fetchImpl = globalThis.
     try {
       await serial(accountId, () => fn(accountId));
       failures.delete(accountId);
+      return true;
     } catch (e) {
       if (e.code === 'gone' || !store.hasAccount(accountId)) return;
       const count = (failures.get(accountId)?.count || 0) + 1;
@@ -203,6 +204,7 @@ export function createOutlookSync({ store, vault, oauth, fetchImpl = globalThis.
         if (e.code !== 'retryable') store.setAccountStatus(accountId, 'Erreur de synchronisation', 'warn');
       }
       log.error?.(`Synchronisation Outlook du compte ${accountId} : ${e.message}`);
+      return false;
     } finally {
       const remaining = running.get(accountId) - 1;
       if (remaining) running.set(accountId, remaining); else running.delete(accountId);
@@ -216,6 +218,7 @@ export function createOutlookSync({ store, vault, oauth, fetchImpl = globalThis.
       if (!s || !store.getSecret(id) || running.has(id)) continue;
       if ((failures.get(id)?.retryAt || 0) > now) continue;
       if (store.getAccount(id).status === 'À reconnecter') continue;
+      if (!shouldPoll(id)) continue;
       run(id, s.status === 'syncing' || !readCursor(s.history_id) ? initialSync : incrementalSync);
     }
   }
@@ -257,6 +260,7 @@ export function createOutlookSync({ store, vault, oauth, fetchImpl = globalThis.
       return { status: s.status, total: s.total, done: s.done, error: s.error, ...store.countThreads(accountId) };
     },
     syncNow: accountId => run(accountId, incrementalSync),
+    notify: accountId => run(accountId, incrementalSync, {force:true}),
     permissions,
     updateMessage(id, patch) {
       const { accountId } = store.getMessageSource(id);

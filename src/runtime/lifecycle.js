@@ -74,7 +74,7 @@ export function createRuntime(config,{providerFactory=assembleProviders,appFacto
         bundle=await providerFactory({config:effectiveConfig,store,vault,log});
         const ai=createMistralClient({apiKey:effectiveConfig.aiEnabled?config.secrets.MISTRAL_API_KEY:'',model:config.mistralModel});
         const allowedHosts=[...config.allowedHosts];
-        server=appFactory({store,ai,providers:bundle.providers,gmail:bundle.gmail,ownerName:config.ownerName,allowedHosts,auth:ownerAuth,health:()=>({ok:state==='running'}),readiness:()=>({ok:state==='running'&&databaseReady(db)}),operations:()=>operationsHealth({db,dataDir:config.dataDir,config:effectiveConfig,state,startedAt})});
+        server=appFactory({store,ai,providers:bundle.providers,gmail:bundle.gmail,push:bundle.push,ownerName:config.ownerName,allowedHosts,auth:ownerAuth,health:()=>({ok:state==='running'}),readiness:()=>({ok:state==='running'&&databaseReady(db)}),operations:()=>operationsHealth({db,dataDir:config.dataDir,config:effectiveConfig,state,startedAt})});
         trackRequests();
         server.on('request',(_req,res)=>res.once('finish',()=>{if(state==='stopping') setImmediate(()=>server.closeIdleConnections?.());}));
         await new Promise((resolve,reject)=>{server.once('error',reject);server.listen(config.port,config.host,()=>{server.off('error',reject);resolve();});});

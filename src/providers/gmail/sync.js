@@ -20,7 +20,7 @@ async function pool(items, size, fn) {
   if (failed) throw failed.reason;
 }
 
-export function createGmailSync({ store, vault, oauth, fetchImpl = globalThis.fetch, log = console, assertAccountAllowed=()=>{} }) {
+export function createGmailSync({ store, vault, oauth, fetchImpl = globalThis.fetch, log = console, assertAccountAllowed=()=>{}, shouldPoll=()=>true }) {
   const clients = new Map();
   const running = new Map();
   const connecting = new Map();
@@ -155,6 +155,7 @@ export function createGmailSync({ store, vault, oauth, fetchImpl = globalThis.fe
     try {
       await serial(accountId, () => fn(accountId));
       failures.delete(accountId);
+      return true;
     } catch (e) {
       if (e.code === 'gone' || !store.hasAccount(accountId)) return;
       const count = (failures.get(accountId)?.count || 0) + 1;
@@ -168,6 +169,7 @@ export function createGmailSync({ store, vault, oauth, fetchImpl = globalThis.fe
         if (e.code !== 'retryable') store.setAccountStatus(accountId, 'Erreur de synchronisation', 'warn');
       }
       log.error?.(`Synchronisation Gmail du compte ${accountId} : ${e.message}`);
+      return false;
     } finally {
       const remaining = running.get(accountId) - 1;
       if (remaining) running.set(accountId, remaining); else running.delete(accountId);
@@ -181,6 +183,7 @@ export function createGmailSync({ store, vault, oauth, fetchImpl = globalThis.fe
       if (!s || !store.getSecret(id) || running.has(id)) continue;
       if ((failures.get(id)?.retryAt || 0) > now) continue;
       if (store.getAccount(id).status === 'À reconnecter') continue;
+      if (!shouldPoll(id)) continue;
       run(id, s.status === 'syncing' || !s.history_id ? initialSync : incrementalSync);
     }
   }
@@ -216,6 +219,7 @@ export function createGmailSync({ store, vault, oauth, fetchImpl = globalThis.fe
       return { status: s.status, total: s.total, done: s.done, error: s.error, ...store.countThreads(accountId) };
     },
     syncNow: accountId => run(accountId, incrementalSync),
+    notify: accountId => run(accountId, id => store.getSync(id)?.history_id ? incrementalSync(id) : initialSync(id), {force:true}),
     permissions,
     // Lots C et D : écritures (brouillons, envoi) dans la file du compte, avec son client Gmail.
     exclusive: (accountId, fn) => serial(accountId, () => fn(client(accountId))),

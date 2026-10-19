@@ -50,6 +50,11 @@ services:
       RELAY_CONNECTORS_ENABLED: ${RELAY_CONNECTORS_ENABLED:-true}
       RELAY_AI_ENABLED: ${RELAY_AI_ENABLED:-true}
       MICROSOFT_TENANT: ${MICROSOFT_TENANT:-common}
+      GMAIL_PUSH_ENABLED: ${GMAIL_PUSH_ENABLED:-false}
+      GMAIL_PUSH_TOPIC: ${GMAIL_PUSH_TOPIC:-}
+      GMAIL_PUSH_SUBSCRIPTION: ${GMAIL_PUSH_SUBSCRIPTION:-}
+      GMAIL_PUSH_SERVICE_ACCOUNT: ${GMAIL_PUSH_SERVICE_ACCOUNT:-}
+      OUTLOOK_PUSH_ENABLED: ${OUTLOOK_PUSH_ENABLED:-false}
       DEMO_DATA: "0"
       # État de la dernière sauvegarde, lu (jamais écrit) par le statut d'exploitation.
       BACKUP_STATUS_FILE: /backup-status/last-backup.json

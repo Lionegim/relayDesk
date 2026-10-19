@@ -23,11 +23,11 @@ export function createGraphClient({ refreshToken, oauth, fetchImpl = globalThis.
     try{return await refreshing;}finally{refreshing=null;}
   }
 
-  async function request(method, pathOrUrl, { params = {}, body, mime, prefer, retried = false } = {}) {
+  async function request(method, pathOrUrl, { params = {}, body, mime, prefer, retried = false, forceRefresh = false } = {}) {
     const url = new URL(pathOrUrl, BASE);
     if (url.protocol !== 'https:' || url.host !== HOST) throw new HttpError(502, 'Lien Graph inattendu.', 'outlook');
     for (const [k, v] of Object.entries(params)) if (v != null) url.searchParams.set(k, String(v));
-    const headers = { authorization: `Bearer ${await accessToken(retried)}` };
+    const headers = { authorization: `Bearer ${await accessToken(retried || forceRefresh)}` };
     if (prefer) headers.prefer = prefer;
     let payload;
     if (mime !== undefined) { headers['content-type'] = 'text/plain'; payload = Buffer.from(mime, 'utf8').toString('base64'); }

@@ -73,7 +73,7 @@ const accountId = raw => {
 };
 
 // gmail : { oauth, sync, redirectUri, disconnect, outbox } (facultatif). allowedHosts : protège contre le DNS rebinding.
-export function createApp({ store, ai, ownerName, gmail = null, providers = {}, allowedHosts = null, health = null, readiness = null, operations = null, auth = null }) {
+export function createApp({ store, ai, ownerName, gmail = null, providers = {}, push = null, allowedHosts = null, health = null, readiness = null, operations = null, auth = null }) {
   providers = { ...providers, ...(gmail ? { gmail } : {}) };
   const access=createSessionAccess();
   const mail = createMailService({ store, providers });
@@ -146,6 +146,7 @@ export function createApp({ store, ai, ownerName, gmail = null, providers = {}, 
       const snapshot=store.snapshot(paged?{profile:params.profile || store.firstProfileId(),nav:params.nav,channel:params.channel,folder:params.folder || null,q:params.q,limit:params.limit,cursor:params.cursor}:null);
       for (const profile of snapshot.profiles) for (const account of profile.accounts) {
         account.perms = mail.permissions(account);
+        if(push && ['gmail','outlook'].includes(account.svc)) account.notifications=push.status(account.id);
         if (providers[account.svc]) account.windowDays = account.svc === 'whatsapp' ? 7 : store.getSync(account.id)?.window_days || 30;
         if (account.svc === 'whatsapp' && providers.whatsapp) account.sync = providers.whatsapp.sync.progress?.(account.id) || null;
       }
@@ -219,6 +220,7 @@ export function createApp({ store, ai, ownerName, gmail = null, providers = {}, 
       const url = new URL(req.url, 'http://localhost');
       const { pathname } = url;
       if(auth && await auth.handle(req,res,url)) return;
+      if(push && await push.handle(req,res,url,readJson,send))return;
       if(!auth && pathname==='/auth/session' && req.method==='GET') return send(res,200,{enabled:false,authenticated:false});
       // Ressources publiques fixes : uniquement du code et des images génériques, jamais index.html ni contenu privé.
       const publicLogin=['/login','/js/login.js','/js/app.js','/js/api.js','/js/views.js','/js/dom.js','/js/constants.js','/js/pwa.js','/js/live.js','/styles.css','/sw.js','/manifest.webmanifest','/offline.html','/fonts/inter-latin-wght-normal.woff2','/fonts/jetbrains-mono-latin-wght-normal.woff2'].includes(pathname) || /^\/icons\/[a-zA-Z0-9_-]+\.(png|svg)$/.test(pathname);

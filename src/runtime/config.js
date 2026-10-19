@@ -61,7 +61,18 @@ export function readConfig(env=process.env,{cwd=process.cwd()}={}) {
   let allowedAccounts;
   try {allowedAccounts=parseAllowedAccounts(env.RELAY_ALLOWED_ACCOUNTS);} catch(error) {invalid(error.message);}
   if(mode==='hosted' && connectorsEnabled && !allowedAccounts?.length) invalid('RELAY_ALLOWED_ACCOUNTS requis pour les connecteurs hébergés.');
+  const mailPush={
+    gmailEnabled:boolean(env,'GMAIL_PUSH_ENABLED',false),outlookEnabled:boolean(env,'OUTLOOK_PUSH_ENABLED',false),
+    gmailTopic:env.GMAIL_PUSH_TOPIC || '',gmailSubscription:env.GMAIL_PUSH_SUBSCRIPTION || '',gmailServiceAccount:env.GMAIL_PUSH_SERVICE_ACCOUNT || '',
+  };
+  if((mailPush.gmailEnabled || mailPush.outlookEnabled) && mode!=='hosted') invalid('Les notifications mail exigent le mode hébergé HTTPS.');
+  if(mailPush.outlookEnabled && !/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i.test(env.MICROSOFT_TENANT || '')) invalid('OUTLOOK_PUSH_ENABLED exige un MICROSOFT_TENANT GUID explicite, pas un alias.');
+  if(mailPush.gmailEnabled && (!/^projects\/[a-z0-9-]+\/topics\/[a-zA-Z0-9._~-]+$/.test(mailPush.gmailTopic) ||
+    !/^projects\/[a-z0-9-]+\/subscriptions\/[a-zA-Z0-9._~-]+$/.test(mailPush.gmailSubscription) ||
+    !/^[a-z0-9-]+@[a-z0-9-]+\.iam\.gserviceaccount\.com$/.test(mailPush.gmailServiceAccount))) invalid('Configuration Pub/Sub Gmail incomplète.');
+  if(mailPush.gmailEnabled && mailPush.gmailTopic.split('/')[1]!==mailPush.gmailSubscription.split('/')[1]) invalid('Le topic et la souscription Gmail doivent partager le même projet.');
   return Object.freeze({
+    mailPush:Object.freeze(mailPush),
     backupStatusFile:env.BACKUP_STATUS_FILE?resolve(cwd,env.BACKUP_STATUS_FILE):null,
     opsMinFreeBytes:number(env,'OPS_MIN_FREE_BYTES',512*1024**2,0,Number.MAX_SAFE_INTEGER),
     opsBackupMaxAgeMs:number(env,'OPS_BACKUP_MAX_AGE_HOURS',26,1,8760)*3600000,
