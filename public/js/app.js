@@ -22,7 +22,7 @@ const state = {
   group: 'all', picked: {}, focusId: null, contactQuery: '', contactSearch: false, sort: 'recent',
   contactHistory:null,contactHistoryError:null,historyBusy:false,
   duplicates:null,duplicatesBusy:false,duplicatesError:null,duplicatesReview:null,duplicatesKeep:null,duplicatesTab:'pending',duplicatesLimit:25,
-  personOpen:null, person:null, personError:null, personBusy:false, personKind:'email', personValue:'', personMerge:'', contactImport:false, contactImportBusy:null, fromPerson:false,
+  personOpen:null, person:null, personError:null, personBusy:false, personKind:'email', personValue:'',personAddOpen:false, personMerge:'', contactImport:false, contactImportBusy:null, fromPerson:false,
   mailSettings:{},mailSettingsDays:{},mailSettingsPreview:null,mailSettingsBusy:null,mailSettingsError:null,
   mailText:{},
   c: null,
@@ -826,7 +826,7 @@ const actions = {
     duplicateActionVersion++;
     selectionVersion++; rememberComposition();
     if (state.drawer) backFrom('drawer');
-    filtersChanged({contactHistory:null,contactHistoryError:null,historyBusy:false,duplicates:null,duplicatesError:null,duplicatesBusy:false,duplicatesReview:null,duplicatesKeep:null,duplicatesLimit:25, newMailOpen: false, profileId: id, personOpen:null,person:null,personError:null,personMerge:'',personValue:'',personBusy:false,network:null,networkError:null,groupEditor:null,contactImport:false,fromPerson:false, menu: false, accountMenu: null, picked: {}, group: 'all', channel: 'all', query: '', selectedId: state.paged ? null : firstOf(id), selectedRow: null, folder: null, ai: null, moveOpen: false, creating: false, composing: null, pane: 'list' });
+    filtersChanged({contactHistory:null,contactHistoryError:null,historyBusy:false,duplicates:null,duplicatesError:null,duplicatesBusy:false,duplicatesReview:null,duplicatesKeep:null,duplicatesLimit:25, newMailOpen: false, profileId: id, personOpen:null,person:null,personError:null,personMerge:'',personValue:'',personAddOpen:false,personBusy:false,network:null,networkError:null,groupEditor:null,contactImport:false,fromPerson:false, menu: false, accountMenu: null, picked: {}, group: 'all', channel: 'all', query: '', selectedId: state.paged ? null : firstOf(id), selectedRow: null, folder: null, ai: null, moveOpen: false, creating: false, composing: null, pane: 'list' });
     if(state.app==='duplicates')loadDuplicates();if(state.app==='history')loadContactHistory();if(state.app==='contacts')loadNetwork();
   },
   selectApp: ({ app }) => { if (state.drawer) backFrom('drawer'); set({ app, ai: null, moveOpen: false,duplicatesReview:null });if(app==='duplicates')loadDuplicates();if(app==='history')loadContactHistory();if(app==='contacts')loadNetwork();if(app==='settings')loadMailSettings(); },
@@ -1046,10 +1046,11 @@ const actions = {
   focusContact: async ({ id }) => {
     const profile=state.profileId;
     if(!derive(state).contactsMine.some(c=>c.id===id))return;
-    set({focusId:id,personOpen:id,person:null,personError:null,personBusy:false,personMerge:'',personValue:''});
+    set({focusId:id,personOpen:id,person:null,personError:null,personBusy:false,personMerge:'',personValue:'',personAddOpen:false});
     try {const person=await api.person(profile,id);if(state.profileId===profile && state.personOpen===id)set({person});}catch(e){if(state.profileId===profile && state.personOpen===id)set({personError:e.message});}
   },
-  closePerson:()=>set({personOpen:null,person:null,personError:null,personMerge:'',personValue:''}),
+  closePerson:()=>set({personOpen:null,person:null,personError:null,personMerge:'',personValue:'',personAddOpen:false}),
+  togglePersonAdd:(_,e)=>{e.preventDefault();set({personAddOpen:!state.personAddOpen});},
   togglePersonMerge:(_,e)=>{e.preventDefault();set({personMergeOpen:!state.personMergeOpen});},
   personField:({field},e)=>{if(['personKind','personValue','personMerge'].includes(field))set({[field]:e.target.value});},
   personMore:async()=>{
@@ -1058,7 +1059,7 @@ const actions = {
   },
   addPersonIdentity:async()=>{
     const profile=state.profileId,id=state.personOpen;if(state.personBusy)return;set({personBusy:true,personError:null});
-    try{const person=await api.addContactIdentity(profile,id,{kind:state.personKind,value:state.personValue});if(state.profileId===profile && state.personOpen===id)set({person,personValue:''});await reload({refresh:true});}catch(e){if(state.profileId===profile && state.personOpen===id)set({personError:e.message});}finally{if(state.profileId===profile && state.personOpen===id)set({personBusy:false});}
+    try{const person=await api.addContactIdentity(profile,id,{kind:state.personKind,value:state.personValue});if(state.profileId===profile && state.personOpen===id)set({person,personValue:'',personAddOpen:false});await reload({refresh:true});}catch(e){if(state.profileId===profile && state.personOpen===id)set({personError:e.message});}finally{if(state.profileId===profile && state.personOpen===id)set({personBusy:false});}
   },
   removePersonIdentity:async({kind,normalized})=>{
     const profile=state.profileId,id=state.personOpen;if(state.personBusy)return;set({personBusy:true});

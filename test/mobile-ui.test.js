@@ -774,3 +774,5 @@ test('another open screen drops a pruned selected email on account-window revisi
 test('retention revision prevents combining a newly trimmed trail with older client-cached pages',async()=>{
  const u=await app();u.c.old={historyWindowRevision:'0:0',sortAt:3000,trail:[{id:'old',at:1000,body:'expired'}]};u.c.next={historyWindowRevision:'365:1',sortAt:3000,trail:[{id:'new',at:2000,body:'retained'}]};const result=vm.runInContext('mergeHistory(old,next)',u.c);assert.deepEqual(plain(result.trail).map(m=>m.id),['new']);
 });
+
+ test('contact identity editor stays expanded across controlled input updates',async()=>{const u=await app();u.c.act.togglePersonAdd({}, {preventDefault(){}});u.c.act.personField({field:'personValue'},{target:{value:'camille@example.test'}});assert.equal(u.c.inspect().personAddOpen,true);assert.equal(u.c.inspect().personValue,'camille@example.test');u.c.act.closePerson();assert.equal(u.c.inspect().personAddOpen,false);});
