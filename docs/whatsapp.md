@@ -26,7 +26,9 @@ Le QR crée un accès en lecture et envoi pour ce Mac. Les réponses IA exigent 
 
 ## Envoi
 
-**Envoyer** ouvre l’aperçu exact du compte, du destinataire et du corps. Aucun objet email n’est envoyé sur WhatsApp. La destination vient de la discussion stockée, jamais d’un texte fourni par l’IA ou le navigateur. Une modification du corps exige un nouvel aperçu.
+**Envoyer** ou **Entrée** dans le compositeur envoie le message sans deuxième fenêtre de confirmation, y compris un brouillon issu de l’IA. **Maj+Entrée** ajoute une ligne. Dans les suggestions de mentions, Entrée/Tab choisit le participant ; les flèches parcourent la liste et Échap la ferme. La génération ou l’insertion d’une proposition IA n’envoie rien.
+
+La préparation technique en arrière-plan lie toujours le contenu exact, les mentions, le média, la citation, la version du brouillon et la session à une empreinte à usage unique. Les permissions et la destination stockée restent contrôlées avant envoi ; une modification concurrente invalide la préparation. Aucun objet email n’est envoyé sur WhatsApp. Le même envoi direct au clic ou à Entrée s’applique aux emails Gmail/Outlook.
 
 L’autorisation est liée au compte, à sa génération de liaison, à la discussion et au texte ; elle expire après dix minutes et n’est utilisable qu’une fois. En cas de résultat d’envoi incertain, vérifier la discussion sur le téléphone avant toute nouvelle tentative. L’application ne relance pas automatiquement un envoi.
 

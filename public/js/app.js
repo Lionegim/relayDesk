@@ -842,7 +842,7 @@ const actions = {
   previewNewMail: async () => {
     const c0 = state.newMail;
     if (state.confirm || !c0 || c0.busy) return;
-    if (state.offline) return set({ newMail: { ...c0, error: 'Hors ligne : la vérification avant l’envoi demande le réseau.' } });
+    if (state.offline) return set({ newMail: { ...c0, error: 'Hors ligne : reconnecte-toi avant d’envoyer.' } });
     const cid = c0.cid, ours = () => state.newMail?.cid === cid && state.newMailOpen;
     set({ newMail: { ...c0, busy: true, error: null } });
     const saved = await saveNewMail();
@@ -851,7 +851,7 @@ const actions = {
     try {
       const preview = await api.previewSend(c.messageId, input);
       if (!ours() || state.confirm) { patchComposition(cid, { busy: false }); return; }
-      set({ newMailOpen: false, newMail: { ...state.newMail, busy: false }, confirm: { kind: 'send', direct:preview.requiresConfirmation===false && !c.aiAssisted, newMail: true, messageId: c.messageId, input, preview, busy: false, error: null } });
+      set({ newMailOpen: false, newMail: { ...state.newMail, busy: false }, confirm: { kind: 'send', direct:true, newMail: true, messageId: c.messageId, input, preview, busy: false, error: null } });
       if(state.confirm.direct)await actions.confirmSend();
       else pushLayer('confirm');
     } catch (e) {
@@ -1032,6 +1032,18 @@ const actions = {
     set({waReacting:conversation,waMessageMenu:null});
     try{await api.reactWhatsApp(conversation,{messageId:id,emoji});if(known(conversation)){set(s=>({details:{...s.details,[conversation]:{...s.details[conversation],refreshing:true}}}));await loadDetails(conversation);}}
     catch(e){fail(e);}finally{set({waReacting:null});}
+  },
+  composeSendKeys: async (data,e)=>{
+    if(e.isComposing || e.keyCode===229)return;
+    if(!data.newMail && derive(state).sel?.channel==='whatsapp' && !e.shiftKey && !e.ctrlKey && !e.altKey && !e.metaKey) {
+      actions.waMentionKeys(data,e);if(e.defaultPrevented)return;
+    }
+    if(e.key!=='Enter' || e.shiftKey || e.ctrlKey || e.altKey || e.metaKey)return;
+    e.preventDefault();
+    if(!data.newMail && state.waMention?.id===state.selectedId && derive(state).sel?.channel==='whatsapp')return;
+    if(e.repeat || state.confirm || state.offline || state.waUploading)return;
+    if(data.newMail){const c=state.newMail;if(!c || c.busy || c.saving || c.conflict || !c.text.trim() || !c.to.trim())return;await actions.previewNewMail();}
+    else {const v=derive(state),sel=v.sel;if(!sel || !v.profile.accounts.find(a=>a.id===sel.accountId)?.perms?.includes('send') || state.draftMeta[sel.id]?.conflict)return;const text=localDraft(sel.id).text;if((!text.trim() && !state.waAttachments[sel.id]) || text.length>(sel.channel==='whatsapp'?4096:20000))return;await actions.sendPreview();}
   },
   waMentionRetry:()=>{if(state.waMention)loadMentionParticipants(state.waMention.id,true);},
   waMentionClose:()=>set({waMention:null}),
@@ -1223,11 +1235,11 @@ const actions = {
   sendPreview: async () => {
     const sel = derive(state).sel;
     if (!sel || state.confirm || state.waUploading) return;
-    if (state.offline) return notify('Hors ligne : la vérification avant l’envoi demande le réseau.');
+    if (state.offline) return notify('Hors ligne : reconnecte-toi avant d’envoyer.');
     const id = sel.id, profileId = state.profileId, request = ++previewRequest;
     clearTimeout(draftTimers.get(id));
     // Pendant l'attente, le compositeur est en lecture seule ; l'aperçu reste lié à cette demande précise.
-    set({ confirm: { kind: 'send', messageId: id, request, input: null, preview: null, busy: true, error: null } });
+    set({ confirm: { kind: 'send', direct:true, messageId: id, request, input: null, preview: null, busy: true, error: null } });
     const ours = () => state.confirm?.request === request;
     if (state.draftMeta[id]?.saving) await new Promise(r => { const t = setInterval(() => { if (!state.draftMeta[id]?.saving) { clearInterval(t); r(); } }, 50); });
     if (state.draftMeta[id]?.version !== undefined && (changed(id) || state.draftMeta[id]?.aiAssisted)) await saveDraftNow(id);
@@ -1249,7 +1261,7 @@ const actions = {
         set({ confirm: null });
         return notify('Le brouillon a changé pendant la vérification : vérifie à nouveau avant d’envoyer.');
       }
-      set({ confirm: { kind: 'send', direct:preview.requiresConfirmation===false && !meta.aiAssisted, messageId: id, request, input, preview, busy: false, error: null } });
+      set({ confirm: { kind: 'send', direct:true, messageId: id, request, input, preview, busy: false, error: null } });
       if(state.confirm.direct)await actions.confirmSend();
       else pushLayer('confirm');
     } catch (e) {
@@ -1262,7 +1274,7 @@ const actions = {
   confirmSend: async () => {
     const c = state.confirm;
     if (c?.kind !== 'send' || c.busy || c.stale || !c.preview) return;
-    if (state.offline) return set({ confirm: { ...c, error: 'Hors ligne : rien n’a été envoyé.' } });
+    if (state.offline) {set({confirm:null,...(c.newMail?{newMailOpen:true,newMail:{...state.newMail,busy:false,error:'Hors ligne : rien n’a été envoyé.'}}:{})});return notify('Hors ligne : rien n’a été envoyé.');}
     set({ confirm: { ...c, busy: true, error: null } });
     let r;
     try {
@@ -1270,7 +1282,8 @@ const actions = {
     } catch (e) {
       // 409 : le contenu ou le fil a changé, il faut revérifier ; le bouton de confirmation est désactivé.
       // Une erreur Gmail incertaine (réseau, 5xx) consomme aussi la validation : vérifier à nouveau avant tout nouvel essai.
-      set({ confirm: { ...c, direct:false, busy: false, stale: !/^Erreur (Gmail|Outlook)/.test(e.message), error: e.message } });
+      set({confirm:null,...(c.newMail?{newMailOpen:true,newMail:{...state.newMail,busy:false,error:e.message}}:{})});
+      fail(e);
       return;
     }
     // Envoi confirmé par le serveur : plus rien ici ne doit inviter à renvoyer.
@@ -1293,6 +1306,9 @@ const actions = {
     });
     const m = state.data.messages.find(x => x.id === id);
     if (m) m.draft = null;
+    // Enter keeps focus in the textarea; normal DOM reconciliation preserves focused values.
+    // Clear only the exact text just sent, never anything typed in the meantime.
+    if(!newer && !c.newMail && state.selectedId===id) {const el=document.querySelector?.(`textarea[data-key="draft-${id}"]`);if(el?.value===c.input.text)el.value='';}
     // La version après envoi n'est pas connue : jamais adopter silencieusement une écriture distante ultérieure.
     // Le buffer conservé devra être réconcilié explicitement avant toute nouvelle sauvegarde.
     const sent = r.draftRemoved === false ? 'Message envoyé. Le brouillon local est effacé ; son brouillon chez le fournisseur est conservé, supprime-le si besoin.' : 'Message envoyé.';

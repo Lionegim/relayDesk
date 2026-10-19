@@ -3,14 +3,13 @@ import assert from 'node:assert/strict';
 import {setupWhatsApp,linkedAccount,msg,tick,ME,PEER} from './whatsapp-helpers.js';
 const GROUP='120363111222@g.us',ALICE='123456789012345@lid',BOB='33622222222@s.whatsapp.net';
 async function group(t){const c=await setupWhatsApp();t.after(()=>c.wa.sync.stop());const a=msg('alice','On se voit jeudi ?',{chat:GROUP,pushName:'Alice'});a.key.participant=ALICE;const b=msg('bob','Vendredi pour moi',{chat:GROUP,pushName:'Bob',ago:100});b.key.participant=BOB;const {accountId,sock}=await linkedAccount(c,{messages:[a,b,msg('direct','Conversation privée',{chat:PEER})]});c.store.waSetChatName(accountId,GROUP,'Équipe · Démonstration');return {...c,accountId,sock,id:c.db.prepare('select id from messages where account_id=? and external_id=?').get(accountId,GROUP).id};}
-test('group quoted reply binds group and original participant; AI cannot use direct-send bypass',async t=>{
+test('group quoted reply binds group and original participant; AI draft sends directly with quote and replay protection',async t=>{
  const c=await group(t);c.store.markDraftAI(c.id);
  const draft=await c.wa.outbox.saveDraft(c.id,{text:'Oui, jeudi !',replyTo:'alice',baseVersion:c.store.assertDraftVersion(c.id)});
  const input={text:draft.text,replyTo:draft.replyTo,baseVersion:draft.version};const p=await c.wa.outbox.preview(c.id,input);
  assert.deepEqual(p.to,['Groupe · Équipe · Démonstration']);assert.equal(p.group,true);assert.equal(p.quote.author,'Alice');assert.equal(p.quote.participantJid,ALICE);
- await assert.rejects(()=>c.wa.outbox.send(c.id,{...input,direct:true,digest:p.digest}),{code:'preview_required'});assert.equal(c.sock.sent.length,0);
  await assert.rejects(()=>c.wa.outbox.send(c.id,{...input,replyTo:'bob',digest:p.digest}),{code:'digest_mismatch'});
- await c.wa.outbox.send(c.id,{...input,digest:p.digest,to:PEER});
+ await c.wa.outbox.send(c.id,{...input,digest:p.digest,direct:true,to:PEER});
  assert.equal(c.sock.sent[0].jid,GROUP);assert.deepEqual(c.sock.sent[0].options.quoted.key,{remoteJid:GROUP,id:'alice',fromMe:false,participant:ALICE});
  assert.equal(c.store.getMessage(c.id).quote.author,'Alice');assert.equal(c.store.getMessage(c.id).draft,null);
  await assert.rejects(()=>c.wa.outbox.send(c.id,{...input,digest:p.digest}),{code:'confirmation_invalid'});

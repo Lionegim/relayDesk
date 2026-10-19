@@ -201,7 +201,7 @@ test('brouillon : conflit 409 garde le texte, aucune nouvelle écriture sans cho
   assert.deepEqual([u.calls.saveDraft.at(-1).input.text, u.calls.saveDraft.at(-1).input.baseVersion], ['Ma version', 15]);
 });
 
-test('aperçu exact : brouillon enregistré d’abord, version transmise, jamais d’envoi automatique', async () => {
+test('aperçu exact : brouillon enregistré d’abord, version transmise, un seul envoi au clic', async () => {
   const u = await app();
   u.c.act.selectThread({ id: 1 });
   await tick(6);
@@ -211,8 +211,8 @@ test('aperçu exact : brouillon enregistré d’abord, version transmise, jamais
   await tick(6);
   assert.equal(u.calls.saveDraft.length, 1);
   assert.deepEqual([u.calls.preview[0].input.text, u.calls.preview[0].input.baseVersion], ['Réponse vérifiée', 8]);
-  assert.equal(u.s().confirm.preview.body, 'Réponse vérifiée');
-  assert.equal(u.calls.send.length, 0, 'la validation reste une action distincte');
+  assert.equal(u.s().confirm,null);
+  assert.equal(u.calls.send.length,1);assert.equal(u.calls.send[0][1].text,'Réponse vérifiée');
 });
 
 test('historique : messages plus anciens ajoutés sans doublon ; fil modifié rechargé', async () => {
@@ -262,15 +262,11 @@ test('mobile : un écran à la fois, retour navigateur et boutons cohérents', a
   // Un envoi en cours n'est jamais annulé par le bouton retour.
   u.c.act.selectThread({ id: 1 });
   await tick(6);
-  await u.c.act.sendPreview();
-  assert.equal(u.pushed.at(-1).relay, 'confirm');
-  u.s().confirm.busy = true;
+  const delivering=deferred();u.api.send=()=>delivering.p;const sending=u.c.act.sendPreview();await tick(6);
+  assert.equal(u.s().confirm.busy,true);
   u.listeners.popstate();
   assert.ok(u.s().confirm, 'envoi en cours conservé');
-  assert.equal(u.pushed.at(-1).relay, 'confirm', 'couche remise dans l’historique');
-  u.s().confirm.busy = false;
-  u.listeners.popstate();
-  assert.equal(u.s().confirm, null, 'aperçu fermé par retour hors envoi');
+  delivering.resolve({sent:true});await sending;assert.equal(u.s().confirm,null);
 });
 
 // ---------- Vues (public/js/views.js) ----------
@@ -290,7 +286,7 @@ test('vues : compteurs serveur, « Afficher plus », historique plus ancien, ape
   assert.match(out, /30 messages, 4 non lus/);
   assert.match(out, /data-on-click="loadMore"/);
   assert.match(out, /data-on-click="loadOlder" data-id="1"/);
-  assert.match(out, /data-on-click="sendPreview"[^>]*>Vérifier avant l’envoi/);
+  assert.match(out, /data-on-click="sendPreview"[^>]*>Envoyer/);
   assert.doesNotMatch(out, /data-on-click="confirmSend"/);
   assert.match(out, /Brouillon enregistré à/);
   assert.match(out, /grid-template-columns/, 'bureau : grille à trois colonnes inchangée');
@@ -612,11 +608,10 @@ test('aperçu : retour écarté si le brouillon change pendant l’attente ; env
   // Aperçu valide puis frappe avant confirmation : l'envoi part avec A, B n'est jamais effacé.
   u.api.onPreview = async (id, input) => ({ from: 'a', to: ['b'], cc: [], subject: 's', body: input.text, digest: 'd' });
   u.c.act.draft({}, { target: { value: 'Texte A' } });
-  await u.c.act.sendPreview();
-  await tick(6);
+  const delivering=deferred();u.api.send=(...args)=>{u.calls.send.push(args);return delivering.p;};const sending=u.c.act.sendPreview();await tick(6);
   assert.equal(u.s().confirm.preview.body, 'Texte A');
   u.c.act.draft({}, { target: { value: 'Texte B' } });
-  await u.c.act.confirmSend();
+  delivering.resolve({sent:true});await sending;
   await tick(6);
   assert.equal(u.calls.send.at(-1)[1].text, 'Texte A');
   assert.equal(u.s().drafts[1], 'Texte B', 'texte plus récent conservé');
@@ -645,13 +640,9 @@ test('hors ligne : aucun enregistrement de brouillon ni envoi, confirmation dés
   await tick(6);
   u.c.act.compose({ mode: 'reply' });
   u.c.act.draft({}, { target: { value: 'Prêt' } });
-  await u.c.act.sendPreview();
-  await tick(6);
-  assert.ok(u.s().confirm.preview);
-  u.s().offline = true;
-  await u.c.act.confirmSend();
+  const checking=deferred();u.api.onPreview=()=>checking.p;const sending=u.c.act.sendPreview();await tick(6);u.s().offline=true;checking.resolve({body:'Prêt',digest:'d'});await sending;
   assert.equal(u.calls.send.length, 0, 'envoi refusé hors ligne');
-  assert.match(u.s().confirm.error, /Hors ligne/);
+  assert.equal(u.s().confirm,null);
   u.s().confirm = null;
   u.c.act.draft({}, { target: { value: 'Prêt, modifié hors ligne' } });
   await u.runTimers();
@@ -712,7 +703,7 @@ test('vues : nouveau message en conflit avec Recharger / Garder ma version ; lec
   const dirty = ctx.app({ ...s, newMail: { ...s.newMail, conflict: false, text: 'y' } }, v);
   assert.match(dirty, /Modifications non enregistrées/);
   const waiting = ctx.app(...viewState({ confirm: { kind: 'send', messageId: 1, busy: true, preview: null } }));
-  assert.match(waiting, /data-key="draft-1" data-on-input="draft" readonly/);
+  assert.match(waiting, /data-key="draft-1"[^>]*data-on-input="draft" readonly/);
 });
 
 
@@ -780,15 +771,42 @@ test('retention revision prevents combining a newly trimmed trail with older cli
 test('manual reply sends once on explicit click without a second confirmation',async()=>{
  const u=await app();u.c.act.selectThread({id:1});await tick(6);u.c.act.compose({mode:'reply'});u.c.act.draft({}, {target:{value:'Typed by me'}});u.api.onPreview=async(id,input)=>({from:'me',to:['person'],cc:[],subject:'Test',body:input.text,digest:'d',requiresConfirmation:false});await u.c.act.sendPreview();assert.equal(u.calls.send.length,1);assert.equal(u.calls.send[0][1].direct,true);assert.equal(u.s().confirm,null);
 });
-test('AI-inserted reply remains reviewable even after edits and a false server hint',async()=>{
- const u=await app();u.c.act.selectThread({id:1});await tick(6);u.s().ai={mode:'draft',forId:1,result:{text:'Suggested reply'},loading:false};u.c.act.aiInsert();u.c.act.draft({}, {target:{value:'Edited reply'}});u.api.onPreview=async(id,input)=>({body:input.text,digest:'d',requiresConfirmation:false});await u.c.act.sendPreview();assert.equal(u.calls.saveDraft.at(-1).input.aiAssisted,true);assert.equal(u.calls.send.length,0);assert.equal(u.s().confirm.preview.body,'Edited reply');assert.equal(u.s().confirm.direct,false);
+test('AI-inserted reply sends once on click, with stored provenance',async()=>{
+ const u=await app();u.c.act.selectThread({id:1});await tick(6);u.s().ai={mode:'draft',forId:1,result:{text:'Suggested reply'},loading:false};u.c.act.aiInsert();u.c.act.draft({}, {target:{value:'Edited reply'}});u.api.onPreview=async(id,input)=>({body:input.text,digest:'d',requiresConfirmation:false});await u.c.act.sendPreview();assert.equal(u.calls.saveDraft.at(-1).input.aiAssisted,true);assert.equal(u.calls.send.length,1);assert.equal(u.calls.send[0][1].text,'Edited reply');assert.equal(u.s().confirm,null);
 });
-test('new-mail icon opens assistant without generation; inserted suggestion requires review',async()=>{
+test('new-mail icon opens assistant without generation; inserted suggestion sends on explicit click',async()=>{
  const u=await app({state:{...page([row(1),row(2)]),ai:{configured:true}}});let generated=0;u.api.draftReply=async()=>{generated++;return{text:'A suggested new message'};};u.api.onMessage=async id=>({id,kind:'new',p:'perso',accountId:1,subject:'New',draftVersion:5,requiresPreview:false,body:'',trail:[],draft:{text:'Original',mode:'new',to:'person@example.test',cc:'',version:5}});
- u.c.act.newMessage();u.c.act.newMailField({field:'to'},{target:{value:'person@example.test'}});u.c.act.newMailField({field:'text'},{target:{value:'Original'}});await u.c.act.aiNewMail();assert.equal(generated,0);assert.equal(u.s().ai.newMail,true);await u.c.act.aiRun();assert.equal(generated,1);u.c.act.aiInsert();assert.equal(u.s().newMail.text,'A suggested new message');assert.equal(u.s().newMail.aiAssisted,true);u.api.onPreview=async(id,input)=>({body:input.text,digest:'d',requiresConfirmation:false});await u.c.act.previewNewMail();assert.equal(u.calls.send.length,0);assert.equal(u.s().confirm.direct,false);
+ u.c.act.newMessage();u.c.act.newMailField({field:'to'},{target:{value:'person@example.test'}});u.c.act.newMailField({field:'text'},{target:{value:'Original'}});await u.c.act.aiNewMail();assert.equal(generated,0);assert.equal(u.s().ai.newMail,true);await u.c.act.aiRun();assert.equal(generated,1);u.c.act.aiInsert();assert.equal(u.s().newMail.text,'A suggested new message');assert.equal(u.s().newMail.aiAssisted,true);u.api.onPreview=async(id,input)=>({body:input.text,digest:'d',requiresConfirmation:false});await u.c.act.previewNewMail();assert.equal(u.calls.send.length,1);assert.equal(u.s().confirm,null);
 });
 test('one AI icon replaces separate classify, summary and drafting launchers',()=>{const out=ctx.app(...viewState());assert.match(out,/aria-label="Ouvrir l’assistant IA"/);assert.doesNotMatch(out,/Aider à rédiger|Améliorer avec l’IA|data-on-click="aiClassify"/);});
 
-test('manual new message sends once without preview modal, errors never auto-retry',async()=>{const u=await app();u.c.act.newMessage();u.c.act.newMailField({field:'to'},{target:{value:'person@example.test'}});u.c.act.newMailField({field:'text'},{target:{value:'Written by me'}});u.api.onPreview=async(id,input)=>({body:input.text,digest:'d',requiresConfirmation:false});u.api.send=async(...args)=>{u.calls.send.push(args);throw Error('Uncertain result');};await u.c.act.previewNewMail();assert.equal(u.calls.send.length,1);assert.equal(u.s().confirm.direct,false);assert.equal(u.s().confirm.stale,true);await u.c.act.confirmSend();assert.equal(u.calls.send.length,1,'stale confirmation cannot resend');});
+test('manual new message sends once without preview modal, errors never auto-retry',async()=>{const u=await app();u.c.act.newMessage();u.c.act.newMailField({field:'to'},{target:{value:'person@example.test'}});u.c.act.newMailField({field:'text'},{target:{value:'Written by me'}});u.api.onPreview=async(id,input)=>({body:input.text,digest:'d',requiresConfirmation:false});u.api.send=async(...args)=>{u.calls.send.push(args);throw Error('Uncertain result');};await u.c.act.previewNewMail();assert.equal(u.calls.send.length,1);assert.equal(u.s().confirm,null);assert.match(u.s().newMail.error,/Uncertain result/);await u.c.act.confirmSend();assert.equal(u.calls.send.length,1,'failure never auto-retries');});
 
  test('closing and reopening new-mail assistant discards an older generation',async()=>{const u=await app({state:{...page([row(1)]),ai:{configured:true}}});u.api.onMessage=async id=>({id,kind:'new',p:'perso',accountId:1,draftVersion:5,requiresPreview:false,body:'',trail:[],draft:{text:u.s().newMail?.text || '',mode:'new',to:'person@example.test',version:5}});u.c.act.newMessage();u.c.act.newMailField({field:'to'},{target:{value:'person@example.test'}});u.c.act.newMailField({field:'text'},{target:{value:'Original'}});await u.c.act.aiNewMail();let resolve;u.api.draftReply=()=>new Promise(r=>{resolve=r;});const pending=u.c.act.aiRun();u.listeners['document:keydown']({key:'Escape'});assert.equal(u.s().ai,null);assert.equal(u.s().newMailOpen,true);u.c.act.closeNewMail();u.c.act.newMessage();u.c.act.newMailField({field:'text'},{target:{value:'Different message'}});await u.c.act.aiNewMail();resolve({text:'Stale suggestion'});await pending;assert.equal(u.s().ai.result,null);assert.equal(u.s().newMail.text,'Different message');});
+
+const sendKey=(extra={})=>({key:'Enter',defaultPrevented:false,preventDefault(){this.defaultPrevented=true;},...extra});
+test('Enter sends a WhatsApp AI draft once; repeated Enter and Send during delivery cannot send twice',async()=>{
+ const u=await app({state:page([row(1,{channel:'whatsapp'})])});u.c.act.selectThread({id:1});await tick(6);u.s().ai={mode:'draft',forId:1,result:{text:'A proposed reply'},loading:false};u.c.act.aiInsert();assert.equal(u.calls.send.length,0);
+ const delivering=deferred();u.api.send=(...args)=>{u.calls.send.push(args);return delivering.p;};const el={value:'A proposed reply'};u.c.document.querySelector=()=>el;const key=sendKey(),pending=u.c.act.composeSendKeys({},key);await tick(6);assert.equal(key.defaultPrevented,true);assert.equal(u.calls.send.length,1);assert.equal(u.s().confirm.direct,true);
+ await u.c.act.composeSendKeys({},sendKey({repeat:true}));await u.c.act.sendPreview();assert.equal(u.calls.send.length,1);delivering.resolve({sent:true});await pending;assert.equal(u.s().confirm,null);assert.equal(el.value,'');
+});
+test('Shift+Enter, composition, held Enter, empty drafts and offline never send',async()=>{
+ const u=await app({state:page([row(1,{channel:'whatsapp'})])});u.c.act.selectThread({id:1});await tick(6);u.c.act.draft({}, {target:{value:'My reply'}});
+ for(const extra of [{shiftKey:true},{isComposing:true},{keyCode:229},{ctrlKey:true},{repeat:true}])await u.c.act.composeSendKeys({},sendKey(extra));assert.equal(u.calls.send.length,0);
+ u.c.act.draft({}, {target:{value:'   '}});await u.c.act.composeSendKeys({},sendKey());assert.equal(u.calls.send.length,0);u.c.act.draft({}, {target:{value:'Still local'}});u.s().offline=true;await u.c.act.composeSendKeys({},sendKey());assert.equal(u.calls.send.length,0);
+});
+test('Enter selects an @mention instead of sending, including while suggestions are loading',async()=>{
+ const u=await app({state:page([row(1,{channel:'whatsapp'})])});u.c.requestAnimationFrame=()=>{};u.c.act.selectThread({id:1});await tick(6);u.s().drafts[1]='@';u.s().waMention={id:1,from:0,to:1,query:'',active:0};u.s().waParticipants={1:{scope:'scope',members:[{jid:'33611111111@s.whatsapp.net',name:'Alice',phone:'+33611111111',token:'@33611111111'}]}};u.s().waParticipantScopes={1:'scope'};u.s().details[1]={...u.s().details[1],group:true,participantScope:'scope'};
+ await u.c.act.composeSendKeys({},sendKey());assert.equal(u.calls.send.length,0);assert.match(u.s().drafts[1],/@33611111111/);
+ u.s().waMention={id:1,from:0,to:1,query:'',active:0};u.s().waParticipantsBusy=1;const loading=sendKey();await u.c.act.composeSendKeys({},loading);assert.equal(loading.defaultPrevented,true);assert.equal(u.calls.send.length,0);
+ u.s().waParticipantsBusy=null;u.s().waMention={id:1,from:0,to:1,query:'',active:0};const down=sendKey({key:'ArrowDown'});await u.c.act.composeSendKeys({},down);assert.equal(down.defaultPrevented,true);const escape=sendKey({key:'Escape'});await u.c.act.composeSendKeys({},escape);assert.equal(escape.defaultPrevented,true);assert.equal(u.s().waMention,null);
+ u.s().drafts[1]='@';u.s().waMention={id:1,from:0,to:1,query:'',active:0};const tab=sendKey({key:'Tab'});await u.c.act.composeSendKeys({},tab);assert.equal(tab.defaultPrevented,true);assert.match(u.s().drafts[1],/@33611111111/);assert.equal(u.calls.send.length,0);
+});
+test('email reply and new compose send on Enter without a confirmation layer',async()=>{
+ const u=await app();u.c.act.selectThread({id:1});await tick(6);u.c.act.compose({mode:'reply'});u.c.act.draft({}, {target:{value:'Email reply'}});await u.c.act.composeSendKeys({},sendKey());assert.equal(u.calls.send.length,1);assert.equal(u.s().confirm,null);
+ u.c.act.newMessage();u.c.act.newMailField({field:'to'},{target:{value:'person@example.test'}});u.c.act.newMailField({field:'text'},{target:{value:'New email'}});await u.c.act.composeSendKeys({newMail:'true'},sendKey());assert.equal(u.calls.send.length,2);assert.equal(u.s().confirm,null);
+});
+
+test('an old group mention picker does not block Enter in another email or direct chat',async()=>{
+ for(const channel of ['email','whatsapp']) {const u=await app({state:page([row(1,{channel})])});u.c.act.selectThread({id:1});await tick(6);u.s().waMention={id:999,from:0,to:1,query:'',active:0};u.c.act.draft({}, {target:{value:'Different conversation'}});await u.c.act.composeSendKeys({},sendKey());assert.equal(u.calls.send.length,1);assert.equal(u.s().confirm,null);}
+});

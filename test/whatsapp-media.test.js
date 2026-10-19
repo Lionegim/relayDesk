@@ -44,7 +44,7 @@ test('attachment-only sends bind exact bytes to one-use preview; upload is conve
  const oid=c.db.prepare('SELECT id FROM messages WHERE account_id=? AND external_id=?').get(accountId,other.key.remoteJid).id;
  assert.throws(()=>c.wa.media.draft(oid,a.id),e=>e.status===404);
  c.store.markDraftAI(id);const ai=await c.wa.outbox.preview(id,{text:'IA',attachmentId:b.id});
- await assert.rejects(c.wa.outbox.send(id,{text:'IA',attachmentId:b.id,digest:ai.digest,direct:true}),e=>e.code==='preview_required');assert.equal(sock.sent.length,1);
+ await c.wa.outbox.send(id,{text:'IA',attachmentId:b.id,digest:ai.digest,direct:true});assert.equal(sock.sent.length,2);
 });
 test('media is lazy downloaded once, bounded and cache is private; deleted during download never returns bytes',async t=>{
  const c=await setupWhatsApp();t.after(()=>{c.wa.sync.stop();c.db.close();});const {accountId}=await linkedAccount(c,{messages:[image('photo')]});let downloads=0;

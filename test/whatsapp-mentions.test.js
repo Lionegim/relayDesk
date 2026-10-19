@@ -20,7 +20,6 @@ test('edited ranges, nonmembers and direct-chat mentions are rejected without de
 });
 test('membership is refreshed at send time; removed member and changed mention approvals refuse',async t=>{
  const c=await setup(t),v=input();c.store.markDraftAI(c.id);let p=await c.wa.outbox.preview(c.id,v);
- await assert.rejects(()=>c.wa.outbox.send(c.id,{...v,digest:p.digest,direct:true}),{code:'preview_required'});
  const access=createSessionAccess(),s={id:'session'},ticket=access.rememberPreview(s,c.id,v,p);assert.throws(()=>access.consumePreview(s,c.id,{...v,mentions:[],digest:p.digest,approvalToken:ticket.approvalToken}),{code:'session_approval_invalid'});
  await assert.rejects(()=>c.wa.outbox.send(c.id,{...v,mentions:[],digest:p.digest}),{code:'digest_mismatch'});
  c.sock.groupMembers=[];await assert.rejects(()=>c.wa.outbox.send(c.id,{...v,digest:p.digest}),{code:'mention_unavailable'});assert.equal(c.sock.sent.length,0);

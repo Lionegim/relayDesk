@@ -1,5 +1,5 @@
 import{test}from'node:test';import assert from'node:assert/strict';import{openDatabase}from'../src/db/index.js';import{seedIfEmpty}from'../src/db/seed.js';import{createStore}from'../src/store.js';import{createApp}from'../src/http/app.js';
-test('manual versus AI-assisted drafts: persisted review requirement, direct guard and explicit preview remain',async t=>{
+test('manual and AI drafts send on explicit action; provenance remains stored',async t=>{
  const db=openDatabase(':memory:');seedIfEmpty(db,{demo:false});const store=createStore(db),a=store.upsertAccount('perso',{svc:'gmail',channel:'email',name:'Test',address:'owner@example.test'}),m=store.createComposition(a.id);let sends=0;
  const app=createApp({store,ai:{configured:false},providers:{gmail:{sync:{permissions:()=>['read','drafts','send']},outbox:{saveDraft:(id,input)=>store.saveDraft(id,input.text,{...input,expectedVersion:input.baseVersion}),preview:(id,input)=>({body:input.text,digest:'test',from:a.address,to:['person@example.test'],cc:[],subject:'Test'}),send:(id)=>{sends++;store.clearDraft(id);return{sent:true};}}}}});await new Promise(r=>app.listen(0,'127.0.0.1',r));t.after(async()=>{await new Promise(r=>app.close(r));db.close();});
  const req=(path,body,method='POST')=>fetch(`http://127.0.0.1:${app.address().port}/api/messages/${m.id}/${path}`,{method,headers:{'content-type':'application/json'},body:JSON.stringify(body)});
@@ -7,6 +7,6 @@ test('manual versus AI-assisted drafts: persisted review requirement, direct gua
  r=await req('send/preview',input);assert.equal((await r.json()).requiresConfirmation,false);assert.equal(store.getMessage(m.id).requiresPreview,false);
  r=await req('draft',{...input,aiAssisted:true,text:'Suggested words'},'PUT');assert.equal(r.status,200);input={...input,text:'Suggested words',baseVersion:(await r.json()).version};assert.equal(createStore(db).getMessage(m.id).requiresPreview,true,'persists across store instances');
  r=await req('draft',{...input,aiAssisted:false,text:'Edited suggestion'},'PUT');input={...input,text:'Edited suggestion',baseVersion:(await r.json()).version};assert.equal(store.requiresDraftReview(m.id),true,'editing or false cannot erase AI provenance');
- r=await req('send/preview',input);assert.equal((await r.json()).requiresConfirmation,true);r=await req('send',{...input,digest:'test',direct:true});assert.equal(r.status,409);assert.equal(sends,0);
- r=await req('send',{...input,digest:'test'});assert.equal(r.status,200);assert.equal(sends,1);assert.throws(()=>store.getMessage(m.id),/introuvable/,'sent new composition is removed');
+ r=await req('send/preview',input);assert.equal((await r.json()).requiresConfirmation,false);assert.equal(sends,0);
+ r=await req('send',{...input,digest:'test',direct:true});assert.equal(r.status,200);assert.equal(sends,1);assert.throws(()=>store.getMessage(m.id),/introuvable/,'sent new composition is removed');
 });

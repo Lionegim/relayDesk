@@ -16,13 +16,13 @@ test('quoted reply uses retained same-chat message, survives draft save, binds p
  assert.equal(sock.sent[0].options.quoted.key.id,'A1');assert.equal(sock.sent[0].options.quoted.message.conversation,'Jeudi ?');assert.equal(sock.sent[0].jid,PEER);
  const full=c.store.getMessage(id);assert.equal(full.quote.id,'A1');assert.equal(full.draft,null);
 });
-test('AI quote cannot bypass approval and a changed quote invalidates session approval',async t=>{
+test('AI quote sends on explicit action; a changed quote invalidates session ticket',async t=>{
  const c=await setupWhatsApp();t.after(()=>c.wa.sync.stop());const {accountId,sock}=await linkedAccount(c);const id=thread(c,accountId);c.store.markDraftAI(id);
  const input={text:'Bien sûr',replyTo:'A1',baseVersion:c.store.assertDraftVersion(id)};const p=await c.wa.outbox.preview(id,input);
- await assert.rejects(()=>c.wa.outbox.send(id,{...input,digest:p.digest,direct:true}),{code:'preview_required'});assert.equal(sock.sent.length,0);
  const a=createSessionAccess(),session={id:'test'};const ticket=a.rememberPreview(session,id,input,p);
  assert.throws(()=>a.consumePreview(session,id,{...input,replyTo:null,digest:p.digest,approvalToken:ticket.approvalToken}),{code:'session_approval_invalid'});
  a.consumePreview(session,id,{...input,digest:p.digest,approvalToken:ticket.approvalToken});
+ await c.wa.outbox.send(id,{...input,digest:p.digest,direct:true});assert.equal(sock.sent.length,1);
 });
 test('reactions add, replace, remove, ignore stale events, and notify without unread changes',async t=>{
  const c=await setupWhatsApp();t.after(()=>c.wa.sync.stop());const {accountId,sock}=await linkedAccount(c);const id=thread(c,accountId);c.store.updateMessage(id,{unread:false});

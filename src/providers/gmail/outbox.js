@@ -158,7 +158,6 @@ export function createGmailOutbox({ store, sync, ownerName = '' }) {
             throw new HttpError(409, 'Validation absente, expirée ou déjà utilisée : vérifie le message à nouveau.', 'confirmation_invalid');
           }
           store.assertDraftVersion(messageId,confirmation.draftVersion);
-          if(input.direct===true && store.requiresDraftReview(messageId))throw new HttpError(409,'Ce brouillon utilise une proposition IA : valide son aperçu exact.','preview_required');
           // Consommée avant l'appel : une requête concurrente ou rejouée ne peut pas envoyer une seconde fois.
           confirmations.delete(digest);
           const memoryTicket=store.getReplyMemory(messageId,{internal:true});

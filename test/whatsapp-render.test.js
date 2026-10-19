@@ -52,5 +52,5 @@ test('vue groupe WhatsApp : auteur visible et réponse activée',()=>{
 test('connexion WhatsApp : écran QR sans formulaire ni étapes de configuration',()=>{
  const markup=c.connect({c:{step:'auth',svc:'whatsapp',profile:'perso',linkId:'test',link:{status:'qr',qrDataUrl:'data:image/png;base64,dGVzdA=='}},data:{profiles:[{id:'perso',name:'Personnel'}]}});
  assert.match(markup,/QR code pour connecter WhatsApp/);assert.match(markup,/identifié automatiquement/);assert.match(markup,/Personnel/);
- assert.doesNotMatch(markup,/<input|Numéro WhatsApp|Permissions|dialog-steps/);assert.match(markup,/approbation de l’aperçu exact/);
+ assert.doesNotMatch(markup,/<input|Numéro WhatsApp|Permissions|dialog-steps/);assert.match(markup,/Envoyer ou Entrée/);
 });
