@@ -42,6 +42,8 @@ test('envoi : seulement avec l’empreinte validée, dans le fil, puis brouillon
   assert.equal(g.sent.length, 0);
 
   store.saveDraft(msg.id, 'brouillon local', { mode: 'reply' });
+  await assert.rejects(outbox.send(msg.id,{...input,digest:p.digest}),e=>e.code==='draft_conflict');
+  await outbox.preview(msg.id,input); // nouvel aperçu explicite après modification
   assert.deepEqual(await outbox.send(msg.id, { ...input, digest: p.digest }), { sent: true, draftRemoved: true }, 'aucun brouillon Gmail lié');
   assert.equal(g.sent.length, 1);
   assert.equal(g.sent[0].threadId, 't1');
@@ -74,7 +76,7 @@ test('brouillon Gmail lié, même modifié hors de Relay : seul le MIME validé 
 test('revue P2 : aperçu → déconnexion → reconnexion (identifiants réutilisés) → ancienne empreinte refusée', async () => {
   const { createGmailDisconnect } = await import('../src/providers/gmail/disconnect.js');
   const ctx = await ready();
-  const input = { text: 'ok', mode: 'reply' };
+  const input = { text:'ok',mode:'reply' };
   const p = await ctx.outbox.preview(ctx.msg.id, input);
   await createGmailDisconnect({ store: ctx.store, vault: ctx.vault, sync: ctx.sync, fetchImpl: ctx.g.fetch, log: {} })(ctx.account.id);
   const again = await connected(ctx, ALL);
@@ -166,13 +168,13 @@ test('routes HTTP : aperçu puis envoi', async () => {
   const base = `http://127.0.0.1:${server.address().port}`;
   const post = (path, body) => fetch(base + path, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
   try {
-    const p = await (await post(`/api/messages/${ctx.msg.id}/send/preview`, { text: 'ok', mode: 'reply' })).json();
+    const p = await (await post(`/api/messages/${ctx.msg.id}/send/preview`,{text:'ok',mode:'reply',baseVersion:ctx.store.getMessage(ctx.msg.id).draftVersion})).json();
     assert.match(p.digest, /^[0-9a-f]{64}$/);
     assert.equal((await post(`/api/messages/${ctx.msg.id}/send`, { text: 'ok!', mode: 'reply', digest: p.digest })).status, 409);
     assert.equal((await post(`/api/messages/${ctx.msg.id}/send`, { text: 'ok', mode: 'reply', digest: p.digest })).status, 200);
     assert.equal(ctx.g.sent.length, 1);
     // Un message de démonstration (sans compte Gmail) ne peut pas être envoyé.
-    assert.equal((await post('/api/messages/1/send/preview', { text: 'ok', mode: 'reply' })).status, 403);
+    assert.equal((await post('/api/messages/1/send/preview',{text:'ok',mode:'reply',baseVersion:ctx.store.getMessage(1).draftVersion})).status, 403);
   } finally {
     await new Promise(r => server.close(r));
   }

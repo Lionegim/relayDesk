@@ -83,13 +83,14 @@ export function createGmailOutbox({ store, sync, ownerName = '' }) {
       const parsed = readComposeInput(input);
       const { text, mode, to, cc, subject } = parsed;
       const { accountId } = store.composeContext(messageId);
-      const local = () => store.saveDraft(messageId, text, { mode, to, cc, subject });
+      const local=()=>store.saveDraft(messageId,text,{mode,to,cc,subject,expectedVersion:input?.baseVersion});
       if (!isGmail(accountId)) return local();
       // Toutes les sauvegardes d'un compte Gmail passent par sa file, y compris l'enregistrement local :
       // une écriture Gmail plus ancienne encore en cours ne peut pas écraser un brouillon plus récent.
       // Un transfert sans destinataire valide reste local jusqu'à ce qu'une adresse soit saisie.
       if (!can(accountId, 'drafts') || (['forward', 'new'].includes(mode) && !String(to).includes('@'))) return sync.queue(accountId, local);
       return sync.exclusive(accountId, async ({ gmail }) => {
+        store.assertDraftVersion(messageId,input?.baseVersion);
         await ensureReply(gmail, messageId);
         const { mime, threadId, ctx } = compose(messageId, parsed);
         const message = { raw: toRaw(mime), ...(threadId ? { threadId } : {}) };
@@ -103,23 +104,25 @@ export function createGmailOutbox({ store, sync, ownerName = '' }) {
           }
         }
         if (!draftId) draftId = (await gmail.post('drafts', { message })).id;
-        return store.saveDraft(messageId, text, { mode, to, cc, subject, externalId: draftId, synced: true });
+        return store.saveDraft(messageId, text, { mode, to, cc, subject, externalId: draftId, synced: true,expectedVersion:input?.baseVersion });
       });
     },
 
     // Lot D, étape 1 : construit le message final et renvoie son contenu exact et son empreinte SHA-256.
     async preview(messageId, input) {
+      store.assertDraftVersion(messageId,input?.baseVersion);
       const parsed = readComposeInput(input);
       const { text, mode, to, cc, subject } = parsed;
       const { accountId } = store.composeContext(messageId);
       if (!can(accountId, 'send')) throw new HttpError(403, 'La permission Envoi n’est pas accordée pour ce compte.', 'send_forbidden');
       if (!text.trim()) throw badRequest('Le message est vide.');
       return sync.exclusive(accountId, async ({ gmail }) => {
+        store.assertDraftVersion(messageId,input?.baseVersion);
         await ensureReply(gmail, messageId);
         const { own, env, body, mime, threadId } = compose(messageId, parsed);
         const digest = digestOf(mime, threadId);
         sweep();
-        confirmations.set(digest, { messageId, accountId, generation: sync.generation(accountId), expires: Date.now() + CONFIRM_TTL_MS });
+        confirmations.set(digest, { messageId, accountId,draftVersion:store.assertDraftVersion(messageId), generation: sync.generation(accountId), expires: Date.now() + CONFIRM_TTL_MS });
         return {
           from: formatAddress(own), to: env.to.map(formatAddress), cc: env.cc.map(formatAddress),
           subject: env.subject, body, digest,
@@ -154,6 +157,7 @@ export function createGmailOutbox({ store, sync, ownerName = '' }) {
             || confirmation.generation !== sync.generation(accountId)) {
             throw new HttpError(409, 'Validation absente, expirée ou déjà utilisée : vérifie le message à nouveau.', 'confirmation_invalid');
           }
+          store.assertDraftVersion(messageId,confirmation.draftVersion);
           // Consommée avant l'appel : une requête concurrente ou rejouée ne peut pas envoyer une seconde fois.
           confirmations.delete(digest);
           const memoryTicket=store.getReplyMemory(messageId,{internal:true});

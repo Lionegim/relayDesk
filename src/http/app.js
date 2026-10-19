@@ -12,7 +12,7 @@ import {mailboxAddress} from '../providers/mail-credentials.js';
 
 const PUBLIC_DIR = fileURLToPath(new URL('../../public/', import.meta.url));
 const MAX_BODY = 64 * 1024;
-const TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.woff2': 'font/woff2', '.svg': 'image/svg+xml', '.json': 'application/json' };
+const TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.woff2': 'font/woff2', '.svg': 'image/svg+xml', '.json': 'application/json', '.webmanifest':'application/manifest+json', '.png':'image/png' };
 const SECURITY_HEADERS = {
   'content-security-policy': "default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'",
   'x-content-type-options': 'nosniff',
@@ -48,7 +48,7 @@ async function serveStatic(req, res, pathname) {
   if (!file.startsWith(PUBLIC_DIR.endsWith(sep) ? PUBLIC_DIR : PUBLIC_DIR + sep)) throw notFound();
   let data;
   try { data = await readFile(file); } catch { throw notFound(); }
-  res.writeHead(200, { ...SECURITY_HEADERS, 'content-type': TYPES[extname(file)] || 'application/octet-stream', 'cache-control': 'no-cache' });
+  res.writeHead(200, { ...SECURITY_HEADERS, 'content-type': TYPES[extname(file)] || 'application/octet-stream', 'cache-control': extname(file)==='.html'?'no-store':'no-cache' });
   res.end(req.method === 'HEAD' ? undefined : data);
 }
 
@@ -138,8 +138,9 @@ export function createApp({ store, ai, ownerName, gmail = null, providers = {}, 
   // [méthode, motif, gestionnaire(params, body)]
   const routes = [
     ['GET', /^\/api\/health$/, () => health ? health() : auth ? ({ok:true}) : ({ ok: true, ai: { provider: 'mistral', configured: ai.configured, model: ai.model } })],
-    ['GET', /^\/api\/state$/, () => {
-      const snapshot = store.snapshot();
+    ['GET', /^\/api\/state$/, (_,body,session,url) => {
+      const params=Object.fromEntries(url.searchParams),paged=params.paged==='1';
+      const snapshot=store.snapshot(paged?{profile:params.profile || 'anove',nav:params.nav,channel:params.channel,folder:params.folder || null,q:params.q,limit:params.limit,cursor:params.cursor}:null);
       for (const profile of snapshot.profiles) for (const account of profile.accounts) {
         account.perms = mail.permissions(account);
         if (providers[account.svc]) account.windowDays = account.svc === 'whatsapp' ? 7 : store.getSync(account.id)?.window_days || 30;
@@ -180,13 +181,14 @@ export function createApp({ store, ai, ownerName, gmail = null, providers = {}, 
     ['POST', /^\/api\/accounts\/([^/]+)\/disconnect$/, ([id]) => {
       return mail.providerFor(accountId(id)).disconnect(accountId(id));
     }],
-    ['GET', /^\/api\/messages\/([^/]+)$/, ([id]) => ({ ...store.getMessage(messageId(id)), aiResults: assistant.results(messageId(id)), replyMemory:store.getReplyMemory(messageId(id)) })],
+    ['GET', /^\/api\/messages\/([^/]+)$/, ([id],body,session,url) => ({ ...store.getMessage(messageId(id),{limit:url.searchParams.get('limit') ?? 50,before:url.searchParams.get('before')}), aiResults: assistant.results(messageId(id)), replyMemory:store.getReplyMemory(messageId(id)) })],
     ['GET', /^\/api\/messages\/([^/]+)\/memory$/, ([id]) => store.getReplyMemory(messageId(id))],
     ['PATCH', /^\/api\/messages\/([^/]+)\/memory$/, ([id],body) => store.changeReplyMemory(messageId(id),body)],
     ['PATCH', /^\/api\/messages\/([^/]+)$/, ([id], body) => mail.updateMessage(messageId(id), body)],
     ['POST', /^\/api\/drafts$/, (_, body) => mail.createComposition(body.accountId)],
-    ['PUT', /^\/api\/messages\/([^/]+)\/draft$/, ([id], body) => mail.saveDraft(messageId(id), body)],
+    ['PUT', /^\/api\/messages\/([^/]+)\/draft$/, ([id], body) => {if(!Number.isSafeInteger(body.baseVersion) || body.baseVersion<0) throw badRequest('Version du brouillon requise');return mail.saveDraft(messageId(id),body);}],
     ['POST', /^\/api\/messages\/([^/]+)\/send\/preview$/, async ([id], body, session) => {
+      if(!Number.isSafeInteger(body.baseVersion) || body.baseVersion<0) throw badRequest('Version du brouillon requise');
       const preview=await mail.preview(messageId(id),body);
       return auth?access.rememberPreview(session,messageId(id),body,preview):preview;
     }],
@@ -215,7 +217,8 @@ export function createApp({ store, ai, ownerName, gmail = null, providers = {}, 
       const { pathname } = url;
       if(auth && await auth.handle(req,res,url)) return;
       if(!auth && pathname==='/auth/session' && req.method==='GET') return send(res,200,{enabled:false,authenticated:false});
-      const publicLogin=['/login','/js/login.js','/styles.css','/fonts/inter-latin-wght-normal.woff2','/fonts/jetbrains-mono-latin-wght-normal.woff2'].includes(pathname);
+      // Ressources publiques fixes : uniquement du code et des images génériques, jamais index.html ni contenu privé.
+      const publicLogin=['/login','/js/login.js','/js/app.js','/js/api.js','/js/views.js','/js/dom.js','/js/constants.js','/js/pwa.js','/styles.css','/sw.js','/manifest.webmanifest','/offline.html','/fonts/inter-latin-wght-normal.woff2','/fonts/jetbrains-mono-latin-wght-normal.woff2'].includes(pathname) || /^\/icons\/[a-zA-Z0-9_-]+\.(png|svg)$/.test(pathname);
       const publicHealth=pathname==='/api/health' && req.method==='GET';
       let session=null;
       if(auth && !publicLogin && !publicHealth) {
@@ -251,7 +254,7 @@ export function createApp({ store, ai, ownerName, gmail = null, providers = {}, 
       if (!route) throw new HttpError(405, 'Méthode non autorisée', 'method_not_allowed');
       const params = pathname.match(route[1]).slice(1);
       const body = req.method === 'GET' ? {} : await readJson(req);
-      send(res, 200, await route[2](params, body,session));
+      send(res, 200, await route[2](params,body,session,url));
     } catch (e) {
       const known = e instanceof HttpError;
       if (!known) console.error('Requête interrompue : erreur interne.');

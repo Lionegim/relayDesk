@@ -58,7 +58,7 @@ test('dossiers et sous-dossiers', async () => {
 });
 
 test('brouillon enregistré', async () => {
-  const { body } = await req('PUT', '/api/messages/2/draft', { text: 'Jeudi 10h me va.' });
+  const { body } = await req('PUT', '/api/messages/2/draft', { text: 'Jeudi 10h me va.',baseVersion:(await req('GET','/api/messages/2')).body.draftVersion });
   assert.equal(body.text, 'Jeudi 10h me va.');
   assert.ok(Date.parse(body.savedAt));
 });
