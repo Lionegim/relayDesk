@@ -30,7 +30,7 @@ export function renderApp(s, v) {
     ${when(s.newMailOpen, () => newMailDialog(s, v))}
     ${when(s.c, () => connectWizard(s))}
     ${when(s.confirm?.kind === 'disconnect', () => disconnectDialog(s.confirm))}
-    ${when(s.confirm?.kind === 'send' && s.confirm.preview, () => sendDialog(s.confirm))}
+    ${when(s.confirm?.kind === 'send' && s.confirm.preview, () => sendDialog(s.confirm, s.offline))}
     ${when(s.authPanel, () => authDevices(s))}
     ${when(s.toast, () => html`<div class="${cls('toast', s.toastOk && 'toast-ok')}" role="status">${s.toast}</div>`)}`;
 }
@@ -234,13 +234,13 @@ function reader(s, v) {
 }
 
 // État du brouillon enregistré sur le serveur : jamais « enregistré » tant que le texte affiché ne l'est pas.
-function draftState(s, id, text) {
+function draftState(s, v, id, text) {
   const meta = (s.draftMeta || {})[id];
   if (!meta) return null;
   if (meta.conflict) return { tone: 'error', label: 'Conflit : brouillon modifié sur un autre appareil' };
   if (meta.saving) return { tone: 'muted', label: 'Enregistrement…' };
   if (meta.error) return { tone: 'error', label: `Non enregistré : ${meta.error}` };
-  if (text !== (meta.savedText ?? '')) return { tone: 'warn', label: 'Modifications non enregistrées' };
+  if (v.draftChanged ?? text !== (meta.savedText ?? '')) return { tone: 'warn', label: 'Modifications non enregistrées' };
   if (meta.savedAt) return { tone: 'muted', label: `Brouillon enregistré à ${timeOf(meta.savedAt)}` };
   return { tone: 'muted', label: 'Brouillon' };
 }
@@ -312,14 +312,14 @@ function messageView(s, v, sel) {
           ${when(s.composing === 'forward', () => html`
             <label class="composer-to">
               <span>À</span>
-              <input data-key="to-${sel.id}" data-on-input="composeTo" value="${s.composeTo[sel.id] ?? (full?.draft?.mode === 'forward' ? full.draft.to : '') ?? ''}" placeholder="adresse@exemple.fr" autocomplete="off" maxlength="2000">
+              <input data-key="to-${sel.id}" data-on-input="composeTo" ${raw(s.confirm?.messageId === sel.id ? 'readonly' : '')} value="${s.composeTo[sel.id] ?? (full?.draft?.mode === 'forward' ? full.draft.to : '') ?? ''}" placeholder="adresse@exemple.fr" autocomplete="off" maxlength="2000">
             </label>`)}
           ${draftConflict(s, sel.id)}
-          <textarea data-autofocus data-key="draft-${sel.id}" data-on-input="draft" placeholder="Répondre à ${sel.from.split(' ')[0]} depuis ${sel.account}…">${draft}</textarea>
+          <textarea data-autofocus data-key="draft-${sel.id}" data-on-input="draft" ${raw(s.confirm?.messageId === sel.id ? 'readonly' : '')} placeholder="Répondre à ${sel.from.split(' ')[0]} depuis ${sel.account}…">${draft}</textarea>
           <div class="composer-foot">
             <button class="btn btn-ghost" data-on-click="aiDraft">✳ Aider à rédiger</button>
             ${(() => {
-              const st = draftState(s, sel.id, draft);
+              const st = draftState(s, v, sel.id, draft);
               return html`<span class="${cls('composer-status ellipsis', st && `is-${st.tone}`)}" role="status">${st ? st.label : sel.draft ? `${sel.draft.synced ? 'Brouillon synchronisé' : 'Brouillon'} enregistré à ${timeOf(sel.draft.savedAt)}` : 'Brouillon'}</span>`;
             })()}
             <button class="btn btn-ghost" data-on-click="saveDraft">Enregistrer</button>
@@ -387,7 +387,7 @@ function whatsappView(s, v, sel) {
   const draft = s.drafts[sel.id] ?? full?.draft?.text ?? '';
   const tooLong = draft.length > WA_MAX;
   const folderName = s.data.folders.find(f => f.id === sel.folderId)?.name;
-  const st = draftState(s, sel.id, draft);
+  const st = draftState(s, v, sel.id, draft);
   const status = st ? st.label : sel.draft ? `Brouillon enregistré à ${timeOf(sel.draft.savedAt)}` : 'Brouillon';
   const conflict = !!(s.draftMeta || {})[sel.id]?.conflict;
   const hint = full?.group ? 'Groupe : lecture et IA · envoi non activé' : !canSend ? 'Envoi non autorisé pour ce compte' : s.confirm ? 'Vérification en cours' : 'Envoi seulement après l’aperçu exact';
@@ -415,7 +415,7 @@ function whatsappView(s, v, sel) {
       <footer class="wa-composer">
         ${draftConflict(s, sel.id)}
         <div class="wa-input">
-          <textarea data-key="draft-${sel.id}" data-on-input="draft" rows="2" aria-label="Réponse à ${name}"
+          <textarea data-key="draft-${sel.id}" data-on-input="draft" ${raw(s.confirm?.messageId === sel.id ? 'readonly' : '')} rows="2" aria-label="Réponse à ${name}"
             placeholder="Écrire à ${name.split(' ')[0]} depuis ${sel.account}…">${draft}</textarea>
         </div>
         <div class="wa-actions">
@@ -752,6 +752,7 @@ function disconnectDialog(c) {
           <h3>Déconnecter ${c.name} ?</h3>
           <p class="muted" style="margin:0;font-size:14px;line-height:1.55">Les messages importés de ce compte seront retirés de Relay. Ils restent chez leur fournisseur. Le jeton conservé par Relay sera supprimé.</p>
           ${when(c.error, () => html`<div class="alert">${c.error}</div>`)}
+          ${when(offline && !c.error, () => html`<div class="alert">Hors ligne : l’envoi reprendra seulement quand tu le confirmeras en ligne.</div>`)}
         </div>
         <div class="dialog-foot">
           <div class="grow"></div>
@@ -766,7 +767,7 @@ function disconnectDialog(c) {
 
 // ---------- Validation de l'envoi ----------
 
-function sendDialog(c) {
+function sendDialog(c, offline = false) {
   const p = c.preview;
   return html`
     <div class="overlay" data-on-click="confirmCancel">
@@ -782,11 +783,12 @@ function sendDialog(c) {
           <div class="send-body">${p.body}</div>
           <p class="muted" style="margin:0;font-size:12px">Ce texte est exactement celui qui sera envoyé. Toute modification demande une nouvelle vérification.</p>
           ${when(c.error, () => html`<div class="alert">${c.error}</div>`)}
+          ${when(offline && !c.error, () => html`<div class="alert">Hors ligne : l’envoi reprendra seulement quand tu le confirmeras en ligne.</div>`)}
         </div>
         <div class="dialog-foot">
           <div class="grow"></div>
           <button class="btn btn-ghost" data-on-click="confirmCancel" ${raw(c.busy ? 'disabled' : '')}>Annuler</button>
-          <button class="btn btn-brand" data-on-click="confirmSend" ${raw(c.busy || c.stale ? 'disabled' : '')}>
+          <button class="btn btn-brand" data-on-click="confirmSend" ${raw(c.busy || c.stale || offline ? 'disabled' : '')}>
             ${when(c.busy, () => html`<span class="spinner"></span>`)}Confirmer l’envoi
           </button>
         </div>
@@ -794,6 +796,15 @@ function sendDialog(c) {
     </div>`;
 }
 
+const MAIL_KEYS = ['to', 'cc', 'subject', 'text'];
+function newMailStatus(c) {
+  if (c.busy) return 'En cours…';
+  if (c.conflict) return 'Conflit : non enregistré';
+  if (c.saving) return 'Enregistrement…';
+  if (c.saveError) return 'Non enregistré';
+  if (MAIL_KEYS.some(k => (c[k] ?? '') !== ((c.saved || {})[k] ?? ''))) return 'Modifications non enregistrées';
+  return c.savedAt ? `${c.synced ? 'Brouillon synchronisé' : 'Brouillon enregistré'} à ${timeOf(c.savedAt)}` : 'Non enregistré';
+}
 function newMailDialog(s, v) {
   const c = s.newMail;
   const accounts = v.profile.accounts.filter(a => a.channel === 'email' && a.perms?.includes('read'));
@@ -802,18 +813,23 @@ function newMailDialog(s, v) {
   return html`<div class="overlay"><section class="dialog new-mail-dialog" role="dialog" aria-modal="true" aria-label="Nouveau message">
     <div class="composer-head"><h3 class="grow">Nouveau message</h3><button class="composer-close" data-on-click="closeNewMail" aria-label="Fermer le nouveau message" ${disabled}>×</button></div>
     ${accounts.length ? html`
-      <label>De<select data-on-change="newMailField" data-field="accountId" ${raw(c.busy || c.messageId ? 'disabled' : '')}>
+      <label>De<select data-on-change="newMailField" data-field="accountId" ${raw(c.busy || c.saving || c.messageId ? 'disabled' : '')}>
         ${accounts.map(a => html`<option value="${a.id}" ${raw(a.id === c.accountId ? 'selected' : '')}>${a.name} — ${a.address || ''}</option>`)}
       </select></label>
       <label>À<input data-key="new-to" data-on-input="newMailField" data-field="to" value="${c.to}" maxlength="2000" placeholder="adresse@exemple.fr" ${disabled}></label>
       <label>Cc<input data-key="new-cc" data-on-input="newMailField" data-field="cc" value="${c.cc}" maxlength="2000" ${disabled}></label>
       <label>Objet<input data-key="new-subject" data-on-input="newMailField" data-field="subject" value="${c.subject}" maxlength="998" ${disabled}></label>
       <label>Message<textarea data-key="new-body" data-on-input="newMailField" data-field="text" maxlength="20000" placeholder="Rédige ton message…" ${disabled}>${c.text}</textarea></label>
-      ${when(c.error, () => html`<p role="alert" class="error">${c.error}</p>`)}
+      ${when(c.conflict, () => html`<div class="draft-conflict" role="alert">
+        <p>Ce brouillon a été modifié ailleurs. Ton texte est conservé ici et n’a pas été enregistré.</p>
+        <div><button class="btn btn-ghost" data-on-click="newMailReload" ${raw(c.saving || c.busy ? 'disabled' : '')}>Recharger</button>
+        <button class="btn btn-ghost" data-on-click="newMailKeepMine" ${raw(c.saving || c.busy ? 'disabled' : '')}>Garder ma version</button></div>
+      </div>`)}
+      ${when(c.error || c.saveError, () => html`<p role="alert" class="error">${c.error || `Non enregistré : ${c.saveError}`}</p>`)}
       <div class="composer-foot"><button class="btn btn-ghost" data-on-click="aiNewMail" ${raw(c.busy || !s.data.ai?.configured ? 'disabled' : '')}>✳ Améliorer avec l’IA</button>
-        <span class="composer-status" role="status">${c.busy ? 'En cours…' : c.conflict ? 'Conflit : non enregistré' : c.savedAt ? `${c.synced ? 'Brouillon synchronisé' : 'Brouillon enregistré'} à ${timeOf(c.savedAt)}` : 'Non enregistré'}</span>
-        <button class="btn btn-ghost" data-on-click="saveNewMail" ${disabled}>Enregistrer</button>
-        <button class="btn btn-brand" data-on-click="previewNewMail" ${raw(!c.busy && !c.conflict && !s.offline && account?.perms?.includes('send') && c.text.trim() && c.to.trim() ? '' : 'disabled')}>Vérifier avant l’envoi</button>
+        <span class="composer-status" role="status">${newMailStatus(c)}</span>
+        <button class="btn btn-ghost" data-on-click="saveNewMail" ${raw(c.busy || c.conflict || s.offline ? 'disabled' : '')}>Enregistrer</button>
+        <button class="btn btn-brand" data-on-click="previewNewMail" ${raw(!c.busy && !c.saving && !c.conflict && !s.offline && account?.perms?.includes('send') && c.text.trim() && c.to.trim() ? '' : 'disabled')}>Vérifier avant l’envoi</button>
       </div>
       ${when(!account?.perms?.includes('send'), () => html`<p class="muted">Active la permission Envoi pour envoyer depuis ce compte.</p>`)}
       ${when(!s.data.ai?.configured, () => html`<p class="muted">L’assistant sera disponible après configuration de l’IA.</p>`)}
