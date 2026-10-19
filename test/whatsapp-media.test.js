@@ -13,9 +13,9 @@ const image=(id,extra={})=>({...msg(id,''),message:{imageMessage:{url:'https://m
 const idFor=(c,aid)=>c.db.prepare('SELECT id FROM messages WHERE account_id=? AND external_id=?').get(aid,PEER).id;
 test('media import is deduplicated, captioned, encrypted, paginated and erased with ephemeral policy',async t=>{
  const c=await setupWhatsApp();t.after(()=>{c.wa.sync.stop();c.db.close();});
- const {accountId,sock}=await linkedAccount(c,{messages:[image('photo')]});const id=idFor(c,accountId);
+ const {accountId,sock}=await linkedAccount(c,{messages:[image('photo',{contextInfo:{quotedMessage:{viewOnceMessage:{message:{conversation:'quoted secret'}}}}})]});const id=idFor(c,accountId);
  const full=c.store.getMessage(id);assert.equal(full.body,'Souvenir 😊');assert.equal(full.media.mime,'image/png');assert.ok(full.media.url);
- const stored=c.db.prepare('SELECT * FROM whatsapp_media').get();assert.equal(Buffer.from(stored.ciphertext).includes(Buffer.from('private-key')),false);assert.equal(JSON.stringify(full).includes('mediaKey'),false);
+ const stored=c.db.prepare('SELECT * FROM whatsapp_media').get();assert.equal(JSON.stringify(c.vault.open(accountId,stored)).includes('quoted secret'),false);assert.equal(Buffer.from(stored.ciphertext).includes(Buffer.from('private-key')),false);assert.equal(JSON.stringify(full).includes('mediaKey'),false);
  sock.emit('messages.upsert',{type:'notify',messages:[image('photo'),msg('next','Merci ❤️',{ago:0})]});await tick();
  assert.equal(c.db.prepare('SELECT COUNT(*) n FROM whatsapp_media').get().n,1);
  assert.equal(c.store.getMessage(id,{limit:10}).trail[0].media.id,full.media.id);

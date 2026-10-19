@@ -49,7 +49,11 @@ export function createWhatsAppMedia({store,vault,lib,socket=()=>null,canUpload=(
       if(!m.media || store.waMediaFor(accountId,m.chatJid,m.msgId))return;
       try { // Raw protobuf buffers are serialized explicitly below.
         const encode=(_,v)=>v instanceof Uint8Array || v?.type==='Buffer'&&Array.isArray(v.data)?{type:'Buffer',data:Buffer.from(v.data || v).toString('base64')}:typeof v==='bigint'?v.toString():v;
-        put(accountId,{chatJid:m.chatJid,msgId:m.msgId,...m.media},{raw:JSON.stringify(raw,encode)});
+        const field=raw.message.imageMessage?'imageMessage':raw.message.videoMessage?'videoMessage':'documentMessage';
+        const source=raw.message[field],content={};
+        // Keep only decryption metadata, never quoted messages, contact cards or thumbnails.
+        for(const key of ['url','directPath','mediaKey','fileSha256','fileEncSha256'])if(source[key]!=null)content[key]=source[key];
+        put(accountId,{chatJid:m.chatJid,msgId:m.msgId,...m.media},{raw:JSON.stringify({message:{[field]:content}},encode)});
       } catch { /* A bounded cache must never interrupt text synchronization. */ }
     },
     async upload(messageId,bytes) {

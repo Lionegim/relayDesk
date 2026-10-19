@@ -37,7 +37,7 @@ function verify(db,vaultKey) {
   const latest=Math.max(...readdirSync(new URL('../db/migrations/',import.meta.url)).filter(f=>/^\d+_.*\.sql$/.test(f)).map(f=>Number(f.split('_')[0])));
   if(version<1 || version>latest || !table(db,'messages') || !table(db,'accounts')) fail('Schéma de sauvegarde non pris en charge.');
   const vault=createVault(vaultKey);
-  try {for(const name of ['secrets','whatsapp_auth','whatsapp_media'])if(table(db,name))for(const row of db.prepare(`SELECT account_id,iv,tag,ciphertext FROM ${name}`).all())vault.open(row.account_id,row);}
+  try {for(const name of ['secrets','whatsapp_auth','whatsapp_media'])if(table(db,name))for(const row of db.prepare(`SELECT account_id,iv,tag,ciphertext FROM ${name}`).iterate())vault.open(row.account_id,row);}
   catch {fail('La clé du coffre ne correspond pas à cette sauvegarde.');}
   return version;
 }
