@@ -45,7 +45,7 @@ export function renderApp(s, v) {
   // Mobile : un seul écran (liste ou lecture), barre latérale en tiroir ; la grille vient alors de la feuille de style.
   return html`
     ${when(s.offline, () => html`<div class="offline-banner" role="status">Hors ligne : consultation seulement. Rien n’est mis en attente ni envoyé plus tard.</div>`)}
-    <div class="${cls('app', mail && 'mail-workspace', v.compact && 'compact', mobile && 'is-mobile', mobile && `pane-${mail ? s.pane || 'list' : 'list'}`, mobile && s.drawer && 'drawer-open')}" ${raw(mobile ? '' : `style="grid-template-columns:${cols}"`)}>
+    <div class="${cls('app', mail && 'mail-workspace', mail && (s.channel==='whatsapp' || v.sel?.channel==='whatsapp') && 'whatsapp-workspace', v.compact && 'compact', mobile && 'is-mobile', mobile && `pane-${mail ? s.pane || 'list' : 'list'}`, mobile && s.drawer && 'drawer-open')}" ${raw(mobile ? '' : `style="grid-template-columns:${cols}"`)}>
       ${sidebar(s, v)}
       ${when(mobile && s.drawer, () => html`<div class="drawer-backdrop" data-on-click="closeDrawer" aria-hidden="true"></div>`)}
       ${mail ? [messageList(s, v), reader(s, v)] : s.app==='duplicates'?duplicatesPage(s,v):s.app==='history'?contactHistoryPage(s,v):s.app==='settings'?mailSettingsPage(s,v):contactsPage(s, v)}
@@ -183,10 +183,10 @@ function messageList(s, v) {
         <div class="list-title">
           ${when(s.mobile, () => html`<button class="icon-btn mobile-only" data-on-click="openDrawer" aria-label="Ouvrir le menu" aria-expanded="${!!s.drawer}">${icon('lines')}</button>`)}
           <div class="grow" style="display:flex;flex-direction:column;min-width:0">
-            <span class="inbox-eyebrow">${v.profile.name}</span><strong class="ellipsis inbox-heading">${s.channel === 'whatsapp' ? 'WhatsApp' : v.viewTitle}</strong>
+            <span class="inbox-eyebrow">${v.profile.name}</span><strong class="ellipsis inbox-heading">${s.channel === 'whatsapp' ? 'Discussions' : v.viewTitle}</strong>
             <small>${s.channel === 'whatsapp' ? plural(page ? page.total ?? v.list.length : v.list.length, 'conversation') : `${counts.all} messages, ${counts.unread} non lus`}</small>
           </div>
-          ${s.mobile ? html`<button class="icon-btn mobile-only" data-on-click="newMessage" aria-label="Nouveau message">${icon('compose')}</button>` : html`<button class="icon-btn" title="Filtrer">${icon('lines')}</button>`}
+          ${s.mobile || s.channel==='whatsapp' || v.sel?.channel==='whatsapp' ? html`<button class="icon-btn wa-new-message" data-on-click="newMessage" aria-label="Nouveau message">${icon('plus')}</button>` : html`<button class="icon-btn" title="Filtrer">${icon('lines')}</button>`}
         </div>
         <input class="input" type="search" placeholder="Rechercher" value="${s.query}" data-on-input="search" aria-label="Rechercher dans les messages" style="font-size:14px">
         <div class="chips">
@@ -242,7 +242,7 @@ function reader(s, v) {
   const folderTargets = [{ f: { id: '', name: 'Aucun dossier' }, depth: 0 }, ...(v.allFolders || v.folders).filter(r => !r.input && (s.profileId!=='all' || r.f.p===sel?.p))];
   return html`
     <main class="reader">
-      <div class="toolbar">
+      ${when(sel?.channel!=='whatsapp',()=>html`<div class="toolbar">
         ${s.mobile ? html`<button class="btn btn-ghost mobile-back" data-on-click="mobileBack" aria-label="Retour à la liste">‹ Retour</button>` : html`<button class="icon-btn" data-on-click="newMessage" title="Nouveau message">${icon('compose')}</button>`}
         <div class="grow"></div>
         <div class="icon-group">
@@ -265,7 +265,7 @@ function reader(s, v) {
             </div>`)}
         </div>
         <div class="grow"></div>
-      </div>
+      </div>`)}
       ${sel ? (sel.channel === 'whatsapp' ? whatsappView(s, v, sel) : messageView(s, v, sel)) : html`<div class="no-selection">Aucun message sélectionné</div>`}
       ${when(s.ai && !s.ai.newMail && sel && s.ai.forId === sel.id, () => aiPanel(s, sel))}
     </main>`;
@@ -403,13 +403,13 @@ function waTimeline(msgs) {
     const at = Number.isFinite(m.at) ? m.at : null;
     const newDay = at !== null && (!prev || prev.at === null || dayKey(prev.at) !== dayKey(at));
     // Messages consécutifs du même auteur, à moins de 5 minutes : bulles groupées, sans pointe.
-    const grouped = !newDay && prev && prev.mine === m.mine && at !== null && prev.at !== null && at - prev.at < 5 * 60000;
+    const grouped = !newDay && prev && prev.mine === m.mine && prev.author === m.author && at !== null && prev.at !== null && at - prev.at < 5 * 60000;
     prev = { ...m, at };
     return html`
       ${when(newDay, () => html`<div class="wa-day" role="separator"><span>${dayLabel(at)}</span></div>`)}
-      <div class="${cls('wa-msg', m.mine ? 'wa-out' : 'wa-in', grouped && 'wa-cont')}">
+      <div class="${cls('wa-msg', m.media && 'wa-has-media', m.mine ? 'wa-out' : 'wa-in', grouped && 'wa-cont')}">
         <div class="wa-bubble">
-          ${when(m.author, () => html`<strong class="wa-author">${m.author}</strong>`)}
+          ${when(m.author && !grouped, () => html`<strong class="wa-author">${m.author}</strong>`)}
           <span class="sr-only">${m.mine ? 'Vous' : 'Reçu'} :</span>
           ${waMedia(m.media)}
           ${when(!m.media || !['Photo','GIF'].includes(m.body),()=>html`<span class="wa-text">${m.body}</span>`)}
@@ -437,6 +437,7 @@ function whatsappView(s, v, sel) {
   return html`
     <section class="wa" aria-label="Discussion WhatsApp avec ${name}">
       <header class="wa-head">
+        ${when(s.mobile,()=>html`<button class="icon-btn wa-back" data-on-click="mobileBack" aria-label="Retour à la liste">${icon('reply')}</button>`)}
         <span class="avatar wa-avatar">${sel.initials}</span>
         <div class="wa-who">
           <strong class="ellipsis">${name}${full?.group ? ' · Groupe' : ''}</strong>
@@ -444,6 +445,17 @@ function whatsappView(s, v, sel) {
         </div>
         <div class="wa-head-actions">
           ${assistantButton()}
+          <details class="wa-more" data-key="wa-actions-${sel.id}"><summary aria-label="Actions de la conversation" title="Actions de la conversation">${icon('more')}</summary><div class="menu" role="menu" aria-label="Actions de la conversation">
+            <button role="menuitem" data-on-click="archive">${icon('archive')} Archiver</button>
+            <button role="menuitem" data-on-click="toggleRead">${icon('mail')} ${sel.unread?'Marquer lu':'Marquer non lu'}</button>
+            <button role="menuitem" data-on-click="toggleFlag">${raw(ICON.flag?.(!!sel.flagged) || '')} ${sel.flagged?'Retirer le drapeau':'Drapeau'}</button>
+            <button role="menuitem" data-on-click="saveDraft">${icon('compose')} Enregistrer le brouillon</button>
+            <button role="menuitem" data-on-click="newMessage">${icon('plus')} Nouveau message</button>
+            <details class="wa-folder-menu"><summary>${icon('folder')} Déplacer vers…</summary><div role="group" aria-label="Dossiers">
+              <button role="menuitem" data-on-click="moveTo" data-id="">Aucun dossier</button>
+              ${(v.allFolders || v.folders || []).filter(r=>!r.input && (s.profileId!=='all' || r.f.p===sel.p)).map(r=>html`<button role="menuitem" data-on-click="moveTo" data-id="${r.f.id}">${r.f.name}</button>`)}
+            </div></details>
+          </div></details>
         </div>
       </header>
       <div class="wa-timeline" data-key="wa-timeline-${sel.id}" data-chat-id="${sel.id}" data-ready="${String(!!full && !full.failed)}" role="log" aria-label="Messages, du plus ancien au plus récent">
@@ -457,23 +469,18 @@ function whatsappView(s, v, sel) {
       <footer class="wa-composer">
         ${draftConflict(s, sel.id)}
         ${when(s.waAttachments?.[sel.id],()=>html`<div class="wa-attachment">${waMedia(s.waAttachments[sel.id])}<div><strong>${s.waAttachments[sel.id].kind==='gif'?'GIF prêt à envoyer':'Photo prête à envoyer'}</strong><p>Temporaire · à réajouter après actualisation</p><button class="btn btn-ghost" data-on-click="waAttachRemove" ${raw(s.confirm?'disabled':'')}>Retirer</button></div></div>`)}
-        <div class="wa-tools">
-          <button class="btn btn-ghost" data-on-click="waEmojiToggle" aria-label="Ajouter un emoji" aria-expanded="${!!s.waEmoji}" ${raw(s.confirm?'disabled':'')}>☺</button>
-          <label class="btn btn-ghost wa-add-photo">＋ Photo / GIF<input type="file" accept="image/jpeg,image/png,image/webp,image/gif" data-on-change="waAttach" aria-label="Ajouter une photo ou un GIF" ${raw(!canSend||s.confirm||s.waUploading||s.offline?'disabled':'')}></label>
-          <span class="wa-upload-note" role="status">${s.waUploading===sel.id?'Ajout de l’image…':'10 Mo · GIF 30 s max.'}</span>
-        </div>
         ${when(s.waEmoji,()=>html`<div class="wa-emoji" role="group" aria-label="Emojis">${['😀','😊','😂','❤️','👍','🙏','🎉','👋','✅','🤔','😘','🔥','🙌','🙂','😅','💪'].map(emoji=>html`<button data-on-click="waEmojiInsert" data-emoji="${emoji}" aria-label="${emoji}">${emoji}</button>`)}</div>`)}
-        <div class="wa-input">
-          <textarea data-key="draft-${sel.id}" data-on-input="draft" ${raw(s.confirm?.messageId === sel.id ? 'readonly' : '')} rows="2" aria-label="Réponse à ${name}"
-            placeholder="Écrire à ${name.split(' ')[0]} depuis ${sel.account}…">${draft}</textarea>
+        <div class="wa-compose-row">
+          <label class="wa-attach-control" title="Ajouter une photo ou un GIF · 10 Mo · GIF 30 s maximum">${icon('plus')}<input type="file" accept="image/jpeg,image/png,image/webp,image/gif" data-on-change="waAttach" aria-label="Ajouter une photo ou un GIF" ${raw(!canSend||s.confirm||s.waUploading||s.offline?'disabled':'')}></label>
+          <div class="wa-input">
+            <textarea data-key="draft-${sel.id}" data-on-input="draft" ${raw(s.confirm?.messageId === sel.id ? 'readonly' : '')} rows="1" aria-label="Réponse à ${name}"
+              placeholder="Écrire un message…">${draft}</textarea>
+            <button class="icon-btn wa-emoji-toggle" data-on-click="waEmojiToggle" aria-label="Ajouter un emoji" aria-expanded="${!!s.waEmoji}" ${raw(s.confirm?'disabled':'')}>${icon('smile')}</button>
+          </div>
+          <button class="btn wa-send" data-on-click="sendPreview" aria-label="${needsReview(s,sel.id)?'Aperçu':'Envoyer'}" title="${canSend ? needsReview(s,sel.id)?'Vérifier le message exact avant l’envoi':'Envoyer le message rédigé' : 'L’envoi demande la permission Envoi pour ce compte'}"
+            ${raw(canSend && (draft.trim() || s.waAttachments?.[sel.id]) && !s.waUploading && !tooLong && !s.confirm && !conflict && !s.offline ? '' : 'disabled')}>${needsReview(s,sel.id)?icon('check'):icon('send')}</button>
         </div>
-        <div class="wa-actions">
-
-          <span class="${cls('wa-status ellipsis', (tooLong || st?.tone === 'error') && 'is-error', st?.tone === 'warn' && 'is-warn')}" role="status">${tooLong ? `${draft.length} / ${WA_MAX} caractères : trop long` : [status, hint].filter(Boolean).join(' · ')}</span>
-          <button class="btn btn-ghost" data-on-click="saveDraft">Enregistrer</button>
-          <button class="btn wa-send" data-on-click="sendPreview" title="${canSend ? needsReview(s,sel.id)?'Vérifier le message exact avant l’envoi':'Envoyer le message rédigé' : 'L’envoi demande la permission Envoi pour ce compte'}"
-            ${raw(canSend && (draft.trim() || s.waAttachments?.[sel.id]) && !s.waUploading && !tooLong && !s.confirm && !conflict && !s.offline ? '' : 'disabled')}>${needsReview(s,sel.id)?'Aperçu':'Envoyer'}</button>
-        </div>
+        <span class="${cls('wa-status ellipsis', (tooLong || st?.tone === 'error') && 'is-error', st?.tone === 'warn' && 'is-warn')}" role="status">${s.waUploading===sel.id?'Ajout de l’image…':tooLong ? `${draft.length} / ${WA_MAX} caractères : trop long` : [st && ['error','warn'].includes(st.tone)?status:'', hint].filter(Boolean).join(' · ')}</span>
       </footer>
     </section>`;
 }
