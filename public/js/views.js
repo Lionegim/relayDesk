@@ -430,9 +430,9 @@ function whatsappView(s, v, sel) {
   const tooLong = draft.length > WA_MAX;
   const folderName = s.data.folders.find(f => f.id === sel.folderId)?.name;
   const st = draftState(s, v, sel.id, draft);
-  const status = st ? st.label : sel.draft ? `Brouillon enregistré à ${timeOf(sel.draft.savedAt)}` : 'Brouillon';
+  const status = st && st.label !== 'Brouillon' ? st.label : sel.draft ? `Brouillon enregistré à ${timeOf(sel.draft.savedAt)}` : '';
   const conflict = !!(s.draftMeta || {})[sel.id]?.conflict;
-  const hint = full?.group ? 'Groupe : lecture et IA · envoi non activé' : !canSend ? 'Envoi non autorisé pour ce compte' : s.confirm ? 'Vérification en cours' : needsReview(s,sel.id)?'Aperçu requis pour ce brouillon':'Envoi au clic sur Envoyer';
+  const hint = full?.group ? 'Groupe : lecture et IA · envoi non activé' : !canSend ? 'Envoi non autorisé pour ce compte' : '';
   return html`
     <section class="wa" aria-label="Discussion WhatsApp avec ${name}">
       <header class="wa-head">
@@ -468,7 +468,7 @@ function whatsappView(s, v, sel) {
         </div>
         <div class="wa-actions">
 
-          <span class="${cls('wa-status ellipsis', (tooLong || st?.tone === 'error') && 'is-error', st?.tone === 'warn' && 'is-warn')}" role="status">${tooLong ? `${draft.length} / ${WA_MAX} caractères : trop long` : `${status} · ${hint}`}</span>
+          <span class="${cls('wa-status ellipsis', (tooLong || st?.tone === 'error') && 'is-error', st?.tone === 'warn' && 'is-warn')}" role="status">${tooLong ? `${draft.length} / ${WA_MAX} caractères : trop long` : [status, hint].filter(Boolean).join(' · ')}</span>
           <button class="btn btn-ghost" data-on-click="saveDraft">Enregistrer</button>
           <button class="btn wa-send" data-on-click="sendPreview" title="${canSend ? needsReview(s,sel.id)?'Vérifier le message exact avant l’envoi':'Envoyer le message rédigé' : 'L’envoi demande la permission Envoi pour ce compte'}"
             ${raw(canSend && (draft.trim() || s.waAttachments?.[sel.id]) && !s.waUploading && !tooLong && !s.confirm && !conflict && !s.offline ? '' : 'disabled')}>${needsReview(s,sel.id)?'Aperçu':'Envoyer'}</button>
