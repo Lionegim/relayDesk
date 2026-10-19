@@ -6,7 +6,7 @@ Plan établi avec Claude le 19 octobre 2026. Les deux décisions confirmées son
 
 ## État de réalisation
 
-Les lots 1 à 4 sont implémentés et vérifiés avec des données fictives. Le lot 4 ajoute les clients OAuth Web confidentiels, les retours HTTPS fixes et la reconnexion des comptes sans perte de brouillons ni de mémoire. Les clients Google/Entra réels restent à configurer sur le futur domaine ; la recette fournisseur est simulée, sans modifier les comptes du Mac. Keycloak a été choisi pour la future identité du propriétaire ; l’application exige l’émetteur, le sujet stable et le niveau MFA configurés explicitement. Le serveur Keycloak réel, son client et l’identité du propriétaire ne sont pas encore configurés. Les tests OIDC emploient des jetons signés et un émetteur simulé ; aucun déploiement ni transfert de données réelles n’a été effectué. Les configurations et limites actuelles sont détaillées dans `docs/auth.md`, `docs/oauth-web.md` et `docs/docker.md`.
+Les lots 1 à 5 sont implémentés et vérifiés avec des données fictives. Le lot 4 ajoute les clients OAuth Web confidentiels, les retours HTTPS fixes et la reconnexion des comptes sans perte de brouillons ni de mémoire. Les clients Google/Entra réels restent à configurer sur le futur domaine ; la recette fournisseur est simulée, sans modifier les comptes du Mac. Keycloak a été choisi pour la future identité du propriétaire ; l’application exige l’émetteur, le sujet stable et le niveau MFA configurés explicitement. Le serveur Keycloak réel, son client et l’identité du propriétaire ne sont pas encore configurés. Les tests OIDC emploient des jetons signés et un émetteur simulé ; aucun déploiement ni transfert de données réelles n’a été effectué. Les configurations et limites actuelles sont détaillées dans `docs/auth.md`, `docs/oauth-web.md`, `docs/docker.md` et `docs/mobile.md`.
 
 ## Architecture retenue
 
@@ -89,6 +89,8 @@ Contrôler le statut réel de l’application Google, ses portées Gmail et les 
 **Fichiers prévus :** `src/providers/gmail/oauth.js`, `src/providers/outlook/oauth.js`, runtime, routes OAuth et documentation de configuration.
 
 ### Lot 5 Interface mobile et PWA
+
+**Implémenté sur données fictives le 19 octobre 2026.** Navigation à un panneau jusqu’à 1000 pixels, pagination des listes et historiques, sauvegarde automatique et résolution explicite des conflits de brouillons, aperçu versionné, manifeste et cache public limité. Les 275 tests passent sur Mac et Linux, la recette Docker est validée et le parcours Chrome mobile a été vérifié, y compris hors ligne et deux appareils simulés. La recette sur iPhone/Android réels ci-dessous reste nécessaire avant migration. Voir `docs/mobile.md`.
 
 Adapter l’interface existante à une navigation tactile à un écran : liste des conversations, lecture, rédaction, assistant. Prévoir le bouton retour, le clavier mobile, les zones de sécurité de l’écran et le compositeur fixe. Ajouter la pagination des listes et de l’historique, sans supprimer les messages stockés ni réduire artificiellement le contexte utilisable par l’IA.
 

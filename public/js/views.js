@@ -752,7 +752,6 @@ function disconnectDialog(c) {
           <h3>Déconnecter ${c.name} ?</h3>
           <p class="muted" style="margin:0;font-size:14px;line-height:1.55">Les messages importés de ce compte seront retirés de Relay. Ils restent chez leur fournisseur. Le jeton conservé par Relay sera supprimé.</p>
           ${when(c.error, () => html`<div class="alert">${c.error}</div>`)}
-          ${when(offline && !c.error, () => html`<div class="alert">Hors ligne : l’envoi reprendra seulement quand tu le confirmeras en ligne.</div>`)}
         </div>
         <div class="dialog-foot">
           <div class="grow"></div>

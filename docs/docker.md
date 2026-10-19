@@ -93,7 +93,7 @@ Elle vérifie les droits non-root, la lecture seule, l’absence de capacités, 
 
 Validation initiale des lots 1 et 2 du 19 octobre 2026 : **191 tests réussis sur Mac et dans le stage Linux Node 24**, puis recette Docker réussie. Un audit du contexte de construction (97 fichiers autorisés) a aussi confirmé l’exclusion de faux fichiers `.env`, clés, archives, bases, sauvegardes et exports placés sous un répertoire source de test. Le contexte réel n’inclut que les sources et ressources autorisées.
 
-La conservation d’identifiants WhatsApp est vérifiée avec de fausses valeurs chiffrées et de faux sockets. Aucune session WhatsApp réelle n’a été reprise dans Docker. Le lot 3 ajoute l’accès propriétaire via OIDC (voir `docs/auth.md`). Le lot 4 prépare les connexions Web avec des fournisseurs simulés (voir `docs/oauth-web.md`). La configuration Keycloak et des clients Web réels, les lots 5 à 7, le déploiement et la migration restent à réaliser.
+La conservation d’identifiants WhatsApp est vérifiée avec de fausses valeurs chiffrées et de faux sockets. Aucune session WhatsApp réelle n’a été reprise dans Docker. Le lot 3 ajoute l’accès propriétaire via OIDC (voir `docs/auth.md`). Le lot 4 prépare les connexions Web avec des fournisseurs simulés (voir `docs/oauth-web.md`). La configuration Keycloak et des clients Web réels, les lots 6 et 7, le déploiement et la migration restent à réaliser.
 
 
 ## Configuration locale
@@ -129,3 +129,9 @@ Le Compose hébergé impose `MAIL_OAUTH_MODE=web` et monte les quatre fichiers G
 La recette automatisée simule Google, Graph, le serveur de jetons et l’identité du propriétaire. Elle vérifie les retours HTTPS fixes dans la bonne session et le bon profil, la reconnexion sans perte de brouillon ou mémoire, le refus des anciens jetons bureau, la rotation persistée et la reprise après redémarrage. Les connexions en attente avant un redémarrage doivent être recommencées. Aucun serveur public, certificat réel ni consentement Google/Entra n’est configuré par cette recette. Voir `docs/oauth-web.md` pour la configuration future.
 
 Validation après lot 4 : **233 tests réussis sur Mac et Linux**, puis recette Docker hors réseau réussie (arrêt, reprise et restauration fictive). Le Compose hébergé a été analysé avec des valeurs fictives et sans démarrer ses services.
+
+## Interface mobile (lot 5)
+
+Le lot 5 ajoute la navigation tactile, la pagination et les brouillons versionnés entre appareils, ainsi qu’un manifeste PWA et un cache limité aux ressources publiques. Voir `docs/mobile.md`. Les API, QR, messages, brouillons et HTML privé ne sont pas mis en cache par le service worker ; les ressources statiques génériques sont publiques sans donner accès aux données.
+
+Validation après lot 5 : **275 tests réussis sur Mac et Linux**, puis recette Docker hors réseau réussie, y compris persistance et restauration de la version des brouillons. La recette Chrome utilise exclusivement une base éphémère et des fournisseurs simulés. La vérification sur téléphones physiques et sur le futur domaine HTTPS reste à réaliser.

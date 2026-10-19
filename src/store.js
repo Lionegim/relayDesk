@@ -105,7 +105,7 @@ export function createStore(db) {
       const r=row(id),m=toMessage(r,true);
       const revision=fingerprint([id,r.account_id,r.external_id,r.sort_at,r.message_count,r.trail]);
       if (r.channel === 'whatsapp' && r.account_id && r.external_id) {
-        const select="SELECT m.rowid AS entry_id,m.from_me,m.ts,m.text,m.author_jid,COALESCE(c.name,NULLIF(m.sender_name,'Participant'),m.sender_name) AS sender_name FROM whatsapp_messages m LEFT JOIN whatsapp_chats c ON c.account_id=m.account_id AND c.chat_jid=m.author_jid WHERE m.account_id=? AND m.chat_jid=?";
+        const select="SELECT m.rowid AS entry_id,m.msg_id,m.from_me,m.ts,m.text,m.author_jid,COALESCE(c.name,NULLIF(m.sender_name,'Participant'),m.sender_name) AS sender_name FROM whatsapp_messages m LEFT JOIN whatsapp_chats c ON c.account_id=m.account_id AND c.chat_jid=m.author_jid WHERE m.account_id=? AND m.chat_jid=?";
         const latest=q(select+' ORDER BY m.ts DESC,m.rowid DESC LIMIT 1').get(r.account_id,r.external_id);
         let recent;
         if(options) {
@@ -125,13 +125,14 @@ export function createStore(db) {
           const who = q('SELECT name FROM whatsapp_chats WHERE account_id = ? AND chat_jid = ?').get(r.account_id, r.external_id)?.name || m.subject.replace(/^WhatsApp · /, '');
           m.trail = recent.slice(1).map(t => {
             const from = t.from_me ? 'Moi' : m.group ? t.sender_name || 'Participant' : who;
-            return { from, initials: from.split(/\s+/).slice(0, 2).map(w => w[0] || '').join('').toUpperCase(), fromMe: !!t.from_me, at: t.ts, body: t.text };
+            return { id:t.msg_id, from, initials: from.split(/\s+/).slice(0, 2).map(w => w[0] || '').join('').toUpperCase(), fromMe: !!t.from_me, at: t.ts, body: t.text };
           });
         }
       } else if(options) {
         const {limit,c}=historyPage(options,revision,'email'),offset=c?.offset ?? 0;
         if(!Number.isSafeInteger(offset) || offset<0) throw badRequest('Curseur invalide');
-        const all=m.trail;m.trail=all.slice(offset,offset+limit);const hasMore=offset+limit<all.length;
+        const occurrences=new Map();
+        const all=[...m.trail].reverse().map(t=>{const key=fingerprint([id,t.at,t.from,t.fromMe,t.body]),n=(occurrences.get(key) || 0)+1;occurrences.set(key,n);return{...t,id:t.id ?? `${key}:${n}`};}).reverse();m.trail=all.slice(offset,offset+limit);const hasMore=offset+limit<all.length;
         m.history={hasMore,nextCursor:hasMore?encodeCursor({revision,kind:'email',offset:offset+limit}):null};
       }
       return m;

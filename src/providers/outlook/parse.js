@@ -72,7 +72,7 @@ export function conversationToRecord(conversationId, messages, { ownEmail, folde
     subject: clean(msgs[0].subject || last.subject) || '(Sans objet)',
     preview: clean(last.bodyPreview),
     body: bodyText(last),
-    trail: msgs.slice(0, -1).reverse().map(m => { const a = who(m); return { from: a.name, initials: initialsOf(a.name), at: at(m), body: bodyText(m) }; }),
+    trail: msgs.slice(0, -1).reverse().map(m => { const a = who(m); return { id:m.id, from: a.name, initials: initialsOf(a.name), at: at(m), body: bodyText(m) }; }),
     count: msgs.length,
     labelId,
     reply: replyMeta(msgs),

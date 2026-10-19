@@ -67,9 +67,12 @@ function render() {
 // Corps et fil sont chargés à la demande : l'état global ne contient que la liste.
 const loading = new Set();
 const compositionBuffers = new Map();
+const compositionsByCid=new Map();
 let selectionVersion = 0, previewRequest = 0;
 function rememberComposition() {
-  if (state.newMail?.messageId) compositionBuffers.set(state.newMail.messageId, state.newMail);
+  const c=state.newMail;
+  if(c?.cid!=null) compositionsByCid.set(c.cid,c);
+  if(c?.messageId) compositionBuffers.set(c.messageId,c);
 }
 // Chaque nouveau message a une identité locale (cid) : un retour réseau ne s'applique qu'à sa propre composition.
 let compositionSeq = 0;
@@ -222,7 +225,7 @@ function serverDraft(full) {
 const savedDraft = id => state.draftMeta[id]?.saved || serverDraft(state.details[id]);
 const draftText = id => state.drafts[id] ?? savedDraft(id).text;
 function localDraft(id) {
-  const base = savedDraft(id), mode = (state.selectedId === id && state.composing) || base.mode;
+  const base=savedDraft(id),mode=state.draftMeta[id]?.localMode ?? ((state.selectedId===id && state.composing) || base.mode);
   return { text: draftText(id), mode, to: mode === 'forward' ? (state.composeTo[id] ?? base.to ?? '') : null };
 }
 const sameDraft = (a, b) => !!a && !!b && a.text === b.text && a.mode === b.mode && a.to === b.to;
@@ -243,7 +246,8 @@ function syncDraftMeta(id, full) {
   const drafts = { ...state.drafts }, composeTo = { ...state.composeTo };
   delete drafts[id]; delete composeTo[id];
   state.drafts = drafts; state.composeTo = composeTo;
-  state.draftMeta = { ...state.draftMeta, [id]: { ...meta, version, saved, savedText: saved.text, savedAt: full.draft?.savedAt, conflict: false, error: null } };
+  if(state.selectedId===id && state.composing) state.composing=saved.mode;
+  state.draftMeta = { ...state.draftMeta, [id]: { ...meta, version, saved, localMode:undefined, savedText: saved.text, savedAt: full.draft?.savedAt, conflict: false, error: null } };
 }
 
 function scheduleAutosave(id) {
@@ -292,7 +296,7 @@ async function resolveConflict(id, keepMine) {
   set(s => {
     const drafts = { ...s.drafts }, composeTo = { ...s.composeTo };
     delete drafts[id]; delete composeTo[id];
-    return { drafts, composeTo, draftMeta: { ...s.draftMeta, [id]: { version, saved, savedText: saved.text, savedAt: full.draft?.savedAt, conflict: false, error: null } } };
+    return { drafts, composeTo, ...(state.selectedId===id && state.composing?{composing:saved.mode}:{}), draftMeta: { ...s.draftMeta, [id]: { version, saved, savedText: saved.text, savedAt: full.draft?.savedAt, conflict: false, error: null } } };
   });
 }
 
@@ -606,21 +610,15 @@ function startSync() {
 // Jamais d'écriture automatique après une erreur, un conflit, ou hors ligne.
 let newMailTimer = null, newMailFlight = null;
 const accountKnown = id => state.data?.profiles?.some(p => p.accounts.some(a => a.id === id));
-const compositionFromServer = full => newComposition({ messageId: full.id, version: versionOf(full), accountId: full.accountId, to: full.draft?.to || '', cc: full.draft?.cc || '', subject: full.subject || '', text: full.draft?.text || '', savedAt: full.draft?.savedAt, synced: full.draft?.synced });
-function findComposition(cid) {
-  if (state.newMail?.cid === cid) return state.newMail;
-  for (const c of compositionBuffers.values()) if (c.cid === cid) return c;
-  return null;
-}
-// Applique un retour à la composition qui l'a demandé : affichée, ou gardée en mémoire après fermeture ou
-// changement de profil. `fallback` : instantané pris au départ, si la composition n'est plus nulle part.
-function patchComposition(cid, patch, fallback = null) {
-  const current = state.newMail?.cid === cid;
-  const kept = [...compositionBuffers.values()].find(c => c.cid === cid);
-  if (current) set(s => ({ newMail: { ...s.newMail, ...patch } }));
-  const base = kept || (!current && fallback);
-  const id = patch.messageId ?? base?.messageId;
-  if (base && id && accountKnown(base.accountId)) compositionBuffers.set(id, { ...base, ...(current ? state.newMail : {}), ...patch });
+const compositionFromServer=full=>{const c=newComposition({ messageId: full.id, version: versionOf(full), accountId: full.accountId, to: full.draft?.to || '', cc: full.draft?.cc || '', subject: full.subject || '', text: full.draft?.text || '', savedAt: full.draft?.savedAt, synced: full.draft?.synced });return {...c,saved:mailFields(c)};};
+// Le buffer existe dès sa création locale, avant même que POST /drafts fournisse un identifiant.
+function patchComposition(cid,patch,fallback=null) {
+  const current=state.newMail?.cid===cid;
+  const base=current?state.newMail:compositionsByCid.get(cid) || [...compositionBuffers.values()].find(c=>c.cid===cid) || fallback;
+  if(!base) return;
+  const next={...base,...patch};
+  if(current) set({newMail:next});
+  if(accountKnown(next.accountId)) {compositionsByCid.set(cid,next);if(next.messageId)compositionBuffers.set(next.messageId,next);}
 }
 function scheduleNewMailSave() {
   clearTimeout(newMailTimer);
@@ -643,7 +641,7 @@ async function saveNewMail({ auto = false } = {}) {
   // Rien de nouveau : la version connue suffit (aperçu sans écriture inutile).
   if (c.messageId && !mailChanged(c) && !c.saveError) return { c, input: withBase({ mode: 'new', ...mailFields(c) }, c.version) };
   newMailFlight = writeNewMail(c);
-  try { return await newMailFlight; } finally { newMailFlight = null; if (state.newMail?.cid === c.cid) scheduleNewMailSave(); }
+  try { return await newMailFlight; } finally { newMailFlight=null;scheduleNewMailSave(); }
 }
 async function writeNewMail(start) {
   const cid = start.cid, sent = mailFields(start);
@@ -685,10 +683,10 @@ async function resolveNewMail(keepMine) {
   if (state.newMail?.cid !== cid) return; // fermée ou remplacée entre-temps : rien n'est appliqué
   const server = compositionFromServer(full);
   if (keepMine) {
-    set({ newMail: { ...state.newMail, version: server.version, saved: mailFields(server), saving: false, conflict: false, saveError: null } });
+    patchComposition(cid,{version:server.version,saved:mailFields(server),saving:false,conflict:false,saveError:null});
     return saveNewMail();
   }
-  set({ newMail: { ...state.newMail, ...mailFields(server), version: server.version, saved: mailFields(server), savedAt: server.savedAt, synced: server.synced, saving: false, conflict: false, saveError: null, error: null } });
+  patchComposition(cid,{...mailFields(server),version:server.version,saved:mailFields(server),savedAt:server.savedAt,synced:server.synced,saving:false,conflict:false,saveError:null,error:null});
 }
 
 // ---------- Actions ----------
@@ -707,7 +705,8 @@ const actions = {
     if (state.newMail?.accountId && accounts.some(a => a.id === state.newMail.accountId)) return set({ newMailOpen: true });
     const accountId = accounts.find(a => a.id === derive(state).sel?.accountId)?.id ?? accounts[0]?.id ?? null;
     rememberComposition();
-    set({ newMailOpen: true, newMail: newComposition({ accountId }) });
+    const pending=[...compositionsByCid.values()].reverse().find(c=>!c.messageId && accounts.some(a=>a.id===c.accountId) && (mailChanged(c) || c.saving));
+    set({newMailOpen:true,newMail:pending || newComposition({accountId})});
   },
   newMailField: ({ field }, e) => {
     const c = state.newMail;
@@ -873,7 +872,8 @@ const actions = {
   // Lecture
   compose: ({ mode }) => {
     if (derive(state).sel?.channel === 'whatsapp' && mode !== 'reply') return;
-    set({ composing: mode });
+    set({ composing:mode });
+    setMeta(state.selectedId,{localMode:mode});
     if (derive(state).sel?.channel !== 'whatsapp') pushLayer('compose');
     const id = state.selectedId;
     if (changed(id)) scheduleAutosave(id);
@@ -937,6 +937,7 @@ const actions = {
         try { history.replaceState?.({ relay: 'compose', depth: layers.length }, ''); } catch { /* historique indisponible */ }
       } else { layers.pop(); try { history.back?.(); } catch { /* sans historique */ } layers.push('__skip'); }
     }
+    setMeta(id,{localMode:'reply'});
     set(s => ({ drafts: { ...s.drafts, [id]: text }, ai: null, composing: 'reply' }));
     scheduleAutosave(id);
   },
@@ -1025,23 +1026,27 @@ const actions = {
     // Envoi confirmé par le serveur : plus rien ici ne doit inviter à renvoyer.
     const id = c.messageId;
     compositionBuffers.delete(id);
+    for(const [cid,draft] of compositionsByCid) if(draft.messageId===id)compositionsByCid.delete(cid);
     // Texte saisi après l'aperçu : jamais effacé, il reste local et non enregistré (le brouillon envoyé a disparu).
     const newer = !c.newMail && !sameDraft(localDraft(id), { text: c.input.text, mode: c.input.mode, to: c.input.to ?? null });
-    if (!newer) clearTimeout(draftTimers.get(id));
+    clearTimeout(draftTimers.get(id));
     if (layers.at(-1) === 'confirm') { layers.pop(); try { history.back?.(); } catch { /* sans historique */ } layers.push('__skip'); }
     // L'entrée d'historique du compositeur devient neutre : le retour suivant ne rouvre ni ne ferme rien d'autre.
     if (layers.includes('compose')) layers[layers.lastIndexOf('compose')] = '__skip';
     set(s => {
       const drafts = { ...s.drafts }, composeTo = { ...s.composeTo }, details = { ...s.details }, draftMeta = { ...s.draftMeta };
       if (!newer) { delete drafts[id]; delete composeTo[id]; }
-      delete details[id]; delete draftMeta[id];
+      delete details[id];
+      if(newer) draftMeta[id]={...draftMeta[id],saving:false,again:false,conflict:true,error:null};
+      else delete draftMeta[id];
       return { confirm: null, composing: newer ? s.composing : null, drafts, composeTo, details, draftMeta, ...(c.newMail ? { newMail: null, newMailOpen: false, selectedId: s.selectedId === id ? null : s.selectedId, data: { ...s.data, messages: s.data.messages.filter(m => m.id !== id) } } : {}) };
     });
     const m = state.data.messages.find(x => x.id === id);
     if (m) m.draft = null;
-    if (newer) scheduleAutosave(id);
+    // La version après envoi n'est pas connue : jamais adopter silencieusement une écriture distante ultérieure.
+    // Le buffer conservé devra être réconcilié explicitement avant toute nouvelle sauvegarde.
     const sent = r.draftRemoved === false ? 'Message envoyé. Le brouillon local est effacé ; son brouillon chez le fournisseur est conservé, supprime-le si besoin.' : 'Message envoyé.';
-    notify(newer ? `${sent} Le texte modifié depuis la vérification est conservé, non enregistré.` : sent);
+    notify(newer ? `${sent} Le texte modifié depuis la vérification est conservé : choisis la version à reprendre avant de l’enregistrer.` : sent);
     try {
       await reload({ refresh: true });
     } catch {
@@ -1055,6 +1060,7 @@ const actions = {
     try {
       await api.disconnectAccount(c.accountId);
       selectionVersion++;
+      for(const [cid,draft] of compositionsByCid) if(draft.accountId===c.accountId)compositionsByCid.delete(cid);
       for (const [id, draft] of compositionBuffers) if (draft.accountId === c.accountId) compositionBuffers.delete(id);
       if (state.newMail?.accountId === c.accountId) set({ newMail: null, newMailOpen: false });
       await reload({ refresh: true });
@@ -1127,7 +1133,7 @@ globalThis.addEventListener?.('offline', () => set({ offline: true }));
 globalThis.addEventListener?.('online', () => { set({ offline: false }); if (state.data) reload({ refresh: true }).catch(() => {}); else if (state.loadError === 'offline') location.reload(); });
 // Texte pas encore enregistré : le navigateur demande confirmation avant de quitter la page.
 globalThis.addEventListener?.('beforeunload', e => {
-  if (Object.keys(state.draftMeta).some(id => dirty(Number(id))) || state.newMail && (state.newMail.saving || state.newMail.conflict || mailChanged(state.newMail))) { e.preventDefault(); e.returnValue = ''; }
+  if (Object.keys(state.draftMeta).some(id=>dirty(Number(id))) || [...compositionsByCid.values(),state.newMail].some(c=>c && (c.saving || c.conflict || mailChanged(c)))) { e.preventDefault(); e.returnValue = ''; }
 });
 
 api.session()

@@ -115,7 +115,7 @@ export function threadToRecord(thread, { ownEmail, labelNames = {}, preferredLab
     body: bodyText(last),
     trail: msgs.slice(0, -1).reverse().map(m => {
       const a = who(m);
-      return { from: a.name, initials: initialsOf(a.name), at: Number(m.internalDate), body: bodyText(m) };
+      return { id:m.id, from: a.name, initials: initialsOf(a.name), at: Number(m.internalDate), body: bodyText(m) };
     }),
     count: msgs.length,
     labelId: userLabel || null,

@@ -563,7 +563,7 @@ test('aperçu : retour écarté si le brouillon change pendant l’attente ; env
   await tick(6);
   assert.equal(u.calls.send.at(-1)[1].text, 'Texte A');
   assert.equal(u.s().drafts[1], 'Texte B', 'texte plus récent conservé');
-  assert.ok(u.timers.some(t => t.fn && t.ms === 1500), 'il sera enregistré');
+  assert.equal(u.s().draftMeta[1].conflict,true,'une résolution explicite est requise après l’envoi');
 });
 
 test('aperçu : aussi écarté si la sélection change pendant l’attente', async () => {
@@ -656,4 +656,37 @@ test('vues : nouveau message en conflit avec Recharger / Garder ma version ; lec
   assert.match(dirty, /Modifications non enregistrées/);
   const waiting = ctx.app(...viewState({ confirm: { kind: 'send', messageId: 1, busy: true, preview: null } }));
   assert.match(waiting, /data-key="draft-1" data-on-input="draft" readonly/);
+});
+
+
+test('vue de déconnexion : la confirmation reste accessible après les contrôles hors ligne',()=>{
+ const out=ctx.app(...viewState({confirm:{kind:'disconnect',name:'Compte fictif',accountId:1,busy:false},offline:true}));
+ assert.match(out,/Déconnecter Compte fictif/);assert.match(out,/data-on-click="confirmDisconnect"/);assert.doesNotMatch(out,/l’envoi reprendra/);
+});
+
+
+test('transfert : naviguer avant autosave conserve mode et destinataire',async()=>{
+ const u=await app();u.c.act.selectThread({id:1});await tick(6);u.c.act.compose({mode:'forward'});u.c.act.composeTo({}, {target:{value:'paul@example.test'}});u.c.act.draft({}, {target:{value:'Transfert'}});u.c.act.selectThread({id:2});await tick(6);await u.runTimers();const save=u.calls.saveDraft.find(c=>c.id===1);assert.deepEqual(plain(save.input),{text:'Transfert',mode:'forward',to:'paul@example.test',baseVersion:7});
+});
+
+const twoProfiles=()=>[...profiles,{id:'other',name:'Autre',initials:'A',accounts:[{id:2,name:'Autre mail',channel:'email',svc:'gmail',perms:['read','drafts','send']}]}];
+test('création différée : texte saisi avant identifiant conservé après remplacement de composition',async()=>{
+ const data={...page([row(1),row(50,{kind:'new'})]),profiles:twoProfiles()},u=await app({state:data});u.api.onState=async()=>data;u.c.act.newMessage();const create=deferred();u.api.onCreate=()=>create.p;field(u,'text','A');await u.runTimers();field(u,'text','B plus récent');u.c.act.closeNewMail();u.c.act.selectProfile({id:'other'});await tick(6);u.c.act.newMessage();create.resolve({id:50,draftVersion:4});await tick(8);u.c.act.selectProfile({id:'perso'});await tick(6);await u.c.act.selectThread({id:50});await tick(6);assert.equal(u.s().newMail.text,'B plus récent');assert.equal(u.s().newMail.saved.text,'A');assert.equal(u.s().newMail.version,5);
+});
+
+test('autosave : composition B reprend lorsque l’écriture de A libère la file',async()=>{
+ const data={...page([row(1),row(50,{kind:'new'})]),profiles:twoProfiles()},u=await app({state:data});u.api.onState=async()=>data;let id=50;u.api.onCreate=async()=>({id:id++,draftVersion:4});const first=deferred();u.api.onSave=(id,input)=>id===50?first.p:Promise.resolve({text:input.text,version:input.baseVersion+1,savedAt:'x'});u.c.act.newMessage();field(u,'text','A');await u.runTimers();assert.equal(u.calls.saveDraft.length,1);u.c.act.selectProfile({id:'other'});await tick(6);u.c.act.newMessage();field(u,'text','B');await u.runTimers();assert.equal(u.calls.saveDraft.length,1);first.resolve({text:'A',version:5,savedAt:'x'});await tick(8);await u.runTimers();assert.equal(u.calls.saveDraft.length,2);assert.equal(u.calls.saveDraft[1].input.text,'B');assert.equal(u.s().newMail.saved.text,'B');
+});
+
+test('brouillon existant : état enregistré repris sans écriture inutile',async()=>{
+ const u=await app({state:page([row(50,{kind:'new'})])});u.api.onMessage=async id=>({id,accountId:1,subject:'Objet',draftVersion:8,draft:{text:'Déjà enregistré',to:'a@example.test',cc:'',savedAt:'x',synced:true}});await u.c.act.selectThread({id:50});await tick(6);assert.equal(u.s().newMail.saved.text,'Déjà enregistré');await u.c.act.saveNewMail();await tick(6);assert.equal(u.calls.saveDraft.length,0);
+});
+
+
+test('buffer plus récent après envoi : ne reprend jamais automatiquement la version distante pour l’écraser',async()=>{
+ const u=await app();u.c.act.selectThread({id:1});await tick(6);u.c.act.compose({mode:'reply'});u.c.act.draft({}, {target:{value:'A validé'}});await u.c.act.sendPreview();u.c.act.draft({}, {target:{value:'B local plus récent'}});u.api.onState=async()=>page([row(1,{draftVersion:20}),row(2)]);u.api.onMessage=async id=>({id,body:'Corps',trail:[],draftVersion:20,draft:{text:'C distant',mode:'reply',version:20}});await u.c.act.confirmSend();await tick(8);await u.runTimers();assert.equal(u.s().drafts[1],'B local plus récent');assert.equal(u.s().draftMeta[1].conflict,true);assert.ok(!u.calls.saveDraft.some(c=>c.input.text==='B local plus récent'),'aucun écrasement automatique de C');await u.c.act.draftKeepMine({id:1});await tick(6);assert.equal(u.calls.saveDraft.at(-1).input.text,'B local plus récent');assert.equal(u.calls.saveDraft.at(-1).input.baseVersion,20,'reprise uniquement après choix explicite');
+});
+
+test('résolution nouveau message : les buffers nettoyés ne gardent pas une alerte de fermeture',async()=>{
+ const u=await app();u.c.act.newMessage();u.api.onSave=async()=>{throw conflictError();};field(u,'text','Ancien');await u.runTimers();u.api.onMessage=async id=>({id,accountId:1,subject:'Objet serveur',draftVersion:10,draft:{text:'Texte serveur',to:'',cc:'',savedAt:'x'}});await u.c.act.newMailReload();let blocked=false;u.listeners.beforeunload({preventDefault(){blocked=true;}});assert.equal(blocked,false);
 });
