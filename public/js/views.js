@@ -622,7 +622,7 @@ const checkbox = (on, action, id, label) => html`
 function whatsappConnectDialog(s) {
  const c=s.c,profile=s.data.profiles.find(p=>p.id===c.profile),done=c.step==='done';
  return html`<div class="overlay" data-on-click="closeConnect"><section class="dialog wa-connect-dialog" role="dialog" aria-modal="true" aria-label="Connexion WhatsApp" data-on-click="noop">
-  <header class="wa-connect-heading"><img class="wa-brand-wordmark" src="/icons/whatsapp-wordmark-black.svg" width="156" height="36" alt="WhatsApp"><button class="close-btn" data-on-click="closeConnect" aria-label="Fermer">×</button></header>
+  <header class="wa-connect-heading"><div class="wa-connect-brand"><span class="network-eyebrow">VOTRE MESSAGERIE, DANS RELAY DESK</span><img class="wa-brand-wordmark" src="/icons/whatsapp-wordmark-black.svg" width="156" height="36" alt="WhatsApp"></div><button class="close-btn" data-on-click="closeConnect" aria-label="Fermer">×</button></header>
   <div class="dialog-body">
    <p class="muted" style="margin:0">${done?'Connecté au profil':'Connexion au profil'} <strong>${profile?.name || ''}</strong></p>
    ${done ? html`<div class="wa-connect-success" role="status"><strong>WhatsApp est connecté</strong><p>${c.real?.threads || 0} conversations reçues. La synchronisation continue en arrière-plan.</p></div>` : html`
@@ -657,7 +657,7 @@ function connectWizard(s) {
 
   return html`
     <div class="overlay" data-on-click="closeConnect">
-      <div class="dialog" role="dialog" aria-modal="true" aria-label="Ajouter un canal" data-on-click="noop">
+      <div class="dialog connection-dialog" role="dialog" aria-modal="true" aria-label="Ajouter un canal" data-on-click="noop">
         <div class="dialog-steps">
           ${STEPS.map(([, label], i) => {
             const done = i < si || c.step === 'done', on = i === si && c.step !== 'done';
@@ -797,7 +797,7 @@ function connectWizard(s) {
 function disconnectDialog(c) {
   return html`
     <div class="overlay" data-on-click="confirmCancel">
-      <div class="dialog dialog-sm" role="alertdialog" aria-modal="true" aria-label="Déconnecter ${c.name}" data-on-click="noop">
+      <div class="dialog dialog-sm account-disconnect" role="alertdialog" aria-modal="true" aria-label="Déconnecter ${c.name}" data-on-click="noop">
         <div class="dialog-body">
           <h3>Déconnecter ${c.name} ?</h3>
           <p class="muted" style="margin:0;font-size:14px;line-height:1.55">Les messages importés de ce compte seront retirés de Relay. Ils restent chez leur fournisseur. Le jeton conservé par Relay sera supprimé.</p>
