@@ -150,7 +150,7 @@ export function createWhatsAppOutbox({ store, sync, media=null }) {
           const msgId = typeof sent?.key?.id === 'string' && sent.key.id ? sent.key.id : `relay-${digest.slice(0, 24)}`;
           // A policy change or relink may remove the thread while delivery is in flight.
           // Successful delivery must never recreate that purged history.
-          if (store.hasAccount(accountId) && generation===sync.generation(accountId) && store.threadState(accountId,chatJid)?.id===messageId) {
+          if (store.hasAccount(accountId) && generation===sync.generation(accountId) && store.threadState(accountId,chatJid)?.id===messageId && store.assertDraftVersion(messageId)===confirmation.draftVersion) {
             store.rememberReply(messageId,text,{ticket:memoryTicket,at:sendStartedAt});
             store.waAddMessages(accountId, [{ chatJid, msgId, fromMe: true, ts: sendStartedAt, replyTo:quote?.id, participantJid:groupJid(chatJid)?directJid(sent?.key?.participant || sock.user?.lid || sock.user?.id):null, text:text || (attachment?.kind==='gif'?'GIF':'Photo') }]);
             try {media?.sent(accountId,chatJid,msgId,attachment);}catch { /* Delivery succeeded; never suggest a retry because caching failed. */ }

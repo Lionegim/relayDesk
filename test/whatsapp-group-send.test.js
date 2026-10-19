@@ -61,3 +61,16 @@ test('group becoming ephemeral during delivery never recreates purged history',a
  finish({key:{id:'OUT',fromMe:true,remoteJid:GROUP}});assert.equal((await pending).sent,true);
  assert.equal(c.store.waChatMessages(c.accountId,GROUP).length,0);assert.equal(c.store.threadState(c.accountId,GROUP),null);
 });
+test('purged group recreated under the same SQLite id cannot inherit pre-purge delivery',async t=>{
+ const c=await group(t),input={text:'Avant la suppression',replyTo:'alice'};const p=await c.wa.outbox.preview(c.id,input);
+ // Ensure the group has the highest message rowid, so SQLite reuses it after the purge.
+ c.db.prepare('delete from messages where account_id=? and external_id=?').run(c.accountId,PEER);
+ let finish,started;const ready=new Promise(r=>started=r);c.sock.sendMessage=async()=>{started();return new Promise(r=>finish=r);};
+ const pending=c.wa.outbox.send(c.id,{...input,digest:p.digest});await ready;
+ c.sock.emit('chats.update',[{id:GROUP,ephemeralExpiration:86400}]);await tick();
+ c.sock.emit('chats.update',[{id:GROUP,ephemeralExpiration:0}]);await tick();
+ const fresh=msg('fresh','Nouveau départ',{chat:GROUP,ago:1});fresh.key.participant=ALICE;c.sock.emit('messages.upsert',{type:'notify',messages:[fresh]});await tick();
+ assert.equal(c.store.threadState(c.accountId,GROUP).id,c.id,'SQLite id reused');
+ finish({key:{id:'OLD_OUT',fromMe:true,remoteJid:GROUP}});assert.equal((await pending).sent,true);
+ assert.deepEqual(c.store.waChatMessages(c.accountId,GROUP).map(m=>m.msgId),['fresh']);
+});
