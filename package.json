@@ -6,11 +6,21 @@
   "type": "module",
   "main": "server.js",
   "engines": {
-    "node": ">=22.13"
+    "node": ">=24.13"
   },
   "scripts": {
     "start": "node --disable-warning=ExperimentalWarning --env-file-if-exists=.env server.js",
     "dev": "node --disable-warning=ExperimentalWarning --watch --env-file-if-exists=.env server.js",
-    "test": "node --disable-warning=ExperimentalWarning --test"
+    "test": "node --disable-warning=ExperimentalWarning --test",
+    "test:docker": "docker build --target test -t relay-desk:test-lots12 . && docker build --target runtime -t relay-desk:test-runtime . && node scripts/check-docker.mjs && node scripts/check-operations.mjs"
+  },
+  "dependencies": {
+    "@whiskeysockets/baileys": "7.0.0-rc14",
+    "jose": "6.2.12",
+    "openid-client": "6.8.8",
+    "pino": "10.4.0",
+    "qrcode": "1.5.4",
+    "sanitize-html": "2.18.1",
+    "undici": "7.30.1"
   }
 }

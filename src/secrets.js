@@ -4,16 +4,21 @@ import { randomBytes, createCipheriv, createDecipheriv } from 'node:crypto';
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 
-export function loadKey({ envKey, keyFile }) {
-  if (envKey) {
-    const key = Buffer.from(envKey, /^[0-9a-f]{64}$/i.test(envKey) ? 'hex' : 'base64');
-    if (key.length !== 32) throw new Error('RELAY_SECRET_KEY doit faire 32 octets (64 caractères hexadécimaux ou base64).');
-    return key;
-  }
-  if (existsSync(keyFile)) return Buffer.from(readFileSync(keyFile, 'utf8').trim(), 'base64');
+function decodeKey(value) {
+  const raw=String(value).trim();
+  const hex=/^[0-9a-f]{64}$/i.test(raw);
+  const key=Buffer.from(raw,hex?'hex':'base64');
+  if(key.length!==32 || (!hex && key.toString('base64')!==raw)) throw new Error('Clé du coffre invalide : 32 octets encodés en hexadécimal ou base64 requis.');
+  return key;
+}
+
+export function loadKey({ envKey, keyFile, allowCreate=true }) {
+  if (envKey) return decodeKey(envKey);
+  if (existsSync(keyFile)) return decodeKey(readFileSync(keyFile,'utf8'));
+  if(!allowCreate) throw new Error('Clé du coffre absente : fournir la clé existante avant de reprendre les données.');
   mkdirSync(dirname(keyFile), { recursive: true });
   const key = randomBytes(32);
-  writeFileSync(keyFile, key.toString('base64'), { mode: 0o600 });
+  writeFileSync(keyFile, key.toString('base64'), { mode: 0o600, flag:'wx' });
   return key;
 }
 

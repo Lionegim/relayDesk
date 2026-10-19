@@ -1,0 +1,34 @@
+# Personal cutover overlay. Connector activation is explicit after owner MFA enrolment.
+services:
+  relay:
+    environment:
+      RELAY_CONNECTORS_ENABLED: ${RELAY_CONNECTORS_ENABLED:-false}
+      RELAY_AI_ENABLED: "false"
+      OWNER_NAME: "Jean-Hugues"
+      MISTRAL_API_KEY_FILE: ""
+      GOOGLE_WEB_CLIENT_ID_FILE: ""
+      GOOGLE_WEB_CLIENT_SECRET_FILE: ""
+      MICROSOFT_WEB_CLIENT_ID_FILE: ""
+      MICROSOFT_WEB_CLIENT_SECRET_FILE: ""
+    secrets: !override [auth_client_id, auth_client_secret, relay_secret_key]
+  proxy:
+    depends_on:
+      keycloak:
+        condition: service_healthy
+    image: caddy:2.10.2-alpine@sha256:4c6e91c6ed0e2fa03efd5b44747b625fec79bc9cd06ac5235a779726618e530d
+    volumes:
+      - ./deploy/personal/Caddyfile:/etc/caddy/Caddyfile:ro
+    environment:
+      RELAY_IDENTITY_DOMAIN: ${RELAY_IDENTITY_DOMAIN:?identity domain required}
+    networks:
+      backend:
+        ipv4_address: 172.30.40.10
+    mem_limit: 256m
+    logging:
+      driver: json-file
+      options: {max-size: "10m", max-file: "3"}
+networks:
+  backend:
+    ipam:
+      config:
+        - subnet: 172.30.40.0/24

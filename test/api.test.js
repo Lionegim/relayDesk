@@ -58,13 +58,13 @@ test('dossiers et sous-dossiers', async () => {
 });
 
 test('brouillon enregistré', async () => {
-  const { body } = await req('PUT', '/api/messages/2/draft', { text: 'Jeudi 10h me va.' });
+  const { body } = await req('PUT', '/api/messages/2/draft', { text: 'Jeudi 10h me va.',baseVersion:(await req('GET','/api/messages/2')).body.draftVersion });
   assert.equal(body.text, 'Jeudi 10h me va.');
   assert.ok(Date.parse(body.savedAt));
 });
 
 test('connexion simulée d’un compte', async () => {
-  const { body } = await req('POST', '/api/profiles/anove/accounts', { name: 'WhatsApp pro', svc: 'whatsapp' });
+  const { body } = await req('POST', '/api/profiles/anove/accounts', { name: 'Instagram démo', svc: 'instagram' });
   assert.equal(body.status, 'Connecté');
   assert.equal((await req('POST', '/api/profiles/anove/accounts', { name: 'LinkedIn', svc: 'linkedin' })).status, 400);
 });
@@ -76,13 +76,14 @@ test('résumé IA : le fil est construit côté serveur et balisé', async () =>
   assert.equal(lastRequest.url, 'https://api.mistral.ai/v1/chat/completions');
   assert.equal(lastRequest.init.headers.authorization, 'Bearer test-key');
   const user = lastRequest.body.messages[1].content;
-  assert.match(user, /<fil>[\s\S]*Marina Volgina \(Mar\. 17:45\)[\s\S]*Marina Volgina \(16:08\)[\s\S]*<\/fil>/);
+  // Données dans un bloc à balise aléatoire (voir test/ai.test.js).
+  assert.match(user, /<(donnees-[0-9a-f]+)>[\s\S]*Marina Volgina \(Mar\. 17:45\)[\s\S]*Marina Volgina \(16:08\)[\s\S]*<\/\1>/);
   assert.equal(lastRequest.body.messages[0].role, 'system');
 });
 
 test('brouillon IA : ton et intention validés', async () => {
   assert.equal((await req('POST', '/api/ai/draft', { messageId: 2, tone: 'Formel', intent: 'accepter jeudi' })).status, 200);
-  assert.match(lastRequest.body.messages[1].content, /Ton : Formel\. Intention : accepter jeudi\./);
+  assert.match(lastRequest.body.messages[1].content, /Ton : Formel\. Intention de Jean-Hugues : accepter jeudi\./);
   assert.equal((await req('POST', '/api/ai/draft', { messageId: 2, tone: 'Agressif' })).status, 400);
 });
 

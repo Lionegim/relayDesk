@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
+  <meta name="theme-color" content="#1d2a78">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="Relay">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="icon" href="/icons/icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
+  <title>Connexion · Relay Desk</title>
+  <link rel="stylesheet" href="/styles.css">
+  <script type="module" src="/js/login.js"></script>
+  <script type="module" src="/js/pwa.js"></script>
+</head>
+<body class="login-page">
+  <main class="login-card">
+    <span class="login-brand">RELAY DESK</span>
+    <div class="login-rule" aria-hidden="true"></div>
+    <h1>Tes conversations.<br>Ton espace privé.</h1>
+    <p>Connecte-toi pour retrouver tes messages et ton assistant.</p>
+    <p id="login-error" role="status" hidden>La connexion n’a pas abouti. Réessaie avec le compte propriétaire autorisé.</p>
+    <a class="btn btn-brand login-action" href="/auth/login">Se connecter avec Keycloak <span aria-hidden="true">↗</span></a>
+    <p class="login-footnote">Un accès personnel, protégé par ton authentification à plusieurs facteurs.</p>
+  </main>
+</body>
+</html>

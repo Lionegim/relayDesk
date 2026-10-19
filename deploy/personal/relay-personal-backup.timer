@@ -1,0 +1,8 @@
+[Unit]
+Description=Daily encrypted backup of Relay Desk personal data and login
+[Timer]
+OnCalendar=*-*-* 03:35:00 UTC
+Persistent=true
+RandomizedDelaySec=10m
+[Install]
+WantedBy=timers.target

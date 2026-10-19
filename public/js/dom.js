@@ -5,12 +5,24 @@ export const raw = s => new Raw(s);
 
 const ESC = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
 const esc = s => s.replace(/[&<>"']/g, c => ESC[c]);
-const str = v => v instanceof Raw ? v.s : Array.isArray(v) ? v.map(str).join('') : v == null || v === false ? '' : esc(String(v));
+
+// Chaque gabarit est assemblé en une seule fois : ses morceaux (tableaux imbriqués compris) sont rangés dans
+// une liste puis réunis par un unique join. Aucune concaténation successive (+, +=) : celles-ci produisent des
+// chaînes en arbre (« ropes ») que le moteur doit ensuite résoudre, notamment dans Array.prototype.join, chemin
+// où WebKit (iOS 26.2, simulateur) a planté. Le texte produit est identique à l'assemblage précédent.
+function collect(parts, v) {
+  if (v instanceof Raw) parts.push(v.s);
+  else if (Array.isArray(v)) for (const x of v) collect(parts, x);
+  else if (v != null && v !== false) parts.push(esc(String(v)));
+}
 
 export function html(strings, ...vals) {
-  let out = strings[0];
-  vals.forEach((v, i) => { out += str(v) + strings[i + 1]; });
-  return new Raw(out);
+  const parts = [strings[0]];
+  for (let i = 0; i < vals.length; i++) {
+    collect(parts, vals[i]);
+    parts.push(strings[i + 1]);
+  }
+  return new Raw(parts.join(''));
 }
 
 export const when = (cond, fn) => (cond ? fn() : '');
@@ -43,6 +55,10 @@ function morphNode(cur, next) {
     if (cur.nodeValue !== next.nodeValue) cur.nodeValue = next.nodeValue;
     return;
   }
+  // Keep contextual help associated with the same trigger during live updates.
+  if(cur.matches('[data-tooltip]') && cur.getAttribute('data-tooltip')===next.getAttribute('data-tooltip') && cur.getAttribute('aria-expanded')==='true') {next.setAttribute('aria-expanded','true');const description=cur.getAttribute('aria-describedby');if(description)next.setAttribute('aria-describedby',description);}
+  // A failed private avatar must stay hidden through unrelated drafts/live updates.
+  if(cur.matches('img.wa-profile-photo') && cur.hidden && cur.getAttribute('src')===next.getAttribute('src'))next.hidden=true;
   for (const { name } of [...cur.attributes]) if (!next.hasAttribute(name)) cur.removeAttribute(name);
   for (const { name, value } of [...next.attributes]) if (cur.getAttribute(name) !== value) cur.setAttribute(name, value);
   const editing = cur === document.activeElement;
@@ -51,6 +67,7 @@ function morphNode(cur, next) {
     return;
   }
   if (cur.nodeName === 'INPUT') {
+    if(cur.type==='file')return;
     const v = next.getAttribute('value') ?? '';
     if (!editing && cur.value !== v) cur.value = v;
     return;

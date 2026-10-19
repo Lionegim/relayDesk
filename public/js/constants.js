@@ -21,6 +21,10 @@ export const SETTINGS = { density: 'confortable', showTriage: true };
 
 const svg = inner => `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${inner}</svg>`;
 export const ICON = {
+  send: svg('<path d="m3 3 19 9-19 9 4-9-4-9Z"></path><path d="M7 12h15"></path>'),
+  plus: svg('<path d="M12 5v14M5 12h14"></path>'),
+  smile: svg('<circle cx="12" cy="12" r="9"></circle><path d="M8 14a4 4 0 0 0 8 0M8.5 9h.01M15.5 9h.01"></path>'),
+  more: svg('<circle cx="5" cy="12" r="1"></circle><circle cx="12" cy="12" r="1"></circle><circle cx="19" cy="12" r="1"></circle>'),
   mail: svg('<rect x="3" y="5" width="18" height="14" rx="2"></rect><path d="m3 7 9 6 9-6"></path>'),
   people: svg('<circle cx="9" cy="8" r="3.5"></circle><path d="M2.5 20a6.5 6.5 0 0 1 13 0"></path><path d="M16 4.5a3.5 3.5 0 0 1 0 7"></path><path d="M18 14.5a6.5 6.5 0 0 1 3.5 5.5"></path>'),
   list: svg('<path d="M8 6h13M8 12h13M8 18h13"></path><path d="M3 6h.01M3 12h.01M3 18h.01"></path>'),

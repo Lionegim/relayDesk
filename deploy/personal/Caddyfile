@@ -1,0 +1,55 @@
+# Personal Relay Desk: private owner realm, no public administration.
+# Le contact ACME est volontairement omis : aucune adresse personnelle n'est transmise.
+{
+	acme_ca {$ACME_CA}
+	admin off
+	log default {
+		output stderr
+		format filter {
+			wrap json
+			fields {
+				request delete
+				uri delete
+				headers delete
+				resp_headers delete
+			}
+		}
+	}
+}
+
+{$RELAY_DOMAIN} {
+	encode zstd gzip
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "no-referrer"
+		Permissions-Policy "camera=(), microphone=(), geolocation=(), payment=()"
+		X-Relay-Environment "personal"
+		-Server
+	}
+	request_body {
+		max_size 10MB
+	}
+	reverse_proxy relay:4310
+}
+
+{$RELAY_IDENTITY_DOMAIN} {
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "no-referrer"
+		X-Relay-Environment "personal"
+		-Server
+	}
+	request_body {
+		max_size 1MB
+	}
+	# Aucun master realm, console/API d'administration, compte libre-service ou endpoint de gestion public.
+	@oidc path /realms/relay/.well-known/* /realms/relay/protocol/openid-connect/* /realms/relay/login-actions/* /resources/*
+	handle @oidc {
+		reverse_proxy keycloak:8080
+	}
+	handle {
+		respond "Not found" 404
+	}
+}

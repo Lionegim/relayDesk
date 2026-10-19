@@ -1,0 +1,9 @@
+[Unit]
+Description=Relay Desk personal encrypted application and identity backup
+Requires=docker.service
+After=docker.service
+[Service]
+Type=oneshot
+UMask=0077
+ExecStart=/opt/relay-desk/deploy/personal/backup.sh
+TimeoutStartSec=600

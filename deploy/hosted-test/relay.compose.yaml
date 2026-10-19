@@ -1,0 +1,30 @@
+# Overlay TEST uniquement. Même VM que Keycloak, aucun compte ni connecteur réel.
+services:
+  relay:
+    environment:
+      RELAY_CONNECTORS_ENABLED: "false"
+      RELAY_AI_ENABLED: "false"
+      DEMO_DATA: "0"
+      OWNER_NAME: "Fictional Test Owner"
+  proxy:
+    depends_on:
+      keycloak:
+        condition: service_healthy
+    image: caddy:2.10.2-alpine@sha256:4c6e91c6ed0e2fa03efd5b44747b625fec79bc9cd06ac5235a779726618e530d
+    volumes:
+      - ./deploy/hosted-test/Caddyfile:/etc/caddy/Caddyfile:ro
+    environment:
+      RELAY_IDENTITY_DOMAIN: ${RELAY_IDENTITY_DOMAIN:?domaine identité requis}
+    networks:
+      backend:
+        ipv4_address: 172.30.40.10
+    mem_limit: 256m
+    logging:
+      driver: json-file
+      options: {max-size: "10m", max-file: "3"}
+
+networks:
+  backend:
+    ipam:
+      config:
+        - subnet: 172.30.40.0/24

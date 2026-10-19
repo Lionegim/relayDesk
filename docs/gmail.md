@@ -1,6 +1,6 @@
 # Connecter un compte Gmail personnel
 
-Relay lit Gmail par l’API Gmail, avec OAuth et la seule permission `gmail.readonly`. Aucun mot de passe n’est stocké : Relay garde un jeton de rafraîchissement, chiffré dans `data/relay.db`.
+Relay utilise l’API Gmail avec OAuth : lecture seule par défaut (`gmail.readonly`), et classement dans Gmail si tu actives **Libellés** (`gmail.modify`). Aucun mot de passe n’est stocké : Relay garde un jeton de rafraîchissement, chiffré dans `data/relay.db`.
 
 ## 1. Créer le client Google (une fois, environ 15 minutes)
 
@@ -9,7 +9,7 @@ Relay lit Gmail par l’API Gmail, avec OAuth et la seule permission `gmail.read
 3. **Google Auth Platform → Audience** (anciennement « Écran de consentement OAuth ») :
    - Type d’utilisateur : **Externe**.
    - Renseigne le nom de l’application et ton adresse.
-   - **Données d’accès** : ajoute le champ d’application `https://www.googleapis.com/auth/gmail.readonly`.
+   - **Accès aux données** : déclare `https://www.googleapis.com/auth/gmail.readonly`. Pour activer le lot A, déclare aussi `https://www.googleapis.com/auth/gmail.modify`. Ne demande jamais `https://mail.google.com/`.
    - **Statut de publication : passe en « En production »**. Ne reste pas en « Test » : en test, Google révoque l’accès tous les 7 jours.
    - Ne lance pas la validation : elle n’est utile que pour une application distribuée au public. L’application non validée est limitée à 100 utilisateurs, ce qui ne te concerne pas.
 4. **Clients → Créer un client** : type **Application de bureau**. Copie l’ID client et le code secret.
@@ -27,7 +27,7 @@ Redémarre (`npm start`) et ouvre **http://127.0.0.1:4310**. Relay redirige Goog
 
 ## 3. Connecter
 
-**+ Ajouter un canal → Gmail**, choisis le profil (par exemple Personnel), le nom du compte et l’historique (7, 30 ou 90 jours), puis **Continuer avec Google**.
+**+ Ajouter un canal → Gmail**, choisis le profil (par exemple Personnel), le nom du compte et l’historique (7, 30 ou 90 jours), active éventuellement **Libellés**, puis **Continuer avec Google**. Sans cet interrupteur, seule la lecture est demandée.
 
 Google affiche un avertissement « Google n’a pas validé cette application » : c’est attendu pour ton propre client. Clique sur **Paramètres avancés → Accéder à Relay**, puis autorise la lecture.
 
@@ -38,9 +38,57 @@ De retour dans Relay, l’import s’affiche en direct. Ensuite, Relay vérifie 
 - Importe les conversations de la période choisie (1 000 au maximum), hors spam, corbeille et brouillons.
 - Une conversation sans le libellé Boîte de réception apparaît comme archivée.
 - Les libellés Gmail personnels deviennent des dossiers ; un message dans un libellé est rangé dans le dossier correspondant.
-- Lu, drapeau (suivi) et archivage suivent Gmail. Comme l’accès est en lecture seule, les changements faits dans Relay restent locaux et Gmail les écrase à la prochaine modification du fil.
+- Avec **Libellés** accordé : lu/non lu, drapeau, archivage et déplacement dans un dossier sont appliqués à la conversation Gmail avant d’être enregistrés dans Relay. En cas d’erreur Gmail, Relay renvoie une erreur et conserve son état local précédent.
+- Un dossier local sans libellé Gmail pour ce compte crée le libellé à son premier usage. Les sous-dossiers deviennent des chemins `Parent/Enfant`. Si le libellé existe déjà, il est réutilisé. Chaque compte possède son propre lien avec le dossier.
+- Déplacer retire le libellé du dossier précédent et ajoute celui du nouveau dossier ; **Aucun dossier** retire seulement le libellé du dossier actuel. Les autres libellés personnels restent dans Gmail. Relay affiche un seul dossier par conversation : il garde le dossier choisi tant que son libellé est présent, sinon utilise un autre libellé du fil s’il en reste.
+- Sans **Libellés** accordé, les changements restent locaux : une modification ultérieure du fil dans Gmail peut rétablir lu, drapeau et archivage. Les anciens comptes restent en lecture seule tant qu’ils ne sont pas réautorisés.
 - Corps en texte brut : le HTML est converti en texte et n’est jamais affiché tel quel. Les citations du message précédent sont retirées.
 - Si l’accès est révoqué (depuis [ton compte Google](https://myaccount.google.com/permissions) par exemple), le compte passe à « À reconnecter » : clique dessus pour relancer l’autorisation.
+
+## Modifier les permissions ou synchroniser
+
+Clique sur ton compte Gmail dans la barre latérale :
+
+- **Synchroniser maintenant** relance la lecture de l’historique Gmail.
+- **Modifier les permissions** ouvre la configuration avec les permissions réellement accordées cochées et la période d’import du compte conservée. Active **Libellés**, puis termine la nouvelle autorisation Google avec le même compte.
+
+L’ajout d’une permission demande une nouvelle autorisation Google et sa déclaration préalable dans **Google Auth Platform → Accès aux données**. Les scopes réellement accordés, et non les interrupteurs demandés, déterminent les capacités de Relay. Décocher une permission déjà accordée ne la révoque pas chez Google (autorisation incrémentale).
+
+Les opérations du même compte sont exécutées dans l’ordre pour éviter qu’une synchronisation en cours écrase une écriture. Les erreurs de modification ne changent pas SQLite ; si Gmail a créé un libellé avant qu’une modification de conversation échoue, ce libellé peut rester dans Gmail et sera réutilisé au prochain essai.
+
+## Brouillons Gmail (permission « Brouillons »)
+
+Avec la permission **Brouillons** (`gmail.compose`), **Enregistrer** crée le brouillon dans Gmail, puis le met à jour aux enregistrements suivants ; le statut affiche « Brouillon Gmail enregistré à … ». Sans cette permission, le brouillon reste dans Relay.
+
+- **Répondre** : au `Reply-To`, sinon à l'expéditeur, dans le même fil (`In-Reply-To`, `References`). Si le dernier message vient de toi, la réponse va à ses destinataires.
+- **Répondre à tous** : ajoute les destinataires et copies d'origine, sans ton adresse ni doublons.
+- **Transférer** : un champ « À » apparaît ; le message d'origine est cité sous « Message transféré ». Tant qu'aucune adresse n'est saisie, le brouillon reste local.
+- Les destinataires sont lus sur les en-têtes bruts : un nom d'affichage encodé ne peut pas ajouter d'adresse.
+- Pour les fils importés avant cette version, Relay relit les en-têtes du fil dans Gmail au premier brouillon.
+- Un brouillon supprimé dans Gmail est recréé au prochain enregistrement.
+- Quand un enregistrement reste local (transfert sans adresse, permission absente), le statut indique « Brouillon enregistré », sans « Gmail » : le brouillon Gmail garde la version précédente jusqu'au prochain enregistrement synchronisé, qui le met à jour.
+- Les enregistrements d'un même compte passent dans la même file que la synchronisation et les actions : une sauvegarde plus ancienne ne peut pas écraser une plus récente.
+
+## Envoyer (permission « Envoi »)
+
+Avec la permission **Envoi** (`gmail.send`), le bouton **Envoyer** du compositeur s'active dès que le message n'est pas vide.
+
+1. **Envoyer** demande au serveur de construire le message final et affiche son contenu exact : De, À, Cc, Objet et texte.
+2. **Confirmer l'envoi** renvoie ce contenu avec son empreinte SHA-256. Le serveur reconstruit le message et n'envoie que si l'empreinte est identique et qu'elle correspond à une validation émise par l'aperçu pour ce message et ce compte. L'empreinte couvre aussi le fil Gmail visé.
+3. La validation est à usage unique et expire après 10 minutes. Un double clic ou une requête rejouée n'envoie qu'une fois.
+
+Points de sécurité :
+- C'est toujours le message validé qui part (`messages.send`), jamais le contenu d'un brouillon Gmail, même si ce brouillon a été modifié dans Gmail.
+- Après l'envoi, le brouillon local est effacé. Le brouillon Gmail lié, s'il existe, est **conservé** : Gmail n'offre pas de suppression conditionnelle à une version, et ce brouillon a pu être modifié ailleurs. Relay l'indique (`draftRemoved: false`) ; supprime-le dans Gmail si besoin.
+- Une validation émise avant une déconnexion est refusée après reconnexion, même si le compte et le message retrouvent les mêmes identifiants.
+- Si l'envoi réussit mais que la liste ne peut pas être actualisée, Relay confirme l'envoi et n'invite pas à renvoyer.
+- Si le fil a changé entre l'aperçu et la confirmation (nouveau message, autre destinataire), l'envoi est refusé et il faut vérifier à nouveau.
+- Si Gmail refuse nettement l'envoi (erreur 4xx), la même validation peut resservir. Après une erreur réseau ou 5xx, rien ne prouve que le message n'est pas parti : la validation est consommée et Relay demande une nouvelle vérification, pour éviter un double envoi.
+- Aucun corps de message ni jeton n'est écrit dans les journaux.
+
+## Déconnecter un compte
+
+Menu du compte → **Déconnecter**, puis confirmation. Relay attend la fin de la synchronisation ou de l'action en cours sur ce compte, révoque l'accès chez Google, puis supprime le compte, son jeton, son état de synchronisation, ses messages importés et ses liens de libellés. Tous les dossiers restent, y compris ceux créés à partir de ses libellés. Les messages restent dans Gmail. Si Google est injoignable, la suppression a lieu quand même : retire alors l'accès depuis [ton compte Google](https://myaccount.google.com/permissions).
 
 ## Sécurité
 
@@ -51,7 +99,9 @@ De retour dans Relay, l’import s’affiche en direct. Ensuite, Relay vérifie 
 
 ## Étapes suivantes
 
-1. `gmail.modify` : lu/non lu, drapeau, archivage et dossiers renvoyés vers Gmail.
-2. `gmail.compose` : brouillons Gmail réels.
-3. `gmail.send` : envoi, après un écran de validation du contenu exact.
-4. Déconnexion depuis Relay (révocation du jeton et suppression des messages importés).
+1. Pièces jointes et rendu HTML.
+2. Réponse citant le message d'origine.
+
+## Nouveau message
+
+Le bouton **Nouveau message** permet désormais de rédiger sans fil d'origine : compte expéditeur, À, Cc, Objet et corps. L'enregistrement utilise les mêmes permissions Brouillons et l'envoi la même validation exacte que les réponses. Le message n'a ni préfixe de réponse/transfert ni identifiant de fil reçu. Voir le [parcours commun](messagerie.md).

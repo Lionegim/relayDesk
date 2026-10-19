@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="340" height="340" viewBox="0 0 340 340" fill="none" stroke="#343b3f" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" opacity=".48">
+<g transform="translate(20 25) rotate(-18)"><rect width="42" height="30" rx="10"/><path d="m10 30-4 9 14-9M11 12h20M11 19h12"/></g>
+<g transform="translate(125 15) rotate(14)"><path d="m0 0 40 16-19 8-8 17-3-22Z M10 19 40 16"/></g>
+<g transform="translate(237 24) rotate(-12)"><path d="M2 14h36v27H2zM38 19h6a9 9 0 0 1 0 16h-6M8 47h28M9 6c-4-5 4-5 0-10M23 6c-4-5 4-5 0-10"/></g>
+<g transform="translate(80 93) rotate(20)"><path d="m0 0 8 12 14 2-11 10 2 15-13-7-14 7 3-15-11-10 15-2Z"/></g>
+<g transform="translate(173 90) rotate(-14)"><path d="M0 24V10a20 20 0 0 1 40 0v14M0 20h7v20H0zM33 20h7v20h-7z"/></g>
+<g transform="translate(277 111) rotate(16)"><path d="M4 0h28v39H4zM10 7h16M10 14h16M10 21h10M14 39v6h8v-6"/></g>
+<g transform="translate(17 181) rotate(-10)"><path d="M0 7h46v31H0zM7 0h15v7M7 14h9M7 22h9"/><circle cx="31" cy="23" r="9"/></g>
+<g transform="translate(117 190) rotate(15)"><path d="M20 43V13M20 25C3 23 0 15 0 3c17 0 20 9 20 22ZM20 38c17-2 20-10 20-22-17 0-20 9-20 22Z"/></g>
+<g transform="translate(223 182) rotate(-16)"><path d="M0 0h44v33H26l-8 9v-9H0Z"/><path d="M10 11h24M10 20h16"/></g>
+<g transform="translate(51 278) rotate(12)"><path d="M5 24c-20-16 3-35 15-15C33-11 56 8 36 24L20 39Z"/></g>
+<g transform="translate(161 278) rotate(-18)"><path d="M0 15 20 0l20 15v27H0Z M0 15l20 15 20-15M0 42l14-17M40 42 26 25"/></g>
+<g transform="translate(283 277) rotate(12)"><path d="M0 30V4l23-4v25"/><ellipse cy="31" rx="7" ry="5"/><ellipse cx="23" cy="26" rx="7" ry="5"/></g>
+<path d="m83 52 3 5 5 3-5 3-3 5-3-5-5-3 5-3ZM315 48l3 5 5 3-5 3-3 5-3-5-5-3 5-3ZM179 164l3 5 5 3-5 3-3 5-3-5-5-3 5-3Z"/>
+</svg>

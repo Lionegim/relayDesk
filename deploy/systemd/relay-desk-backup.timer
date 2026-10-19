@@ -1,0 +1,13 @@
+# Modèle : planification quotidienne de la sauvegarde. PRÉPARATOIRE, non installé.
+[Unit]
+Description=Relay Desk : sauvegarde quotidienne
+
+[Timer]
+OnCalendar=*-*-* 03:17:00
+RandomizedDelaySec=20m
+# Une sauvegarde manquée (VM arrêtée) est rattrapée au démarrage suivant.
+Persistent=true
+Unit=relay-desk-backup.service
+
+[Install]
+WantedBy=timers.target

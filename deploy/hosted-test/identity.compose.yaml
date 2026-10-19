@@ -1,0 +1,124 @@
+# Identité de TEST de Relay Desk : Keycloak 26.8.1 (mode production, « start --optimized ») et PostgreSQL 17.
+# À combiner dans le même projet que la compose de Relay (réseau partagé « backend » avec Caddy) :
+#   docker compose --env-file /etc/relay-desk-test/identity.env -f relay.compose.yaml -f identity.compose.yaml …
+# TEST UNIQUEMENT : Keycloak partage la VM de Relay Desk. Avant toute donnée réelle, il doit être déplacé et sauvegardé
+# (voir deploy/hosted-test/README.md). Données, identités et secrets de test neufs seulement.
+#
+# Accès : public uniquement via Caddy (realm relay-test + /resources, voir identity.caddy). Administration :
+# 127.0.0.1:18080 sur la VM (tunnel SSH). Port de gestion 9000 (santé) jamais publié. Base sur réseau interne.
+
+services:
+  keycloak-db:
+    profiles: ["hosted"]
+    image: postgres:17.11-alpine3.24@sha256:b0f9560a2de083e2cc7382e75f808c7381a32852a7ec49117deedb300e552b24
+    # Utilisateur postgres de l'image Alpine (uid 70) : aucun passage par root ni capacité.
+    user: "70:70"
+    read_only: true
+    tmpfs:
+      - /var/run/postgresql:size=8m,mode=1777
+      - /tmp:size=64m,mode=1777,noexec,nosuid,nodev
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: 512m
+    pids_limit: 256
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: keycloak
+      POSTGRES_USER: keycloak
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
+      POSTGRES_INITDB_ARGS: "--auth-host=scram-sha-256 --auth-local=scram-sha-256"
+    secrets:
+      - postgres_password
+    volumes:
+      - keycloak-db-data:/var/lib/postgresql/data
+    networks: [identity-db]
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "keycloak", "-d", "keycloak", "-h", "127.0.0.1"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
+
+  keycloak:
+    profiles: ["hosted"]
+    build:
+      context: ./deploy/hosted-test
+      dockerfile: keycloak.Dockerfile
+    image: relay-desk-test/keycloak:26.8.1-optimized
+    depends_on:
+      keycloak-db:
+        condition: service_healthy
+    user: "1000:0"
+    read_only: true
+    tmpfs:
+      - /tmp:size=128m,mode=1777,noexec,nosuid,nodev
+      - /opt/keycloak/data:size=128m,mode=1777
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: 1536m
+    pids_limit: 512
+    restart: unless-stopped
+    # Keycloak ne lit pas de fichiers *_FILE : les secrets montés sont lus ici puis exportés, sans être affichés.
+    entrypoint:
+      - /bin/bash
+      - -c
+      - >-
+        set -eu;
+        export KC_DB_PASSWORD="$$(< /run/secrets/keycloak_db_password)";
+        export KC_BOOTSTRAP_ADMIN_USERNAME="$$(< /run/secrets/kc_bootstrap_admin_user)";
+        export KC_BOOTSTRAP_ADMIN_PASSWORD="$$(< /run/secrets/kc_bootstrap_admin_password)";
+        exec /opt/keycloak/bin/kc.sh start --optimized
+    environment:
+      KC_DB_URL_HOST: keycloak-db
+      KC_DB_URL_DATABASE: keycloak
+      KC_DB_USERNAME: keycloak
+      KC_HOSTNAME: https://${IDENTITY_DOMAIN:?IDENTITY_DOMAIN requis (p. ex. auth.relay.noegim.com)}
+      KC_HOSTNAME_STRICT: "true"
+      # Console d'administration servie seulement par la boucle locale de la VM.
+      KC_HOSTNAME_ADMIN: http://127.0.0.1:18080
+      KC_HTTP_ENABLED: "true"
+      KC_HTTP_PORT: "8080"
+      KC_PROXY_HEADERS: xforwarded
+      # Adresses du proxy Caddy sur le réseau « backend » (sous-réseau fixe), seules autorisées à fournir X-Forwarded-*.
+      KC_PROXY_TRUSTED_ADDRESSES: ${IDENTITY_TRUSTED_PROXIES:?IDENTITY_TRUSTED_PROXIES requis (sous-réseau du réseau backend)}
+      KC_LOG_LEVEL: info
+      JAVA_OPTS_KC_HEAP: "-XX:MaxRAMPercentage=65 -XX:InitialRAMPercentage=25"
+    secrets:
+      - keycloak_db_password
+      - kc_bootstrap_admin_user
+      - kc_bootstrap_admin_password
+    ports:
+      - "127.0.0.1:18080:8080"
+    networks: [backend, identity-db]
+    healthcheck:
+      # Statut global de /health/ready sur le port de gestion (le premier « status » de la réponse).
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/9000 && printf 'GET /health/ready HTTP/1.0\\r\\nHost: localhost\\r\\n\\r\\n' >&3 && grep -m1 '\"status\"' <&3 | grep -q UP"]
+      interval: 15s
+      timeout: 5s
+      start_period: 120s
+      retries: 5
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
+
+# Fichiers neufs, hors dépôt, dans IDENTITY_SECRETS_DIR (répertoire root 0700). Chaque fichier appartient à l'uid
+# du conteneur qui le lit, mode 0400 : le mot de passe de base existe donc en deux copies identiques (uid 70 et 1000).
+secrets:
+  postgres_password:
+    file: ${IDENTITY_SECRETS_DIR:?IDENTITY_SECRETS_DIR requis}/postgres_password
+  keycloak_db_password:
+    file: ${IDENTITY_SECRETS_DIR:?IDENTITY_SECRETS_DIR requis}/keycloak_db_password
+  kc_bootstrap_admin_user:
+    file: ${IDENTITY_SECRETS_DIR:?IDENTITY_SECRETS_DIR requis}/kc_bootstrap_admin_user
+  kc_bootstrap_admin_password:
+    file: ${IDENTITY_SECRETS_DIR:?IDENTITY_SECRETS_DIR requis}/kc_bootstrap_admin_password
+
+networks:
+  backend: {}
+  identity-db:
+    internal: true
+
+volumes:
+  keycloak-db-data:
