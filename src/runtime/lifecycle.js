@@ -1,3 +1,4 @@
+import {createDuplicateWorker} from '../contacts/duplicates.js';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
@@ -28,7 +29,7 @@ function verifyExistingVault(path,vault) {
 export function createRuntime(config,{providerFactory=assembleProviders,appFactory=createApp,authFactory=null,log=console}={}) {
   const startedAt=Date.now();
   let effectiveConfig=config;
-  let state='created',db,store,server,releaseLock,bundle,maintenance,startPromise,stopPromise,stopRequested=false,url,ownerAuth;
+  let state='created',db,store,server,releaseLock,bundle,duplicateWorker,maintenance,startPromise,stopPromise,stopRequested=false,url,ownerAuth;
   const syncs=()=>bundle?.syncs || [];
   const requests=new Set();
   async function drainRequests() {while(requests.size) await Promise.allSettled([...requests]);}
@@ -87,13 +88,14 @@ export function createRuntime(config,{providerFactory=assembleProviders,appFacto
         // Un signal reçu pendant la construction ne démarre aucun connecteur.
         if(!stopRequested) {
           for(const sync of syncs()) await sync.start(config.syncIntervalMs);
+          duplicateWorker=createDuplicateWorker(store);duplicateWorker.start();
           maintenance=setInterval(()=>store.pruneReplyMemory(),3600000);maintenance.unref();
         }
         state='running';return {url};
       } catch(error) {
         state='failed';
         server?.closeLiveUpdates?.();
-        clearInterval(maintenance);
+        clearInterval(maintenance);await duplicateWorker?.stop();
         for(const sync of syncs()) await sync.stop?.();
         if(server?.listening) await new Promise(resolve=>server.close(resolve));
         await drainRequests();
@@ -109,7 +111,7 @@ export function createRuntime(config,{providerFactory=assembleProviders,appFacto
     const finish=(async()=>{
       if(state==='starting') {try {await startPromise;}catch {return;}}
       if(state==='stopped') return;
-      state='stopping';clearInterval(maintenance);
+      state='stopping';clearInterval(maintenance);await duplicateWorker?.stop();
       server?.closeLiveUpdates?.();
       // Fermer l'entrée d'abord ; les requêtes déjà acceptées gardent leur connexion et leur issue fournisseur.
       const httpDone=server?.listening?new Promise(resolve=>server.close(resolve)):Promise.resolve();

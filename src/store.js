@@ -1,3 +1,4 @@
+import {createDuplicateRepository} from './contacts/duplicates.js';
 // Dépôt SQLite. Les routes ne voient que ces fonctions ; les secrets n'en sortent jamais par snapshot().
 import { createContactsRepository } from './contacts/repository.js';
 import { createReplyMemoryRepository } from './ai/reply-memory.js';
@@ -47,6 +48,7 @@ export function createStore(db) {
   let seq = 0;
   const memory = createReplyMemoryRepository(db);
   const people = createContactsRepository(db,changed);
+  const duplicates=createDuplicateRepository(db,{people,changed});
 
   const profile = id => q('SELECT * FROM profiles WHERE id = ?').get(id) || (() => { throw notFound('Profil introuvable'); })();
   const row = id => q('SELECT * FROM messages WHERE id = ?').get(id) || (() => { throw notFound('Message introuvable'); })();
@@ -68,6 +70,12 @@ export function createStore(db) {
   return {
     db,
     contactsBackfill:()=>people.backfill(),
+    contactDuplicateProfiles:()=>q('SELECT id FROM profiles').all(),
+    scanContactDuplicates:p=>duplicates.scan(p),
+    contactDuplicates:p=>duplicates.list(p),
+    dismissContactDuplicate:(p,id,input)=>duplicates.dismiss(p,id,input),
+    mergeContactDuplicate:(p,id,input)=>duplicates.merge(p,id,input),
+    drainContactDuplicates:()=>duplicates.drain(),
     importContacts:(id,records)=>people.import(id,records),
     person:(profile,id,options)=>people.detail(profile,id,options),
     addContactIdentity:(profile,id,input)=>people.addIdentity(profile,id,input),

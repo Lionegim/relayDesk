@@ -19,6 +19,7 @@ const state = {
   composing: null, drafts: {}, expandedTrail: {},
   ai: null, aiTone: 'Cordial', aiIntent: '',
   group: 'all', picked: {}, focusId: null, contactQuery: '', contactSearch: false, sort: 'recent',
+  duplicates:null,duplicatesBusy:false,duplicatesError:null,duplicatesReview:null,duplicatesKeep:null,duplicatesTab:'pending',duplicatesLimit:25,
   personOpen:null, person:null, personError:null, personBusy:false, personKind:'email', personValue:'', personMerge:'', contactImport:false, contactImportBusy:null, fromPerson:false,
   c: null,
   details: {},
@@ -132,6 +133,19 @@ setInterval(async () => {
   if (liveUpdates?.connected || !state.data || state.c || state.confirm || state.offline || !state.data.profiles.some(p => p.accounts.some(a => a.svc === 'whatsapp' && a.sync?.status === 'syncing'))) return;
   try { await reload({ refresh: true }); } catch { /* progression au prochain passage */ }
 }, 3000);
+
+let duplicatesRequest=0,duplicateActionVersion=0;
+async function loadDuplicates(scan=false) {
+ const profile=state.profileId,request=++duplicatesRequest;
+ try{const result=await (scan?api.scanDuplicates(profile):api.duplicates(profile));if(state.profileId===profile && request===duplicatesRequest)set({duplicates:result,duplicatesError:null});}
+ catch(e){if(state.profileId===profile && request===duplicatesRequest)set({duplicatesError:e.message});}
+}
+async function actOnDuplicate(fn) {
+ const profile=state.profileId;if(state.duplicatesBusy || state.offline)return;const version=++duplicateActionVersion;set({duplicatesBusy:true,duplicatesError:null});
+ try{await fn(profile);if(state.profileId!==profile || version!==duplicateActionVersion)return;set({duplicatesReview:null,duplicatesKeep:null});await reload({refresh:true});if(state.profileId===profile && version===duplicateActionVersion)await loadDuplicates(true);}
+ catch(e){if(state.profileId===profile && version===duplicateActionVersion)set({duplicatesError:e.message});}
+ finally{if(state.profileId===profile && version===duplicateActionVersion)set({duplicatesBusy:false});}
+}
 
 // ---------- Liste paginée ----------
 
@@ -771,11 +785,13 @@ const actions = {
   },
   toggleProfileMenu: () => set({ menu: !state.menu, accountMenu: null }),
   selectProfile: ({ id }) => {
+    duplicateActionVersion++;
     selectionVersion++; rememberComposition();
     if (state.drawer) backFrom('drawer');
-    filtersChanged({ newMailOpen: false, profileId: id, personOpen:null,person:null,personError:null,personMerge:'',personValue:'',personBusy:false,contactImport:false,fromPerson:false, menu: false, accountMenu: null, picked: {}, group: 'all', channel: 'all', query: '', selectedId: state.paged ? null : firstOf(id), selectedRow: null, folder: null, ai: null, moveOpen: false, creating: false, composing: null, pane: 'list' });
+    filtersChanged({duplicates:null,duplicatesError:null,duplicatesBusy:false,duplicatesReview:null,duplicatesKeep:null,duplicatesLimit:25, newMailOpen: false, profileId: id, personOpen:null,person:null,personError:null,personMerge:'',personValue:'',personBusy:false,contactImport:false,fromPerson:false, menu: false, accountMenu: null, picked: {}, group: 'all', channel: 'all', query: '', selectedId: state.paged ? null : firstOf(id), selectedRow: null, folder: null, ai: null, moveOpen: false, creating: false, composing: null, pane: 'list' });
+    if(state.app==='duplicates')loadDuplicates();
   },
-  selectApp: ({ app }) => { if (state.drawer) backFrom('drawer'); set({ app, ai: null, moveOpen: false }); },
+  selectApp: ({ app }) => { if (state.drawer) backFrom('drawer'); set({ app, ai: null, moveOpen: false,duplicatesReview:null });if(app==='duplicates')loadDuplicates(); },
   selectNav: ({ id }) => { if (state.drawer) backFrom('drawer'); filtersChanged({ nav: id, channel: 'all', folder: null }); },
   openDrawer: () => { set({ drawer: true }); pushLayer('drawer'); },
   closeDrawer: () => backFrom('drawer'),
@@ -1003,6 +1019,15 @@ const actions = {
     let m;try{m=await api.message(Number(id));}catch(e){fail(e);return;}if(state.profileId!==profile || state.personOpen!==personId || m.p!==profile)return;
     ++selectionVersion;rememberComposition();filtersChanged({personOpen:null,person:null,fromPerson:true,app:'mail',nav:'all',channel:'all',folder:null,query:'',selectedId:m.id,selectedRow:m,details:{...state.details,[m.id]:m},composing:null,ai:null,pane:'reader'});pushLayer('reader');
   },
+  duplicateTab:({tab})=>set({duplicatesTab:tab,duplicatesLimit:25,duplicatesReview:null}),
+  duplicatesMore:()=>set({duplicatesLimit:state.duplicatesLimit+25}),
+  rescanDuplicates:()=>actOnDuplicate(async profile=>{await api.scanDuplicates(profile);}),
+  reviewDuplicate:({id})=>{const candidate=state.duplicates?.items.find(c=>c.id===id);if(candidate && !candidate.stale && !state.duplicatesBusy)set({duplicatesReview:candidate,duplicatesKeep:candidate.left.id});},
+  cancelDuplicateReview:()=>set({duplicatesReview:null,duplicatesKeep:null}),
+  duplicateKeep:(_,e)=>set({duplicatesKeep:e.target.value}),
+  dismissDuplicate:({id,restore})=>{const c=state.duplicates?.items.find(c=>c.id===id);if(c)actOnDuplicate(profile=>api.dismissDuplicate(profile,id,{version:c.version,restore:restore==='true'}));},
+  confirmDuplicateMerge:()=>{const c=state.duplicatesReview,keepId=state.duplicatesKeep;if(c)actOnDuplicate(profile=>api.mergeDuplicate(profile,c.id,{version:c.version,keepId,confirm:true}));},
+  undoDuplicateMerge:({id})=>actOnDuplicate(profile=>api.undoContactMerge(profile,id)),
   openContactImport:()=>set({contactImport:true}),
   closeContactImport:()=>set({contactImport:false}),
   authorizeContacts:({id})=>{
@@ -1215,6 +1240,7 @@ api.session()
         canRefresh: () => !!state.data && !state.c && !state.confirm && !state.offline,
         refresh: async () => {
           await reload({ refresh: true });
+          if(state.app==='duplicates' && !state.duplicatesBusy)await loadDuplicates();
           const id = state.selectedId;
           if (id != null && known(id) && !state.confirm) {
             detailRevisions.set(id, (detailRevisions.get(id) || 0) + 1);

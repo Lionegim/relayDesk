@@ -746,3 +746,14 @@ test('buffer plus récent après envoi : ne reprend jamais automatiquement la ve
 test('résolution nouveau message : les buffers nettoyés ne gardent pas une alerte de fermeture',async()=>{
  const u=await app();u.c.act.newMessage();u.api.onSave=async()=>{throw conflictError();};field(u,'text','Ancien');await u.runTimers();u.api.onMessage=async id=>({id,accountId:1,subject:'Objet serveur',draftVersion:10,draft:{text:'Texte serveur',to:'',cc:'',savedAt:'x'}});await u.c.act.newMailReload();let blocked=false;u.listeners.beforeunload({preventDefault(){blocked=true;}});assert.equal(blocked,false);
 });
+
+test('duplicate suggestions arriving late never replace another profile review',async()=>{
+ const data={...page([row(1)]),profiles:[...profiles,{id:'anove',name:'Anove',initials:'A',accounts:[]}]};const u=await app({state:data});let release;
+ u.api.duplicates=profile=>profile==='perso'?new Promise(r=>release=r):Promise.resolve({items:[],merges:[],marker:'anove'});
+ u.c.act.selectApp({app:'duplicates'});u.c.act.selectProfile({id:'anove'});await tick(6);release({items:[{id:'private-personnel'}],merges:[],marker:'perso'});await tick(6);assert.equal(u.s().duplicates.marker,'anove');assert.equal(u.s().duplicatesReview,null);assert.equal(u.calls.send.length,0);
+});
+test('duplicate review requires a separate exact pair confirmation and exposes stale refusal',async()=>{
+ const u=await app();const candidate={id:'pair',version:'version-a',left:{id:'a'},right:{id:'b'},stale:false};u.api.duplicates=async()=>({items:[candidate],merges:[]});let called=0;
+ u.api.mergeDuplicate=async(profile,id,input)=>{called++;assert.equal(profile,'perso');assert.equal(id,'pair');assert.deepEqual(plain(input),{version:'version-a',keepId:'b',confirm:true});throw Object.assign(new Error('Ces fiches ont changé'),{code:'duplicate_changed'});};
+ u.c.act.selectApp({app:'duplicates'});await tick(6);u.c.act.reviewDuplicate({id:'pair'});assert.equal(called,0);u.c.act.duplicateKeep({}, {target:{value:'b'}});await u.c.act.confirmDuplicateMerge();await tick(6);assert.equal(called,1);assert.match(u.s().duplicatesError,/changé/);assert.equal(u.s().duplicatesBusy,false);assert.equal(u.calls.send.length,0);
+});

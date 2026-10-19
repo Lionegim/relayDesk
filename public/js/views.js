@@ -45,7 +45,7 @@ export function renderApp(s, v) {
     <div class="${cls('app', v.compact && 'compact', mobile && 'is-mobile', mobile && `pane-${mail ? s.pane || 'list' : 'list'}`, mobile && s.drawer && 'drawer-open')}" ${raw(mobile ? '' : `style="grid-template-columns:${cols}"`)}>
       ${sidebar(s, v)}
       ${when(mobile && s.drawer, () => html`<div class="drawer-backdrop" data-on-click="closeDrawer" aria-hidden="true"></div>`)}
-      ${mail ? [messageList(s, v), reader(s, v)] : contactsPage(s, v)}
+      ${mail ? [messageList(s, v), reader(s, v)] : s.app==='duplicates'?duplicatesPage(s,v):contactsPage(s, v)}
     </div>
     ${when(s.newMailOpen, () => newMailDialog(s, v))}
     ${when(s.c, () => connectWizard(s))}
@@ -84,14 +84,15 @@ function sidebar(s, v) {
 
       <div class="side-section">
         ${[['mail', 'Messages', unread, 'mail'], ['contacts', 'Contacts', v.contactsMine.length, 'people']].map(([app, label, n, ic]) => html`
-          <button class="${cls('side-item', s.app === app && 'is-on')}" data-on-click="selectApp" data-app="${app}">
+          <button class="${cls('side-item', (s.app === app || app==='contacts' && s.app==='duplicates') && 'is-on')}" data-on-click="selectApp" data-app="${app}">
             <span class="ico neutral">${icon(ic)}</span><span class="grow">${label}</span>
             ${when(n, () => html`<span class="count">${n}</span>`)}
           </button>`)}
       </div>
 
-      ${s.app === 'contacts' ? html`
+      ${['contacts','duplicates'].includes(s.app) ? html`
         <div class="side-section">
+          <button class="${cls('side-item',s.app==='duplicates' && 'is-on')}" data-on-click="selectApp" data-app="duplicates"><span class="ico">${icon('people')}</span><span class="grow">Doublons à vérifier</span></button>
           <div class="side-label">Groupes</div>
           ${GROUPS.map(([id, label]) => html`
             <button class="${cls('side-item', s.group === id && 'is-on')}" data-on-click="selectGroup" data-id="${id}">
@@ -553,7 +554,7 @@ function contactsPage(s, v) {
             <h1>${v.groupTitle}</h1>
             <span class="muted" style="font-size:13px">${plural(v.contacts.length, 'contact')}</span>
           </div>
-          <button class="btn btn-brand" data-on-click="openContactImport">Importer des contacts</button>
+          <button class="btn btn-ghost" data-on-click="selectApp" data-app="duplicates">Vérifier les doublons</button><button class="btn btn-brand" data-on-click="openContactImport">Importer des contacts</button>
         </div>
 
         <div class="contacts-tools">
@@ -926,4 +927,18 @@ function personDialog(s,v) {
  ${when(!p.timeline.items.length,()=>html`<p>Aucun échange correspondant dans l’historique importé. Ajoute un email ou téléphone connu, ou lie une autre fiche de cette personne.</p>`)}
  ${when(p.timeline.nextOffset!==null,()=>html`<button class="btn btn-ghost" data-on-click="personMore" ${disabled}>Afficher les conversations plus anciennes</button>`)}
  <p class="muted">Pour répondre, ouvre une conversation. Chaque envoi exige toujours ta validation de l’aperçu exact.</p>`:html`<p>Chargement de la fiche…</p>`}</div></section></div>`;
+}
+
+// Duplicate workbench: evidence remains visible; every merge has its own review step.
+function duplicatesPage(s,v) {
+ const d=s.duplicates,items=d?.items || [],pending=items.filter(c=>!c.dismissed),dismissed=items.filter(c=>c.dismissed),visible=(s.duplicatesTab==='dismissed'?dismissed:pending),busy=raw(s.duplicatesBusy || s.offline?'disabled':'');
+ const record=(c,expanded)=>html`<article class="duplicate-person"><div class="duplicate-person-head"><span class="avatar">${initialsOf(c.name)}</span><div><h3>${c.name}</h3><small>${c.accounts.join(' · ') || 'Fiche locale'} · ${plural(c.members.length,'fiche')}</small></div></div>${when(c.title,()=>html`<p class="muted">${c.title}</p>`)}<ul>${c.identities.slice(0,expanded?undefined:6).map(i=>html`<li><span>${i.kind==='email'?'Email':'Tél.'}</span>${i.value}${when(i.normalized.startsWith('unresolved:'),()=>html` <small>· pays à préciser</small>`)}</li>`)}</ul>${when(!expanded && c.identities.length>6,()=>html`<small>+ ${c.identities.length-6} autres identifiants visibles avant confirmation</small>`)}</article>`;
+ return html`<main class="contacts duplicate-page"><div class="contacts-scroll"><div class="duplicate-workbench"><header class="duplicates-head">${when(s.mobile,()=>html`<button class="icon-btn mobile-only" data-on-click="openDrawer" aria-label="Ouvrir le menu">${icon('lines')}</button>`)}<div class="grow"><p class="duplicates-eyebrow">CONTACTS · ${v.profile.name}</p><h1>Doublons à vérifier</h1><p>Un carnet plus clair, une personne à la fois.</p></div><button class="btn btn-ghost" data-on-click="rescanDuplicates" ${busy}>${s.duplicatesBusy?'Recherche…':'Relancer la recherche'}</button></header>
+ <p class="muted duplicate-note">La recherche s’actualise en arrière-plan dans ce profil. Compare les fiches avant de les fusionner. Les carnets Google et Outlook restent inchangés.</p>
+ <div class="duplicates-toolbar"><button class="pill ${s.duplicatesTab==='pending'?'is-on':''}" data-on-click="duplicateTab" data-tab="pending">À examiner · ${pending.length}</button><button class="pill ${s.duplicatesTab==='dismissed'?'is-on':''}" data-on-click="duplicateTab" data-tab="dismissed">Écartés · ${dismissed.length}</button><span class="muted">${d?.scannedAt?'Dernière analyse : '+new Date(d.scannedAt).toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit'}):'Première analyse en cours…'}</span></div>
+ ${when(s.duplicatesError,()=>html`<p class="duplicate-error" role="alert">${s.duplicatesError}</p>`)}${when(d?.pending,()=>html`<p class="muted" role="status">Des fiches ont changé. La prochaine analyse actualisera les suggestions.</p>`)}${when(d?.crowded || d?.limited,()=>html`<p class="muted">Certaines correspondances trop nombreuses sont limitées. La liaison manuelle reste disponible dans chaque fiche.</p>`)}
+ <div class="duplicates-list">${visible.slice(0,s.duplicatesLimit).map(c=>{const review=s.duplicatesReview?.id===c.id,r=review?s.duplicatesReview:c;return html`<section class="duplicate-card" data-key="${c.id}"><div class="duplicate-evidence"><strong>${c.rank===2?'Identifiant commun':'Nom à rapprocher'}</strong>${c.reasons.map(r=>html`<span>${r.type==='name'?'Même nom, accents et ordre ignorés':r.type==='email'?'Email identique : '+r.value:'Téléphone identique : '+r.value}</span>`)}</div><div class="duplicate-pair">${record(r.left,review)}${record(r.right,review)}</div><footer class="duplicate-actions"><p>${c.stale?'Ces fiches ont changé : relance la recherche.':c.rank===2?'Une adresse partagée peut appartenir à plusieurs personnes.':'Un nom identique peut désigner deux personnes différentes.'}</p>${c.dismissed?html`<button class="btn btn-ghost" data-on-click="dismissDuplicate" data-id="${c.id}" data-restore="true" ${busy}>Remettre à examiner</button>`:html`<button class="btn btn-ghost" data-on-click="dismissDuplicate" data-id="${c.id}" ${busy}>Écarter</button><button class="btn btn-brand" data-on-click="reviewDuplicate" data-id="${c.id}" ${raw(c.stale || s.duplicatesBusy || s.offline?'disabled':'')}>Comparer et fusionner</button>`}</footer>
+ ${when(review,()=>html`<div class="duplicate-confirm"><h4>Vérifier la fusion</h4><p>Tous les emails, téléphones et échanges seront réunis sous la fiche principale. Les destinataires des conversations restent inchangés. Tu pourras annuler cette fusion.</p><label>Fiche principale<select data-on-change="duplicateKeep"><option value="${r.left.id}" ${raw(s.duplicatesKeep===r.left.id?'selected':'')}>${r.left.name} · ${r.left.accounts.join(', ')}</option><option value="${r.right.id}" ${raw(s.duplicatesKeep===r.right.id?'selected':'')}>${r.right.name} · ${r.right.accounts.join(', ')}</option></select></label><div><button class="btn btn-ghost" data-on-click="cancelDuplicateReview" ${busy}>Annuler</button><button class="btn btn-brand" data-on-click="confirmDuplicateMerge" ${busy}>Confirmer la fusion</button></div></div>`)}</section>`;})}</div>
+ ${when(!d,()=>html`<p role="status">Chargement des suggestions…</p>`)}${when(d && !visible.length,()=>html`<div class="duplicates-empty"><h2>${s.duplicatesTab==='dismissed'?'Aucune suggestion écartée':'Aucun doublon à examiner'}</h2><p>${d.pending?'L’analyse est en cours.':'De nouvelles correspondances apparaîtront ici si tes fiches changent.'}</p></div>`)}${when(visible.length>s.duplicatesLimit,()=>html`<button class="btn btn-ghost" data-on-click="duplicatesMore">Afficher d’autres suggestions</button>`)}
+ ${when(d?.merges.length,()=>html`<details class="duplicate-history"><summary>Fusions récentes · ${d.merges.length}</summary>${d.merges.map(m=>html`<div><p>${m.sourceName} → ${m.targetName}<small>${new Date(m.created_at).toLocaleString('fr-FR')}</small></p><button class="btn btn-ghost" data-on-click="undoDuplicateMerge" data-id="${m.id}" ${busy}>Annuler cette fusion</button></div>`)}</details>`)}<p class="muted duplicate-note">Les suggestions sont calculées sur le serveur, sans envoyer ton carnet à une IA. Aucun message n’est envoyé depuis cet écran.</p></div></div></main>`;
 }
