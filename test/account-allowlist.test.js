@@ -5,7 +5,7 @@ import {readConfig} from '../src/runtime/config.js';
 import {prepareMailConnection} from '../src/providers/mail-credentials.js';
 import {createGmailSync} from '../src/providers/gmail/sync.js';
 import {createOutlookSync} from '../src/providers/outlook/sync.js';
-import {ME,PEER,msg,closed,tick,until,setupWhatsApp,pairAndOpen} from './whatsapp-helpers.js';
+import {ME,PEER,msg,closed,tick,until,setupWhatsApp,pairAndOpen,linkedAccount} from './whatsapp-helpers.js';
 
 const entries=parseAllowedAccounts(`gmail:owner@example.test,outlook:work@example.test,whatsapp:+${ME}`);
 const policy=accountPolicy(entries);
@@ -65,4 +65,15 @@ test('WhatsApp : reconnexion interdite bloquée avant création du socket',async
  const {linkId}=await ctx.wa.startLink({accountId:account.id,profileId:'perso',name:'Interdit',windowDays:7});
  await until(()=>ctx.wa.linkStatus(linkId).status==='error');assert.equal(ctx.sockets.list.length,0);
  assert.match(ctx.wa.linkStatus(linkId).error,/autorisés/);
+});
+
+test('WhatsApp : redémarrage avec session désormais interdite, aucun socket repris',async t=>{
+ const first=await setupWhatsApp();await linkedAccount(first);await first.wa.sync.stop();
+ const next=await setupWhatsApp({db:first.db,vault:first.vault,assertAccountAllowed:accountPolicy(['gmail:owner@example.test'])});
+ t.after(async()=>{await next.wa.sync.stop();next.db.close();});
+ await next.wa.sync.start();await tick();await next.wa.sync.drain();
+ assert.equal(next.sockets.list.length,0);
+ const id=next.store.accountsBySvc('whatsapp').find(id=>next.store.getAccount(id).address===`+${ME}`);
+ assert.equal(next.store.getAccount(id).status,'À reconnecter');
+ assert.match(next.store.getSync(id).error,/autorisés/);
 });
