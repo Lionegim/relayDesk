@@ -577,3 +577,26 @@ svg { display: block; }
 
 .service:disabled:has(.social-brand-icon) { opacity:1; }
 .service:disabled:has(.social-brand-icon) > :not(.service-mark) { opacity:.55; }
+
+/* Personnes : les identités et échanges gardent leur compte et leur profil visibles. */
+.person-dialog { width:min(780px,100%); max-height:90dvh; display:flex; flex-direction:column; }
+.person-dialog .composer-head h3 { margin:3px 0; }
+.person-body { overflow:auto; min-height:0; }
+.person-name { border:0; background:transparent; padding:6px 0; text-align:left; color:inherit; font:inherit; cursor:pointer; }
+.person-name:hover { text-decoration:underline; }
+.identity-list { padding:0; margin:10px 0 18px; list-style:none; }
+.identity-list li { display:flex; flex-wrap:wrap; align-items:center; gap:10px; padding:9px 0; border-bottom:1px solid var(--border); overflow-wrap:anywhere; }
+.identity-kind { width:72px; color:var(--muted-foreground); font-size:12px; }
+.identity-form { display:flex; gap:10px; align-items:end; flex-wrap:wrap; }
+.identity-form label,.person-merge label { display:flex; flex-direction:column; gap:5px; font-size:12px; }
+.identity-form select,.person-merge select { padding:9px; border:1px solid var(--border); background:var(--card); color:var(--foreground); border-radius:6px; max-width:100%; }
+.person-merge { margin:24px 0; padding:14px; border:1px solid var(--border); border-radius:10px; }
+.person-merge summary { cursor:pointer; font-weight:600; }
+.merge-review { margin-top:12px; padding:12px; background:var(--muted); border-radius:8px; }
+.person-timeline { display:flex; flex-direction:column; gap:8px; }
+.person-exchange { display:flex; flex-direction:column; align-items:stretch; gap:5px; text-align:left; border:1px solid var(--border); border-radius:10px; padding:14px; background:var(--card); color:var(--foreground); cursor:pointer; min-width:0; }
+.person-exchange:hover { background:var(--muted); }
+.person-exchange > span { color:var(--muted-foreground); font-size:12px; }
+.contact-import-account { display:flex; align-items:center; flex-wrap:wrap; gap:12px; padding:16px 0; border-bottom:1px solid var(--border); }
+.contact-import-account p { margin:4px 0; }
+@media(max-width:760px) { .person-dialog { max-height:100dvh; } .identity-form .grow { min-width:180px; } }

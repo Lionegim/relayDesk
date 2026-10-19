@@ -158,7 +158,7 @@ export function createWhatsAppSync({ store, vault, lib, makeSocket, log = consol
     if(stopped || paused || epoch(accountId)!==at || !store.hasAccount(accountId)) return;
     let s;
     const auth = createAuthState({ store, vault, accountId, lib: protocol,
-      onAliasesChanged:()=>{if(s && current(accountId,s))reconcilePolicies(accountId,s);},
+      onAliasesChanged:()=>{if(s && current(accountId,s)){reconcilePolicies(accountId,s);for(const jid of store.waChats(accountId))if(!isGroup(jid) && !s.ephemeral.has(jid))rebuild(accountId,jid);}},
     });
     openingAuth.add(auth);
     if (stopped || paused || epoch(accountId) !== at || !store.hasAccount(accountId) || (link && link.done)) { openingAuth.delete(auth); auth.close(); return; }
@@ -354,10 +354,12 @@ export function createWhatsAppSync({ store, vault, lib, makeSocket, log = consol
     if (!msgs.length) return;
     const name = store.waChatName(accountId, chatJid);
     const rec = chatToRecord(chatJid, msgs, { name, state: store.threadState(accountId, chatJid), incoming });
+    const phone=!isGroup(chatJid) && (sessions.get(accountId)?.auth.jidAliases(chatJid) || [chatJid]).map(phoneOf).find(Boolean);
+    if(phone)rec.participants=[{kind:'phone',value:phone}];
     store.upsertThread(accountId, rec, { syncFolder: true });
     if (isGroup(chatJid)) return; // un groupe n'est pas une personne : aucun contact créé
     const who = name || phoneOf(chatJid) || 'Contact WhatsApp';
-    store.upsertAccountContact(accountId, chatJid, { id: contactId(accountId, chatJid), name: who, title: phoneOf(chatJid) || '', channel: 'whatsapp', last: dayLabel(msgs.at(-1).ts) });
+    store.upsertAccountContact(accountId, chatJid, { id: contactId(accountId, chatJid), name: who, title: phone || '', channel: 'whatsapp', last: dayLabel(msgs.at(-1).ts) });
   }
 
   function names(accountId, contacts) {

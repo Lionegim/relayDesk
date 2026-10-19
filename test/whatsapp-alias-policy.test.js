@@ -91,3 +91,15 @@ test('a late authenticated own-LID credential update purges prior self text unde
  c.sock.auth.state.creds.me.lid=LID;c.sock.emit('creds.update',{});
  assert.equal(count(c,LID),0);assert.ok(c.store.waEphemeralChats(c.accountId).includes(LID));
 });
+
+test('late authenticated phone mapping indexes retained LID history without another message',async t=>{
+ const c=await fixture(t),phone=PEER.split('@')[0];
+ const gmail=c.store.upsertAccount('perso',{name:'Synthetic Google',channel:'email',svc:'gmail',address:'owner@example.test'});
+ c.store.importContacts(gmail.id,[{externalId:'person',name:'Synthetic person',identities:[{kind:'phone',value:'+'+phone}]}]);
+ const person=c.store.snapshot().contacts.find(x=>x.sourceAccountIds.includes(gmail.id));
+ c.sock.emit('messages.upsert',{type:'notify',messages:[msg('earlier','Synthetic retained history',{chat:LID})]});assert.equal(c.store.person('perso',person.id).timeline.total,0);
+ await c.sock.auth.state.keys.set({'lid-mapping':{[phone]:LID_USER,[LID_USER+'_reverse']:phone}});
+ const wa=c.store.snapshot().contacts.find(x=>x.sourceAccountIds.includes(c.accountId));
+ assert.ok(wa.identities.some(x=>x.normalized==='+'+phone));
+ c.store.mergeContacts('perso',person.id,wa.id);assert.equal(c.store.person('perso',person.id).timeline.total,1);assert.equal(c.sock.sent.length,0);
+});

@@ -14,6 +14,7 @@ const BASE_SCOPES = ['openid', 'email', 'offline_access', `${GRAPH}User.Read`];
 
 // Capacités Relay → permission Graph demandée. Mail.ReadWrite couvre classement et brouillons.
 export const OUTLOOK_SCOPES = {
+  contacts: `${GRAPH}Contacts.Read`,
   read: `${GRAPH}Mail.Read`,
   labels: `${GRAPH}Mail.ReadWrite`,
   drafts: `${GRAPH}Mail.ReadWrite`,
@@ -32,6 +33,7 @@ export function grantedPermissions(scopes) {
     rw && 'labels',
     rw && 'drafts',
     s.has('mail.send') && 'send',
+    s.has('contacts.read') && 'contacts',
   ].filter(Boolean);
 }
 

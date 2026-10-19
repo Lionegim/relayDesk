@@ -32,7 +32,7 @@ test('snapshot online WAL : archive chiffrée cohérente, sauvegarde distincte, 
   const f=fixture(t),waCiphertext=f.store.waAuthGet(f.account,'creds','').ciphertext,identity=f.store.getReplyMemory(f.id,{internal:true}).identity;
   // La connexion reste ouverte et le WAL contient les dernières écritures.
   f.store.saveDraft(f.id,'Dernier texte dans WAL');const version=f.store.getMessage(f.id).draftVersion;
-  const result=await createBackup(f.opts);assert.equal(result.schemaVersion,13);assert.equal(statSync(f.archive).mode&0o777,0o600);
+  const result=await createBackup(f.opts);assert.equal(result.schemaVersion,f.db.prepare('PRAGMA user_version').get().user_version);assert.equal(statSync(f.archive).mode&0o777,0o600);
   const encrypted=readFileSync(f.archive);assert.equal(encrypted.subarray(0,8).toString(),'RLYBAK01');assert.equal(encrypted.includes(Buffer.from('Message confidentiel fictif')),false);assert.equal(encrypted.includes(f.vaultKey),false);
   assert.equal(JSON.parse(readFileSync(f.statusFile)).sha256,result.sha256);
   const destination=join(f.dir,'restored');await restoreBackup({...f.opts,dataDir:destination});

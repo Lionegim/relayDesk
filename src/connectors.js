@@ -2,6 +2,7 @@
 // (src/providers/) n'existent pas : aucun secret ne transite par cette description.
 
 export const PERMISSIONS = {
+  contacts: ['Contacts', 'Importer les noms, emails et téléphones (lecture seule)'],
   read: ['Lecture', 'Messages et fils de discussion'],
   labels: ['Libellés', 'Classer chez le fournisseur'],
   drafts: ['Brouillons', 'Préparer des réponses'],
@@ -12,12 +13,12 @@ export const PERMISSIONS = {
 // fields : [clé, libellé, valeur initiale, placeholder, type, lecture seule, pleine largeur]
 export const SERVICES = {
   // `real` : connexion effective. `available` : permissions déjà prises en charge (les autres restent grisées).
-  gmail: { name: 'Gmail', provider: 'Google', ch: 'email', note: 'Gmail ou Google Workspace', auth: 'oauth', btn: 'Continuer avec Google', perms: ['read', 'labels', 'drafts', 'send', 'mcp'],
-    real: true, available: ['read', 'labels', 'drafts', 'send'],
-    scopes: { read: ['Lire les messages', 'gmail.readonly'], labels: ['Classer, lu/non lu, archiver', 'gmail.modify'], drafts: ['Créer des brouillons', 'gmail.compose'], send: ['Envoyer des messages', 'gmail.send'] } },
-  outlook: { name: 'Microsoft Outlook / Microsoft 365', provider: 'Microsoft', ch: 'email', note: 'Compte personnel ou professionnel', auth: 'oauth', btn: 'Continuer avec Microsoft', perms: ['read', 'labels', 'drafts', 'send', 'mcp'],
-    real: true, available: ['read', 'labels', 'drafts', 'send'],
-    scopes: { read: ['Lire les messages', 'Mail.Read'], labels: ['Classer les messages', 'Mail.ReadWrite'], drafts: ['Créer des brouillons', 'Mail.ReadWrite'], send: ['Envoyer des messages', 'Mail.Send'] } },
+  gmail: { name: 'Gmail', provider: 'Google', ch: 'email', note: 'Gmail ou Google Workspace', auth: 'oauth', btn: 'Continuer avec Google', perms: ['read', 'labels', 'drafts', 'send', 'contacts', 'mcp'],
+    real: true, available: ['read', 'labels', 'drafts', 'send', 'contacts'],
+    scopes: { contacts:['Lire le carnet Google Contacts','contacts.readonly'], read: ['Lire les messages', 'gmail.readonly'], labels: ['Classer, lu/non lu, archiver', 'gmail.modify'], drafts: ['Créer des brouillons', 'gmail.compose'], send: ['Envoyer des messages', 'gmail.send'] } },
+  outlook: { name: 'Microsoft Outlook / Microsoft 365', provider: 'Microsoft', ch: 'email', note: 'Compte personnel ou professionnel', auth: 'oauth', btn: 'Continuer avec Microsoft', perms: ['read', 'labels', 'drafts', 'send', 'contacts', 'mcp'],
+    real: true, available: ['read', 'labels', 'drafts', 'send', 'contacts'],
+    scopes: { contacts:['Lire le carnet Outlook','Contacts.Read'], read: ['Lire les messages', 'Mail.Read'], labels: ['Classer les messages', 'Mail.ReadWrite'], drafts: ['Créer des brouillons', 'Mail.ReadWrite'], send: ['Envoyer des messages', 'Mail.Send'] } },
   proton: { name: 'Proton Mail', disabled: true, state: 'À venir', provider: 'Proton Bridge', ch: 'email', note: 'Via Proton Mail Bridge sur cette machine', auth: 'fields', btn: 'Tester la connexion', perms: ['read', 'labels', 'send', 'mcp'],
     fields: [['host', 'Hôte IMAP', '127.0.0.1'], ['port', 'Port', '1143'], ['address', 'Adresse', '', 'prenom@proton.me'], ['password', 'Mot de passe Bridge', '', '••••••••', 'password']] },
   whatsapp: { name: 'WhatsApp', provider: 'WhatsApp', ch: 'whatsapp', note: 'Lier ton téléphone par QR code', auth: 'qr', btn: 'Afficher le QR code',

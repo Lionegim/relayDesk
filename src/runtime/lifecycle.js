@@ -62,7 +62,7 @@ export function createRuntime(config,{providerFactory=assembleProviders,appFacto
         const key=loadKey({envKey:config.secrets.RELAY_SECRET_KEY,keyFile:config.keyFile,allowCreate:!existsSync(path)});
         const vault=createVault(key);verifyExistingVault(path,vault);
         db=openDatabase(path);seedIfEmpty(db,{demo:config.demo});store=createStore(db);
-        store.pruneReplyMemory();store.learnAvailableReplies();
+        store.pruneReplyMemory();store.learnAvailableReplies();store.contactsBackfill();
         if(config.auth?.enabled) {
           const factory=authFactory || (await import('../auth/index.js')).createOwnerAuth;
           ownerAuth=await factory({config,db});

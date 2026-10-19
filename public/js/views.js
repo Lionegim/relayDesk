@@ -52,6 +52,8 @@ export function renderApp(s, v) {
     ${when(s.confirm?.kind === 'disconnect', () => disconnectDialog(s.confirm))}
     ${when(s.confirm?.kind === 'send' && s.confirm.preview, () => sendDialog(s.confirm, s.offline))}
     ${when(s.authPanel, () => authDevices(s))}
+    ${when(s.contactImport, () => contactImportDialog(s,v))}
+    ${when(s.personOpen, () => personDialog(s,v))}
     ${when(s.toast, () => html`<div class="${cls('toast', s.toastOk && 'toast-ok')}" role="status">${s.toast}</div>`)}`;
 }
 
@@ -551,7 +553,7 @@ function contactsPage(s, v) {
             <h1>${v.groupTitle}</h1>
             <span class="muted" style="font-size:13px">${plural(v.contacts.length, 'contact')}</span>
           </div>
-          <button class="btn btn-brand">+ Ajouter un contact</button>
+          <button class="btn btn-brand" data-on-click="openContactImport">Importer des contacts</button>
         </div>
 
         <div class="contacts-tools">
@@ -572,7 +574,7 @@ function contactsPage(s, v) {
           <div class="picked-bar">
             <span style="font-weight:600;white-space:nowrap">${v.picked.length} sélectionné${v.picked.length > 1 ? 's' : ''}</span>
             <div class="grow"></div>
-            <button class="btn btn-ghost" data-on-click="mailPicked">Voir les messages</button>
+            ${when(v.picked.length===1,()=>html`<button class="btn btn-ghost" data-on-click="focusContact" data-id="${v.picked[0].id}">Voir la personne et ses échanges</button>`)}
             <button class="btn btn-ghost" data-on-click="clearPicked">Désélectionner</button>
           </div>`)}
 
@@ -586,7 +588,7 @@ function contactsPage(s, v) {
             return html`
               <div class="${cls('trow body', s.picked[c.id] && 'is-picked', s.focusId === c.id && 'is-focus')}" data-key="${c.id}" data-on-click="focusContact" data-id="${c.id}">
                 <div class="cell-check">${checkbox(!!s.picked[c.id], 'pickContact', c.id, `Sélectionner ${c.name}`)}</div>
-                <div class="cell-name"><span class="avatar" style="background:${avBg};color:${avFg}">${initialsOf(c.name)}</span><span class="ellipsis">${c.name}</span></div>
+                <div class="cell-name"><span class="avatar" style="background:${avBg};color:${avFg}">${initialsOf(c.name)}</span><button class="person-name ellipsis" data-on-click="focusContact" data-id="${c.id}">${c.name}</button></div>
                 <span class="cell-title ellipsis" style="color:${c.title ? 'var(--foreground)' : 'var(--muted-foreground)'}">${c.title || 'Ajouter un titre…'}</span>
                 <div style="padding:0 12px"><button class="${cls('freq', c.freq && 'is-set')}" data-on-click="cycleFreq" data-id="${c.id}">${FREQ[c.freq]}</button></div>
                 <div class="cell-channels">
@@ -891,4 +893,37 @@ function authDevices(s) {
     ${devices.map(device=>html`<div class="auth-device"><div><strong>${device.current || device.id===s.auth?.sessionId?'Cet appareil':device.device || 'Autre session'}</strong><p class="muted">Connexion : ${new Date(device.createdAt || device.authenticatedAt).toLocaleString('fr-FR')}</p></div><button class="btn btn-ghost" data-on-click="authRevoke" data-id="${device.id}">Déconnecter</button></div>`)}
     <div class="auth-dialog-actions"><a class="btn btn-ghost" href="/auth/login?reauth=1">Confirmer mon identité</a><button class="btn btn-brand" data-on-click="authClose">Fermer</button></div>
   </section></div>`;
+}
+
+
+function contactImportDialog(s,v) {
+ const accounts=v.profile.accounts.filter(a=>['gmail','outlook'].includes(a.svc));
+ return html`<div class="overlay"><section class="dialog person-dialog" role="dialog" aria-modal="true" aria-label="Importer des contacts">
+ <header class="composer-head"><h3 class="grow">Importer des contacts · ${v.profile.name}</h3><button class="close-btn" data-on-click="closeContactImport" aria-label="Fermer">×</button></header>
+ <div class="dialog-body"><p>Importer les noms, emails et téléphones en lecture seule. Les carnets d’origine restent inchangés. Chaque compte reste dans son profil.</p>
+ ${accounts.map(a=>html`<article class="contact-import-account">${providerMark(a.svc,a.channel)}<div class="grow"><strong>${a.name}</strong><p class="muted">${a.address || ''}</p></div>
+ ${a.perms?.includes('contacts') ? html`<button class="btn btn-brand" data-on-click="importContacts" data-id="${a.id}" ${raw(s.contactImportBusy || s.offline?'disabled':'')}>${s.contactImportBusy===a.id?'Import en cours…':'Importer le carnet'}</button>`:html`<button class="btn btn-ghost" data-on-click="authorizeContacts" data-id="${a.id}" ${raw(s.offline?'disabled':'')}>Autoriser les contacts</button>`}</article>`)}
+ ${when(!accounts.length,()=>html`<p>Connecte un compte Google ou Outlook dans ce profil.</p>`)}
+ <p class="muted">Les doublons restent séparés jusqu’à ta validation. Aucun message n’est envoyé pendant l’import.</p></div></section></div>`;
+}
+function personDialog(s,v) {
+ const p=s.person,source=(s.data.contacts || []).find(c=>c.id===s.personMerge && c.p===s.profileId);
+ const disabled=raw(s.personBusy || s.offline?'disabled':'');
+ const identityList=items=>items.map(i=>html`<li><span class="identity-kind">${i.kind==='email'?'Email':'Téléphone'}</span><span class="grow">${i.value}${when(i.needsCountryCode,()=>html` <small>· pays à préciser avant rapprochement</small>`)}${when(i.sharedWith>1,()=>html` <small>· partagé par ${i.sharedWith} fiches, rapprochement à confirmer</small>`)}</span><small class="muted">${({gmail:'Google',outlook:'Outlook',whatsapp:'WhatsApp',manual:'Ajout manuel'})[i.source] || i.source}</small>
+ ${when(i.source==='manual',()=>html`<button class="link-btn" data-on-click="removePersonIdentity" data-kind="${i.kind}" data-normalized="${i.normalized}" ${disabled}>Retirer</button>`)}</li>`);
+ return html`<div class="overlay"><section class="dialog person-dialog" role="dialog" aria-modal="true" aria-label="Fiche contact">
+ <header class="composer-head"><div class="grow"><small class="muted">${v.profile.name}</small><h3>${p?.name || 'Fiche contact'}</h3></div><button class="close-btn" data-on-click="closePerson" aria-label="Fermer la fiche contact">×</button></header>
+ <div class="dialog-body person-body">${when(s.personError,()=>html`<p role="alert" class="error">${s.personError}</p>`)}
+ ${p?html`<p class="muted">${p.title || ''}</p><h4>Emails et téléphones</h4><ul class="identity-list">${identityList(p.identities)}</ul>
+ <div class="identity-form"><label>Type<select data-on-change="personField" data-field="personKind"><option value="email" ${raw(s.personKind==='email'?'selected':'')}>Email</option><option value="phone" ${raw(s.personKind==='phone'?'selected':'')}>Téléphone</option></select></label><label class="grow">Identifiant<input class="input" data-key="person-identity" value="${s.personValue}" placeholder="${s.personKind==='phone'?'+33…':'adresse@exemple.fr'}" data-on-input="personField" data-field="personValue" maxlength="254"></label><button class="btn btn-ghost" data-on-click="addPersonIdentity" ${disabled}>Ajouter</button></div>
+ <details class="person-merge" ${raw(s.personMergeOpen?'open':'')}><summary data-on-click="togglePersonMerge">Lier ou séparer des fiches</summary><p>Lie uniquement les fiches de la même personne. Une adresse partagée ou un numéro familial peut appartenir à plusieurs personnes. La liaison reste dans ${v.profile.name} et peut être annulée.</p>
+ ${when(p.candidates.length,()=>html`<p class="muted">Identifiant commun avec : ${p.candidates.map(c=>c.name).join(', ')}. À vérifier avant de lier.</p>`)}
+ <label>Autre fiche dans ce profil<select data-on-change="personField" data-field="personMerge"><option value="">Choisir une fiche…</option>${v.contactsMine.filter(c=>c.id!==p.id).map(c=>html`<option value="${c.id}" ${raw(s.personMerge===c.id?'selected':'')}>${c.name} · ${(c.identities || []).map(i=>i.value).slice(0,2).join(' · ')}</option>`)}</select></label>
+ ${when(source,()=>html`<div class="merge-review"><strong>${source.name}</strong><ul class="identity-list">${identityList((source.identities || []).map(i=>({...i,source:i.source==='manual'?'Ajout manuel (autre fiche)':i.source})))}</ul><p>Cette fiche et celle de ${p.name} seront regroupées. Les conversations et destinataires d’origine seront conservés.</p><button class="btn btn-brand" data-on-click="mergePerson" ${disabled}>Confirmer la liaison de ces fiches</button></div>`)}
+ ${p.merges.map(m=>html`<p><button class="link-btn" data-on-click="undoPersonMerge" data-id="${m.id}" ${disabled}>Annuler la liaison du ${new Date(m.created_at).toLocaleString('fr-FR')}</button></p>`)}</details>
+ <h4>Échanges · ${p.timeline.total} conversation${p.timeline.total>1?'s':''}</h4><p class="muted">Historique déjà importé dans ce profil. Les discussions de groupe et leurs participants restent intacts.</p>
+ ${when(p.identities.some(i=>i.sharedWith>1),()=>html`<p class="muted">Les identifiants partagés ne regroupent pas les échanges automatiquement. Lie les fiches après vérification si elles représentent la même personne.</p>`)}<div class="person-timeline">${p.timeline.items.map(m=>html`<button class="person-exchange" data-on-click="personConversation" data-id="${m.id}"><span>${CH[m.channel]?.label || m.channel} · ${m.account} · ${whenLabel(m.sortAt)}</span><strong>${m.subject}</strong><span class="ellipsis">${m.preview}</span></button>`)}</div>
+ ${when(!p.timeline.items.length,()=>html`<p>Aucun échange correspondant dans l’historique importé. Ajoute un email ou téléphone connu, ou lie une autre fiche de cette personne.</p>`)}
+ ${when(p.timeline.nextOffset!==null,()=>html`<button class="btn btn-ghost" data-on-click="personMore" ${disabled}>Afficher les conversations plus anciennes</button>`)}
+ <p class="muted">Pour répondre, ouvre une conversation. Chaque envoi exige toujours ta validation de l’aperçu exact.</p>`:html`<p>Chargement de la fiche…</p>`}</div></section></div>`;
 }

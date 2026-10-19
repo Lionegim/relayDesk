@@ -14,6 +14,7 @@ const PROFILE_URL = 'https://gmail.googleapis.com/gmail/v1/users/me/profile';
 export const AUTHORITY = 'https://accounts.google.com';
 export const READ_SCOPES = ['openid', 'email', 'https://www.googleapis.com/auth/gmail.readonly'];
 export const GMAIL_SCOPES = {
+  contacts: 'https://www.googleapis.com/auth/contacts.readonly',
   read: READ_SCOPES[2],
   labels: 'https://www.googleapis.com/auth/gmail.modify',
   drafts: 'https://www.googleapis.com/auth/gmail.compose',

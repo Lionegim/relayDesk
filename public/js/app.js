@@ -19,6 +19,7 @@ const state = {
   composing: null, drafts: {}, expandedTrail: {},
   ai: null, aiTone: 'Cordial', aiIntent: '',
   group: 'all', picked: {}, focusId: null, contactQuery: '', contactSearch: false, sort: 'recent',
+  personOpen:null, person:null, personError:null, personBusy:false, personKind:'email', personValue:'', personMerge:'', contactImport:false, contactImportBusy:null, fromPerson:false,
   c: null,
   details: {},
   confirm: null, auth: null, authPanel: null,
@@ -388,7 +389,7 @@ function derive(s) {
   const q = s.query.trim().toLowerCase();
   const list = s.paged ? byNav : byNav.filter(m => (s.channel === 'all' || m.channel === s.channel) && (!q || (m.from + m.subject + m.preview).toLowerCase().includes(q)));
   const sel = inProfile.find(m => m.id === s.selectedId)
-    || (s.paged && s.selectedRow?.id === s.selectedId && s.selectedRow.p === s.profileId && !s.selectedRow.archived ? s.selectedRow : null);
+    || (s.paged && s.selectedRow?.id === s.selectedId && s.selectedRow.p === s.profileId && (s.fromPerson || !s.selectedRow.archived) ? s.selectedRow : null);
   const counts = s.paged && s.counts ? s.counts : {
     all: inProfile.length, unread: inProfile.filter(m => m.unread).length, todo: inProfile.filter(m => m.flagged).length,
     drafts: inProfile.filter(m => m.draft).length, folders: null,
@@ -397,7 +398,7 @@ function derive(s) {
   const contactsMine = d.contacts.filter(c => c.p === s.profileId);
   const cq = s.contactQuery.trim().toLowerCase();
   const contacts = contactsMine
-    .filter(c => (s.group === 'all' || c.g.includes(s.group)) && (!cq || (c.name + c.title).toLowerCase().includes(cq)))
+    .filter(c => (s.group === 'all' || c.g.includes(s.group)) && (!cq || (c.name + c.title + (c.identities || []).map(i=>i.value).join(' ')).toLowerCase().includes(cq)))
     .sort(s.sort === 'name' ? (a, b) => a.name.localeCompare(b.name) : (a, b) => a.order - b.order);
 
   return {
@@ -772,7 +773,7 @@ const actions = {
   selectProfile: ({ id }) => {
     selectionVersion++; rememberComposition();
     if (state.drawer) backFrom('drawer');
-    filtersChanged({ newMailOpen: false, profileId: id, menu: false, accountMenu: null, picked: {}, group: 'all', channel: 'all', query: '', selectedId: state.paged ? null : firstOf(id), selectedRow: null, folder: null, ai: null, moveOpen: false, creating: false, composing: null, pane: 'list' });
+    filtersChanged({ newMailOpen: false, profileId: id, personOpen:null,person:null,personError:null,personMerge:'',personValue:'',personBusy:false,contactImport:false,fromPerson:false, menu: false, accountMenu: null, picked: {}, group: 'all', channel: 'all', query: '', selectedId: state.paged ? null : firstOf(id), selectedRow: null, folder: null, ai: null, moveOpen: false, creating: false, composing: null, pane: 'list' });
   },
   selectApp: ({ app }) => { if (state.drawer) backFrom('drawer'); set({ app, ai: null, moveOpen: false }); },
   selectNav: ({ id }) => { if (state.drawer) backFrom('drawer'); filtersChanged({ nav: id, channel: 'all', folder: null }); },
@@ -849,7 +850,7 @@ const actions = {
     rememberComposition();
     const m = state.data.messages.find(x => x.id === num(id));
     aiRequest++;
-    set({ selectedId: m.id, selectedRow: m, moveOpen: false, composing: null, ai: null, pane: 'reader' });
+    set({ selectedId: m.id, selectedRow: m, fromPerson:false, moveOpen: false, composing: null, ai: null, pane: 'reader' });
     pushLayer('reader');
     if (m.kind === 'new') {
       try {
@@ -968,7 +969,50 @@ const actions = {
   pickContact: ({ id }) => set(s => ({ picked: { ...s.picked, [id]: !s.picked[id] } })),
   clearPicked: () => set({ picked: {} }),
   mailPicked: () => { const first = derive(state).picked[0]; set({ app: 'mail', query: first?.name || '', picked: {}, folder: null, nav: 'all' }); },
-  focusContact: ({ id }) => set({ focusId: id }),
+  focusContact: async ({ id }) => {
+    const profile=state.profileId;
+    if(!state.data.contacts.some(c=>c.id===id && c.p===profile))return;
+    set({focusId:id,personOpen:id,person:null,personError:null,personBusy:false,personMerge:'',personValue:''});
+    try {const person=await api.person(profile,id);if(state.profileId===profile && state.personOpen===id)set({person});}catch(e){if(state.profileId===profile && state.personOpen===id)set({personError:e.message});}
+  },
+  closePerson:()=>set({personOpen:null,person:null,personError:null,personMerge:'',personValue:''}),
+  togglePersonMerge:(_,e)=>{e.preventDefault();set({personMergeOpen:!state.personMergeOpen});},
+  personField:({field},e)=>{if(['personKind','personValue','personMerge'].includes(field))set({[field]:e.target.value});},
+  personMore:async()=>{
+    const profile=state.profileId,id=state.personOpen,old=state.person;if(!old?.timeline.nextOffset || state.personBusy)return;
+    set({personBusy:true});try{const value=await api.person(profile,id,{offset:old.timeline.nextOffset});if(state.profileId===profile && state.personOpen===id)set({person:{...value,timeline:{...value.timeline,items:[...old.timeline.items,...value.timeline.items]}}});}catch(e){fail(e);}finally{if(state.profileId===profile && state.personOpen===id)set({personBusy:false});}
+  },
+  addPersonIdentity:async()=>{
+    const profile=state.profileId,id=state.personOpen;if(state.personBusy)return;set({personBusy:true,personError:null});
+    try{const person=await api.addContactIdentity(profile,id,{kind:state.personKind,value:state.personValue});if(state.profileId===profile && state.personOpen===id)set({person,personValue:''});await reload({refresh:true});}catch(e){if(state.profileId===profile && state.personOpen===id)set({personError:e.message});}finally{if(state.profileId===profile && state.personOpen===id)set({personBusy:false});}
+  },
+  removePersonIdentity:async({kind,normalized})=>{
+    const profile=state.profileId,id=state.personOpen;if(state.personBusy)return;set({personBusy:true});
+    try{const person=await api.removeContactIdentity(profile,id,{kind,normalized,source:'manual'});if(state.profileId===profile && state.personOpen===id)set({person});await reload({refresh:true});}catch(e){fail(e);}finally{if(state.profileId===profile && state.personOpen===id)set({personBusy:false});}
+  },
+  mergePerson:async()=>{
+    const profile=state.profileId,id=state.personOpen,source=state.personMerge;if(!source || state.personBusy)return;set({personBusy:true,personError:null});
+    try{const person=await api.mergeContacts(profile,id,source);if(state.profileId===profile && state.personOpen===id)set({person,personMerge:''});await reload({refresh:true});}catch(e){if(state.profileId===profile && state.personOpen===id)set({personError:e.message});}finally{if(state.profileId===profile && state.personOpen===id)set({personBusy:false});}
+  },
+  undoPersonMerge:async({id:event})=>{
+    const profile=state.profileId,id=state.personOpen;if(state.personBusy)return;set({personBusy:true});
+    try{await api.undoContactMerge(profile,event);const person=await api.person(profile,id);if(state.profileId===profile && state.personOpen===id)set({person,personMerge:''});await reload({refresh:true});}catch(e){fail(e);}finally{if(state.profileId===profile && state.personOpen===id)set({personBusy:false});}
+  },
+  personConversation:async({id})=>{
+    const profile=state.profileId,personId=state.personOpen;if(!state.person?.timeline.items.some(m=>m.id===Number(id)&&m.p===profile))return;
+    let m;try{m=await api.message(Number(id));}catch(e){fail(e);return;}if(state.profileId!==profile || state.personOpen!==personId || m.p!==profile)return;
+    ++selectionVersion;rememberComposition();filtersChanged({personOpen:null,person:null,fromPerson:true,app:'mail',nav:'all',channel:'all',folder:null,query:'',selectedId:m.id,selectedRow:m,details:{...state.details,[m.id]:m},composing:null,ai:null,pane:'reader'});pushLayer('reader');
+  },
+  openContactImport:()=>set({contactImport:true}),
+  closeContactImport:()=>set({contactImport:false}),
+  authorizeContacts:({id})=>{
+    const acc=derive(state).profile.accounts.find(a=>a.id===Number(id));if(!acc)return;
+    set({contactImport:false});openWizard(acc.svc,acc.name,acc);setC({perms:Object.fromEntries([...new Set([...(acc.perms || ['read']),'contacts'])].map(p=>[p,true]))});
+  },
+  importContacts:async({id})=>{
+    const profile=state.profileId;if(state.contactImportBusy)return;set({contactImportBusy:Number(id)});
+    try{const result=await api.importContacts(Number(id));await reload({refresh:true});if(state.profileId===profile)notify(`${result.imported} contacts importés dans ${derive(state).profile.name}`);}catch(e){fail(e);}finally{set({contactImportBusy:null});}
+  },
   cycleFreq: ({ id }) => {
     const c = state.data.contacts.find(x => x.id === id), before = c.freq;
     c.freq = (c.freq + 1) % 4;

@@ -1,4 +1,5 @@
 // Dépôt SQLite. Les routes ne voient que ces fonctions ; les secrets n'en sortent jamais par snapshot().
+import { createContactsRepository } from './contacts/repository.js';
 import { createReplyMemoryRepository } from './ai/reply-memory.js';
 import { SERVICES } from './connectors.js';
 import { listPage,historyPage,fingerprint,encodeCursor } from './messages/pagination.js';
@@ -45,6 +46,7 @@ export function createStore(db) {
   };
   let seq = 0;
   const memory = createReplyMemoryRepository(db);
+  const people = createContactsRepository(db,changed);
 
   const profile = id => q('SELECT * FROM profiles WHERE id = ?').get(id) || (() => { throw notFound('Profil introuvable'); })();
   const row = id => q('SELECT * FROM messages WHERE id = ?').get(id) || (() => { throw notFound('Message introuvable'); })();
@@ -65,6 +67,13 @@ export function createStore(db) {
 
   return {
     db,
+    contactsBackfill:()=>people.backfill(),
+    importContacts:(id,records)=>people.import(id,records),
+    person:(profile,id,options)=>people.detail(profile,id,options),
+    addContactIdentity:(profile,id,input)=>people.addIdentity(profile,id,input),
+    removeContactIdentity:(profile,id,input)=>people.removeIdentity(profile,id,input),
+    mergeContacts:(profile,target,source)=>people.merge(profile,target,source),
+    undoContactMerge:(profile,id)=>people.undo(profile,id),
     subscribe(listener) { listeners.add(listener); return () => listeners.delete(listener); },
     pruneReplyMemory: () => memory.prune(),
     markAIReply(id,text) {memory.ignore(memoryScope(id),text);},
@@ -113,9 +122,7 @@ export function createStore(db) {
         folders: q('SELECT id, profile_id AS p, name, parent_id AS parent FROM folders ORDER BY position, rowid').all().map(f => ({ ...f })),
         messages:(paged?paged.rows:q('SELECT * FROM messages ORDER BY sort_at DESC,id DESC').all()).map(r=>toMessage(r,false)),
         ...(paged?{page:paged.page,counts:paged.counts}:{}),
-        contacts: q('SELECT * FROM contacts ORDER BY position').all().map(c => ({
-          id: c.id, p: c.profile_id, name: c.name, title: c.title, freq: c.freq, ch: JSON.parse(c.channels), last: c.last, g: JSON.parse(c.groups), order: c.position,
-        })),
+        contacts: people.list(),
       };
     },
 
@@ -388,6 +395,7 @@ export function createStore(db) {
     // Les brouillons sont conservés. Avec labels, le dossier suit aussi Gmail.
     upsertThread(accountId, t, opts) {
       const id = this.writeThread(accountId, t, opts);
+      if(t.participants) people.indexMessage(id,t.participants);
       if (t.reply) q('UPDATE messages SET reply_meta = ? WHERE id = ?').run(JSON.stringify(t.reply), id);
       if (t.ownSamples?.length) memory.observe(memoryScope(id),t.ownSamples);
       return id;
@@ -496,6 +504,10 @@ export function createStore(db) {
          VALUES (?, ?, ?, ?, 0, ?, ?, '[]', (SELECT COALESCE(MAX(position), 0) + 1 FROM contacts), ?, ?)
          ON CONFLICT (account_id, external_id) DO UPDATE SET name = excluded.name, title = excluded.title, last = excluded.last`)
         .run(id, acc.profile_id, contactName, title, JSON.stringify([channel]), last, accountId, externalId);
+      if(channel==='whatsapp' && /^\+[1-9]\d{6,14}$/.test(title)) {
+        const c=q('SELECT id FROM contacts WHERE account_id=? AND external_id=?').get(accountId,externalId);
+        q('INSERT OR IGNORE INTO contact_identities VALUES (?,?,?,?,?)').run(c.id,'phone',title,title,'whatsapp');
+      }
     },
 
     countThreads(accountId) {

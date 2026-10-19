@@ -70,7 +70,32 @@ export function createGraphClient({ refreshToken, oauth, fetchImpl = globalThis.
   }
   const MSG_FIELDS = 'id,conversationId,parentFolderId,subject,bodyPreview,body,from,sender,toRecipients,ccRecipients,replyTo,receivedDateTime,sentDateTime,isRead,isDraft,flag,importance,inferenceClassification,internetMessageId';
 
+  async function contacts() {
+    const records=new Map(),folders=[],seen=new Set();let pages=0;
+    async function collect(path,params,accept) {
+      let next=path;
+      while(next) {
+        if(seen.has(next) || ++pages>500)throw new HttpError(409,'Pagination du carnet Outlook interrompue. Aucun import partiel enregistré.','contacts_limit');
+        seen.add(next);const page=await request('GET',next,{params:next===path?params:{}});
+        if(!Array.isArray(page.value))throw new HttpError(502,'Réponse du carnet Outlook invalide.','contacts_provider');
+        for(const c of page.value)accept(c);
+        if(records.size>20000 || folders.length>1000)throw new HttpError(409,'Carnet Outlook trop volumineux. Aucun import partiel enregistré.','contacts_limit');
+        next=page['@odata.nextLink'];
+      }
+    }
+    const accept=c=>{if(c.id)records.set(c.id,{externalId:c.id,name:c.displayName,title:[c.jobTitle,c.companyName].filter(Boolean).join(' · '),identities:[...(c.emailAddresses || []).map(x=>({kind:'email',value:x.address})),...[...(c.businessPhones || []),...(c.homePhones || []),c.mobilePhone].filter(Boolean).map(value=>({kind:'phone',value}))]});};
+    const params={$top:100,$select:'id,displayName,emailAddresses,businessPhones,homePhones,mobilePhone,companyName,jobTitle'};
+    await collect('me/contacts',params,accept);
+    await collect('me/contactFolders',{$top:100,$select:'id'},c=>{if(c.id)folders.push(c.id);});
+    const visited=new Set();
+    for(let i=0;i<folders.length;i++) {const id=folders[i];if(visited.has(id))continue;visited.add(id);
+      await collect(`me/contactFolders/${enc(id)}/contacts`,params,accept);
+      await collect(`me/contactFolders/${enc(id)}/childFolders`,{$top:100,$select:'id'},c=>{if(c.id)folders.push(c.id);});
+    }
+    return [...records.values()];
+  }
   return {
+    contacts,
     request,
     me: () => request('GET', 'me', { params: { $select: 'mail,userPrincipalName,displayName' } }),
     // wellKnownName n'existe qu'en bêta : les dossiers système sont résolus par leur nom réservé (wellKnown).

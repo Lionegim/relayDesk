@@ -61,6 +61,7 @@ export function conversationToRecord(conversationId, messages, { ownEmail, folde
   const labelId = preferredLabelId && userIds.includes(preferredLabelId) ? preferredLabelId : (userIds.at(-1) || null);
   return {
     externalId: conversationId,
+    participants:msgs.flatMap(m=>[m.from,...(m.toRecipients || []),...(m.ccRecipients || [])].map(r=>({kind:'email',value:r?.emailAddress?.address}))),
     ownSamples: msgs.filter(m => folders.known?.sentitems && m.parentFolderId===folders.known.sentitems && clean(m.from?.emailAddress?.address).toLowerCase()===ownEmail?.toLowerCase() && clean(m.sender?.emailAddress?.address).toLowerCase()===ownEmail?.toLowerCase()).map(m=>({fromMe:true,text:bodyText(m),at:at(m)})),
     from: from.name, initials: initialsOf(from.name), handle: from.email,
     sortAt: at(last) || Date.now(),

@@ -1,3 +1,4 @@
+import {importAddressBook} from '../contacts/import.js';
 import http from 'node:http';
 import { readFile } from 'node:fs/promises';
 import { extname, join, normalize, sep } from 'node:path';
@@ -202,6 +203,12 @@ export function createApp({ store, ai, ownerName, gmail = null, providers = {}, 
     }],
     ['POST', /^\/api\/folders$/, (_, body) => store.createFolder(body)],
     ['PATCH', /^\/api\/contacts\/([^/]+)$/, ([id], body) => store.updateContact(id, body)],
+    ['POST', /^\/api\/accounts\/([^/]+)\/contacts\/import$/, ([id]) => {const aid=accountId(id);return importAddressBook({store,provider:mail.providerFor(aid),accountId:aid});}],
+    ['GET', /^\/api\/profiles\/([^/]+)\/contacts\/([^/]+)$/, ([p,id],body,session,url) => store.person(p,id,{offset:Number(url.searchParams.get('offset') || 0),limit:50})],
+    ['POST', /^\/api\/profiles\/([^/]+)\/contacts\/([^/]+)\/identities$/, ([p,id],body) => store.addContactIdentity(p,id,body)],
+    ['DELETE', /^\/api\/profiles\/([^/]+)\/contacts\/([^/]+)\/identities$/, ([p,id],body) => store.removeContactIdentity(p,id,body)],
+    ['POST', /^\/api\/profiles\/([^/]+)\/contacts\/([^/]+)\/merge$/, ([p,id],body) => {if(typeof body.sourceId!=='string')throw badRequest('Contact source requis');return store.mergeContacts(p,id,body.sourceId);}],
+    ['POST', /^\/api\/profiles\/([^/]+)\/contact-merges\/([^/]+)\/undo$/, ([p,id]) => store.undoContactMerge(p,id)],
     ['POST', /^\/api\/profiles\/([^/]+)\/accounts$/, ([id], body) => store.connectAccount(id, body)],
     ['POST', /^\/api\/ai\/summary$/, async (_, body) => {
       return assistant.run('summary', messageId(body.messageId), body);

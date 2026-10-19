@@ -47,7 +47,24 @@ export function createGmailClient({ refreshToken, oauth, fetchImpl = globalThis.
 
   const get = (path, params) => request('GET', path, params);
 
+  async function contacts() {
+    const records=[];let pageToken;const seen=new Set();
+    do {
+      if(seen.has(pageToken)) throw new HttpError(502,'Pagination Google Contacts répétée.','contacts_paging');
+      seen.add(pageToken);
+      const url=new URL('https://people.googleapis.com/v1/people/me/connections');
+      url.search=new URLSearchParams({personFields:'names,emailAddresses,phoneNumbers,organizations',pageSize:'1000',sources:'READ_SOURCE_TYPE_CONTACT',...(pageToken?{pageToken}:{})});
+      let res;try{res=await fetchImpl(url,{headers:{authorization:`Bearer ${await accessToken()}`},redirect:'error',signal:AbortSignal.timeout(30000)});}catch{throw new HttpError(502,'Google Contacts est injoignable.','contacts_unreachable');}
+      if(!res.ok)throw new HttpError(res.status===403?403:502,'Google Contacts a refusé la lecture : vérifie la permission Contacts et l’activation de People API.','contacts_provider');
+      const data=await res.json().catch(()=>null);if(!data || !Array.isArray(data.connections || []))throw new HttpError(502,'Réponse Google Contacts invalide.','contacts_provider');
+      records.push(...(data.connections || []).map(c=>({externalId:c.resourceName,name:c.names?.[0]?.displayName,title:[c.organizations?.[0]?.title,c.organizations?.[0]?.name].filter(Boolean).join(' · '),identities:[...(c.emailAddresses || []).map(x=>({kind:'email',value:x.value})),...(c.phoneNumbers || []).map(x=>({kind:'phone',value:x.canonicalForm || x.value}))]})));
+      pageToken=data.nextPageToken;
+      if(records.length>20000 || seen.size>100)throw new HttpError(409,'Carnet trop volumineux pour cet import (20 000 contacts). Aucun import partiel enregistré.','contacts_limit');
+    }while(pageToken);
+    return records;
+  }
   return {
+    contacts,
     post: (path, body) => request('POST', path, {}, body),
     put: (path, body) => request('PUT', path, {}, body),
     profile: () => get('profile'),
