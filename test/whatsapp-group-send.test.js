@@ -52,3 +52,12 @@ test('installed Baileys wire format retains group quoted sender for PN/LID and o
   assert.equal(ctx.stanzaId,'g1');assert.equal(ctx.participant,expected);assert.equal(ctx.quotedMessage.conversation,'Original');
  }
 });
+test('group becoming ephemeral during delivery never recreates purged history',async t=>{
+ const c=await group(t),input={text:'Réponse validée',replyTo:'alice'};const p=await c.wa.outbox.preview(c.id,input);
+ let finish,started;const ready=new Promise(r=>started=r);
+ c.sock.sendMessage=async()=>{started();return new Promise(r=>finish=r);};
+ const pending=c.wa.outbox.send(c.id,{...input,digest:p.digest});await ready;
+ c.sock.emit('chats.update',[{id:GROUP,ephemeralExpiration:86400}]);await tick();
+ finish({key:{id:'OUT',fromMe:true,remoteJid:GROUP}});assert.equal((await pending).sent,true);
+ assert.equal(c.store.waChatMessages(c.accountId,GROUP).length,0);assert.equal(c.store.threadState(c.accountId,GROUP),null);
+});
