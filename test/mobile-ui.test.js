@@ -18,7 +18,7 @@ const row = (id, extra = {}) => ({ id, p: 'perso', accountId: 1, channel: 'email
 const page = (messages, extra = {}) => ({ profiles, folders: [], contacts: [], services: {}, messages, page: { limit: 50, total: messages.length, hasMore: false, nextCursor: null, ...extra }, counts: { all: 9, unread: 2, todo: 1, drafts: 0, folders: {} } });
 
 async function app({ mobile = false, state: first } = {}) {
-  const calls = { state: [], message: [], saveDraft: [], preview: [], send: [] }, timers = [], listeners = {}, pushed = [];
+  const calls = { state: [], message: [], saveDraft: [], preview: [], send: [], create: [] }, timers = [], listeners = {}, pushed = [], replaced = [];
   const api = {
     session: async () => ({ enabled: false }),
     state: params => { calls.state.push(params); return api.onState(params); },
@@ -27,11 +27,14 @@ async function app({ mobile = false, state: first } = {}) {
     onMessage: async id => ({ id, body: 'Corps', trail: [], draftVersion: 7, draft: null, history: { hasMore: false, nextCursor: null } }),
     saveDraft: (id, input) => { calls.saveDraft.push({ id, input }); return api.onSave(id, input); },
     onSave: async (id, input) => ({ text: input.text, savedAt: '2026-10-19T08:00:00.000Z', version: input.baseVersion + 1 }),
-    previewSend: (id, input) => { calls.preview.push({ id, input }); return Promise.resolve({ from: 'a', to: ['b'], cc: [], subject: 's', body: input.text, digest: 'd' }); },
+    previewSend: (id, input) => { calls.preview.push({ id, input }); return api.onPreview(id, input); },
+    onPreview: async (id, input) => ({ from: 'a', to: ['b'], cc: [], subject: 's', body: input.text, digest: 'd' }),
+    createComposition: accountId => { calls.create.push(accountId); return api.onCreate(accountId); },
+    onCreate: async () => ({ id: 50, draftVersion: 4 }),
     send: (...a) => { calls.send.push(a); return Promise.resolve({ sent: true }); },
     updateMessage: async () => ({}),
   };
-  const history = { pushState: s => pushed.push(s), replaceState: () => {}, back: () => setImmediate(() => listeners.popstate?.()) };
+  const history = { pushState: s => pushed.push(s), replaceState: s => replaced.push(s), back: () => setImmediate(() => listeners.popstate?.()) };
   const c = {
     api, patch: () => {}, delegate: () => {}, renderApp: () => '', NAV: [['all', 'Boîte'], ['unread', 'Non lus'], ['todo', 'Avec drapeau'], ['drafts', 'Brouillons']], GROUPS: [['all', 'Tous']], SETTINGS: {}, WINDOWS: [7, 30, 90],
     localStorage: { getItem: () => null, setItem: () => {} }, document: { getElementById: () => ({ querySelector: () => null }), addEventListener: () => {} },
@@ -43,7 +46,7 @@ async function app({ mobile = false, state: first } = {}) {
   vm.runInContext(read('js/app.js').replace(/^import .*;\n/gm, '') + '\nglobalThis.inspect=()=>state;globalThis.act=actions;globalThis.view=()=>derive(state);', c);
   await tick(6);
   const runTimers = async () => { const due = timers.splice(0).filter(t => t.fn); for (const t of due) t.fn(); await tick(6); };
-  return { c, api, calls, timers, runTimers, listeners, pushed, s: () => c.inspect() };
+  return { c, api, calls, timers, runTimers, listeners, pushed, replaced, s: () => c.inspect() };
 }
 
 test('liste paginée : filtres serveur, compteurs serveur, réponse obsolète ignorée', async () => {
@@ -270,9 +273,13 @@ test('vues mobiles : écran unique, retour, tiroir et menu', () => {
 
 // ---------- Feuille de style ----------
 
-test('styles mobiles : écran ≤ 760 px, 100dvh, zones sûres, cibles de 44 px, 16 px dans les champs', () => {
+test('styles mobiles : écran ≤ 1000 px, 100dvh, zones sûres, cibles de 44 px, 16 px dans les champs', () => {
   const css = read('styles.css');
-  const mobile = css.slice(css.indexOf('@media (max-width: 760px)'));
+  const mobile = css.slice(css.indexOf('@media (max-width: 1000px)'));
+  // Même seuil côté CSS et côté application : téléphones en paysage (jusqu'à 932 px) et tablettes en portrait.
+  const js = read('js/app.js');
+  assert.equal((js.match(/matchMedia\?\.\('\(max-width: 1000px\)'\)/g) || []).length, 2);
+  assert.doesNotMatch(css + js, /max-width: 760px/);
   assert.ok(mobile.length > 100);
   for (const needle of ['100dvh', 'env(safe-area-inset-bottom)', 'env(safe-area-inset-top)', 'width: 44px; height: 44px', 'min-height: 44px', 'font-size: 16px', '.is-mobile.pane-list > .reader { display: none; }', '.is-mobile.pane-reader > .list { display: none; }']) {
     assert.ok(mobile.includes(needle), needle);
@@ -365,4 +372,288 @@ test('confidentialité : aucun contenu dans le stockage du navigateur', () => {
   // Seule clé locale : la largeur de colonne de la liste.
   assert.match(read('js/app.js'), /const LIST_W_KEY = 'relay\.listW';/);
   assert.equal((read('js/app.js').match(/storage\.set\(/g) || []).length, 2);
+});
+
+// ---------- Correctifs de revue : nouveau message, champs du brouillon, aperçu obsolète, hors ligne ----------
+
+const deferred = () => { let resolve, reject; const p = new Promise((a, b) => { resolve = a; reject = b; }); return { p, resolve, reject }; };
+const conflictError = () => Object.assign(new Error('Conflit'), { status: 409, code: 'draft_conflict' });
+const field = (u, name, value) => u.c.act.newMailField({ field: name }, { target: { value } });
+
+test('nouveau message : enregistrement automatique différé, une seule écriture en vol, version du serveur', async () => {
+  const u = await app();
+  u.c.act.newMessage();
+  const hold = [];
+  u.api.onSave = (id, input) => new Promise(r => hold.push(() => r({ savedAt: '2026-10-19T08:00:00.000Z', version: input.baseVersion + 1 })));
+  field(u, 'to', 'claire@exemple.fr');
+  field(u, 'text', 'Bonjour');
+  assert.equal(u.calls.create.length, 0, 'rien avant le délai');
+  await u.runTimers();
+  assert.equal(u.calls.create.length, 1);
+  assert.equal(u.calls.saveDraft.length, 1);
+  assert.deepEqual(plain(u.calls.saveDraft[0]), { id: 50, input: { mode: 'new', to: 'claire@exemple.fr', cc: '', subject: '', text: 'Bonjour', baseVersion: 4 } }, 'version lue à la création, jamais supposée');
+  // Saisie pendant la requête : champs actifs, texte conservé, aucune seconde écriture en vol.
+  assert.equal(u.s().newMail.busy, false);
+  field(u, 'text', 'Bonjour Claire');
+  await u.runTimers();
+  assert.equal(u.calls.saveDraft.length, 1);
+  hold.shift()();
+  await tick(6);
+  assert.equal(u.s().newMail.version, 5);
+  assert.equal(u.s().newMail.text, 'Bonjour Claire');
+  assert.equal(u.s().newMail.saved.text, 'Bonjour', 'seul le texte envoyé est marqué enregistré');
+  await u.runTimers();
+  assert.equal(u.calls.create.length, 1, 'une seule création');
+  assert.deepEqual([u.calls.saveDraft[1].input.text, u.calls.saveDraft[1].input.baseVersion], ['Bonjour Claire', 5]);
+  hold.shift()();
+  await tick(6);
+  assert.equal(u.s().newMail.version, 6);
+  await u.runTimers();
+  assert.equal(u.calls.saveDraft.length, 2, 'rien à enregistrer');
+});
+
+test('nouveau message : aucune écriture automatique après une erreur ou hors ligne', async () => {
+  const u = await app();
+  u.c.act.newMessage();
+  u.api.onCreate = async () => { throw new Error('Serveur indisponible'); };
+  field(u, 'text', 'Texte');
+  await u.runTimers();
+  assert.equal(u.s().newMail.saveError, 'Serveur indisponible');
+  field(u, 'text', 'Texte suivant');
+  await u.runTimers();
+  assert.equal(u.calls.create.length, 1, 'pas de nouvel essai automatique');
+  // Enregistrer explicitement relance l'écriture.
+  u.api.onCreate = async () => ({ id: 50, draftVersion: 4 });
+  await u.c.act.saveNewMail();
+  await tick(6);
+  assert.equal(u.calls.saveDraft.at(-1).input.text, 'Texte suivant');
+  // Hors ligne : rien n'est envoyé, le texte reste local et non enregistré.
+  u.s().offline = true;
+  field(u, 'text', 'Hors ligne');
+  await u.runTimers();
+  await u.c.act.saveNewMail();
+  await tick(6);
+  assert.equal(u.calls.saveDraft.length, 1);
+  assert.equal(u.s().newMail.text, 'Hors ligne');
+  assert.notEqual(u.s().newMail.saved.text, 'Hors ligne');
+  u.listeners.online?.();
+  await tick(6);
+  assert.equal(u.calls.saveDraft.length, 1, 'aucune reprise automatique au retour du réseau');
+});
+
+test('nouveau message : conflit résolu explicitement (Recharger / Garder ma version) avec la version relue', async () => {
+  const u = await app();
+  u.c.act.newMessage();
+  u.api.onSave = async () => { throw conflictError(); };
+  field(u, 'text', 'Mon texte');
+  await u.runTimers();
+  assert.equal(u.s().newMail.conflict, true);
+  assert.equal(u.s().newMail.text, 'Mon texte');
+  field(u, 'text', 'Mon texte modifié');
+  await u.runTimers();
+  assert.equal(u.calls.saveDraft.length, 1, 'aucun écrasement automatique');
+  // Garder ma version : relecture, puis écriture conditionnelle sur la version relue.
+  u.api.onMessage = async id => ({ id, accountId: 1, subject: 'Autre objet', draft: { text: 'Texte ailleurs', to: '', cc: '' }, draftVersion: 9 });
+  u.api.onSave = async (id, input) => ({ savedAt: 'x', version: input.baseVersion + 1 });
+  await u.c.act.newMailKeepMine();
+  await tick(6);
+  assert.deepEqual([u.calls.saveDraft.at(-1).input.text, u.calls.saveDraft.at(-1).input.baseVersion], ['Mon texte modifié', 9]);
+  assert.deepEqual([u.s().newMail.conflict, u.s().newMail.version], [false, 10]);
+  // Recharger : la version du serveur remplace le texte local, sans écriture.
+  u.s().newMail.conflict = true;
+  u.api.onMessage = async id => ({ id, accountId: 1, subject: 'Objet serveur', draft: { text: 'Texte serveur', to: 'a@b.fr', cc: '' }, draftVersion: 14 });
+  const writes = u.calls.saveDraft.length;
+  await u.c.act.newMailReload();
+  await tick(6);
+  assert.deepEqual([u.s().newMail.text, u.s().newMail.subject, u.s().newMail.version, u.s().newMail.conflict], ['Texte serveur', 'Objet serveur', 14, false]);
+  assert.equal(u.calls.saveDraft.length, writes);
+  // Retour de relecture après remplacement de la composition : ignoré.
+  u.s().newMail.conflict = true;
+  const late = deferred();
+  u.api.onMessage = () => late.p;
+  const pending = u.c.act.newMailKeepMine();
+  const other = { ...u.s().newMail, cid: -1, text: 'Autre composition', conflict: false };
+  u.s().newMail = other;
+  late.resolve({ id: 50, accountId: 1, subject: 's', draft: { text: 'x' }, draftVersion: 20 });
+  await pending;
+  await tick(6);
+  assert.equal(u.s().newMail, other);
+  assert.equal(u.calls.saveDraft.length, writes);
+});
+
+test('nouveau message : retour d’écriture après fermeture appliqué à sa composition, version gardée à la reprise', async () => {
+  const rows = [row(1), row(50, { kind: 'new' })];
+  const u = await app({ state: page(rows) });
+  u.c.act.newMessage();
+  const save = deferred();
+  u.api.onSave = () => save.p;
+  field(u, 'text', 'Brouillon');
+  await u.runTimers();
+  assert.equal(u.calls.saveDraft.length, 1);
+  u.c.act.closeNewMail();
+  u.c.act.selectThread({ id: 1 });
+  u.s().newMail = null; // composition remplacée (autre profil, autre compte…)
+  save.resolve({ savedAt: 'x', version: 5 });
+  await tick(6);
+  assert.equal(u.s().newMail, null, 'rien n’est appliqué à une autre composition');
+  u.c.act.selectThread({ id: 50 });
+  await tick(6);
+  assert.deepEqual([u.s().newMail.text, u.s().newMail.version, u.s().newMail.saved.text], ['Brouillon', 5, 'Brouillon'], 'reprise avec la version enregistrée, pas l’ancienne');
+});
+
+test('brouillon : un changement du seul destinataire ou du mode est enregistré et versionné', async () => {
+  const u = await app();
+  u.c.act.selectThread({ id: 1 });
+  await tick(6);
+  u.c.act.compose({ mode: 'forward' });
+  await u.runTimers();
+  assert.equal(u.calls.saveDraft.length, 1, 'commencer un transfert sans texte est enregistré');
+  assert.deepEqual(plain(u.calls.saveDraft[0].input), { text: '', mode: 'forward', to: '', baseVersion: 7 });
+  u.c.act.composeTo({}, { target: { value: 'paul@exemple.fr' } });
+  await u.runTimers();
+  assert.equal(u.calls.saveDraft.length, 2);
+  assert.deepEqual(plain(u.calls.saveDraft[1].input), { text: '', mode: 'forward', to: 'paul@exemple.fr', baseVersion: 8 });
+  assert.equal(u.c.view().draftChanged, false);
+  u.c.act.composeTo({}, { target: { value: 'lea@exemple.fr' } });
+  assert.equal(u.c.view().draftChanged, true, 'destinataire seul : modification non enregistrée');
+  u.c.act.saveDraft();
+  await tick(6);
+  assert.equal(u.calls.saveDraft.at(-1).input.to, 'lea@exemple.fr', 'le bouton Enregistrer l’écrit aussi');
+  u.c.act.saveDraft();
+  await tick(6);
+  assert.equal(u.calls.saveDraft.length, 3, 'rien de nouveau, rien d’écrit');
+  // Conflit détecté aussi sur le seul destinataire, puis Recharger reprend celui du serveur.
+  u.c.act.composeTo({}, { target: { value: 'zoe@exemple.fr' } });
+  u.api.onState = async () => page([row(1, { draftVersion: 30 }), row(2)]);
+  u.api.onMessage = async id => ({ id, body: 'Corps', trail: [], draftVersion: 30, draft: { text: '', mode: 'forward', to: 'ailleurs@exemple.fr' } });
+  await u.c.act.retryList();
+  await tick(8);
+  assert.equal(u.s().draftMeta[1].conflict, true);
+  assert.equal(u.s().composeTo[1], 'zoe@exemple.fr');
+  await u.c.act.draftReload({ id: '1' });
+  assert.equal(u.s().composeTo[1], undefined);
+  assert.equal(u.c.view().draftChanged, false);
+});
+
+test('aperçu : retour écarté si le brouillon change pendant l’attente ; envoi sans effacer un texte plus récent', async () => {
+  const u = await app();
+  u.c.act.selectThread({ id: 1 });
+  await tick(6);
+  u.c.act.compose({ mode: 'reply' });
+  u.c.act.draft({}, { target: { value: 'Texte A' } });
+  const wait = deferred();
+  u.api.onPreview = () => wait.p;
+  const pending = u.c.act.sendPreview();
+  await tick(6);
+  assert.equal(u.calls.preview.length, 1);
+  u.c.act.draft({}, { target: { value: 'Texte B' } }); // frappe pendant la vérification
+  wait.resolve({ from: 'a', to: ['b'], cc: [], subject: 's', body: 'Texte A', digest: 'd' });
+  await pending;
+  await tick(6);
+  assert.equal(u.s().confirm, null, 'aperçu obsolète écarté');
+  assert.equal(u.s().drafts[1], 'Texte B');
+  // Aperçu valide puis frappe avant confirmation : l'envoi part avec A, B n'est jamais effacé.
+  u.api.onPreview = async (id, input) => ({ from: 'a', to: ['b'], cc: [], subject: 's', body: input.text, digest: 'd' });
+  u.c.act.draft({}, { target: { value: 'Texte A' } });
+  await u.c.act.sendPreview();
+  await tick(6);
+  assert.equal(u.s().confirm.preview.body, 'Texte A');
+  u.c.act.draft({}, { target: { value: 'Texte B' } });
+  await u.c.act.confirmSend();
+  await tick(6);
+  assert.equal(u.calls.send.at(-1)[1].text, 'Texte A');
+  assert.equal(u.s().drafts[1], 'Texte B', 'texte plus récent conservé');
+  assert.ok(u.timers.some(t => t.fn && t.ms === 1500), 'il sera enregistré');
+});
+
+test('aperçu : aussi écarté si la sélection change pendant l’attente', async () => {
+  const u = await app();
+  u.c.act.selectThread({ id: 1 });
+  await tick(6);
+  u.c.act.compose({ mode: 'reply' });
+  u.c.act.draft({}, { target: { value: 'Texte A' } });
+  const wait = deferred();
+  u.api.onPreview = () => wait.p;
+  const pending = u.c.act.sendPreview();
+  await tick(6);
+  u.c.act.selectThread({ id: 2 });
+  wait.resolve({ from: 'a', to: ['b'], cc: [], subject: 's', body: 'Texte A', digest: 'd' });
+  await pending;
+  assert.equal(u.s().confirm, null);
+});
+
+test('hors ligne : aucun enregistrement de brouillon ni envoi, confirmation désactivée', async () => {
+  const u = await app();
+  u.c.act.selectThread({ id: 1 });
+  await tick(6);
+  u.c.act.compose({ mode: 'reply' });
+  u.c.act.draft({}, { target: { value: 'Prêt' } });
+  await u.c.act.sendPreview();
+  await tick(6);
+  assert.ok(u.s().confirm.preview);
+  u.s().offline = true;
+  await u.c.act.confirmSend();
+  assert.equal(u.calls.send.length, 0, 'envoi refusé hors ligne');
+  assert.match(u.s().confirm.error, /Hors ligne/);
+  u.s().confirm = null;
+  u.c.act.draft({}, { target: { value: 'Prêt, modifié hors ligne' } });
+  await u.runTimers();
+  u.c.act.saveDraft();
+  await tick(6);
+  assert.equal(u.calls.saveDraft.length, 1, 'aucune écriture hors ligne');
+  assert.equal(u.c.view().draftChanged, true, 'reste non enregistré');
+  await u.c.act.sendPreview();
+  assert.equal(u.calls.preview.length, 1, 'pas de vérification hors ligne');
+  const out = ctx.app({ ...viewState()[0], offline: true, confirm: { kind: 'send', messageId: 1, preview: { from: 'a', to: ['b'], cc: [], subject: 's', body: 'x' }, busy: false } }, viewState()[1]);
+  assert.match(out, /data-on-click="confirmSend" disabled/);
+});
+
+test('mobile : Insérer depuis l’assistant ouvre la rédaction ; Retour ferme la rédaction et garde la lecture', async () => {
+  const u = await app({ mobile: true });
+  u.c.act.selectThread({ id: 1 });
+  await tick(6);
+  u.c.act.aiDraft();
+  u.s().ai = { ...u.s().ai, result: { text: 'Proposition' } };
+  u.c.act.aiInsert();
+  assert.equal(u.s().composing, 'reply');
+  assert.equal(u.replaced.at(-1).relay, 'compose');
+  u.listeners.popstate();
+  assert.equal(u.s().composing, null);
+  assert.equal(u.s().pane, 'reader');
+  u.listeners.popstate();
+  assert.equal(u.s().pane, 'list');
+});
+
+test('actualisation : même dernier message mais brouillon plus récent ailleurs', async () => {
+  const u = await app();
+  u.c.act.selectThread({ id: 1 });
+  await tick(6);
+  assert.equal(u.s().draftMeta[1].version, 7);
+  // Brouillon propre : la version du serveur est reprise.
+  u.api.onState = async () => page([row(1, { draftVersion: 8 }), row(2)]);
+  u.api.onMessage = async id => ({ id, body: 'Corps', trail: [], draftVersion: 8, draft: { text: 'Écrit ailleurs', mode: 'reply' } });
+  await u.c.act.retryList();
+  await tick(8);
+  assert.equal(u.s().details[1].draft.text, 'Écrit ailleurs');
+  assert.deepEqual([u.s().draftMeta[1].version, u.s().draftMeta[1].conflict], [8, false]);
+  // Brouillon local non enregistré : conservé, conflit signalé.
+  u.c.act.draft({}, { target: { value: 'Mon texte' } });
+  u.api.onState = async () => page([row(1, { draftVersion: 9 }), row(2)]);
+  u.api.onMessage = async id => ({ id, body: 'Corps', trail: [], draftVersion: 9, draft: { text: 'Encore ailleurs', mode: 'reply' } });
+  await u.c.act.retryList();
+  await tick(8);
+  assert.equal(u.s().drafts[1], 'Mon texte');
+  assert.deepEqual([u.s().draftMeta[1].version, u.s().draftMeta[1].conflict], [8, true]);
+});
+
+test('vues : nouveau message en conflit avec Recharger / Garder ma version ; lecture seule pendant la vérification', () => {
+  const [s, v] = viewState({ newMailOpen: true, newMail: { cid: 1, accountId: 1, messageId: 50, to: 'a@b.fr', cc: '', subject: 's', text: 'x', saved: { to: 'a@b.fr', cc: '', subject: 's', text: 'x' }, conflict: true } });
+  const out = ctx.app(s, v);
+  assert.match(out, /data-on-click="newMailReload"[^>]*>Recharger/);
+  assert.match(out, /data-on-click="newMailKeepMine"[^>]*>Garder ma version/);
+  assert.match(out, /data-on-click="previewNewMail" disabled/);
+  const dirty = ctx.app({ ...s, newMail: { ...s.newMail, conflict: false, text: 'y' } }, v);
+  assert.match(dirty, /Modifications non enregistrées/);
+  const waiting = ctx.app(...viewState({ confirm: { kind: 'send', messageId: 1, busy: true, preview: null } }));
+  assert.match(waiting, /data-key="draft-1" data-on-input="draft" readonly/);
 });

@@ -26,8 +26,8 @@ const state = {
   paged: false, page: null, counts: null, selectedRow: null, historyLoading: {},
   // Brouillons : version serveur, texte enregistré, état d'enregistrement et conflit, par message.
   draftMeta: {},
-  // Mobile (<= 760 px) : un seul écran à la fois, tiroir pour la barre latérale.
-  mobile: !!globalThis.matchMedia?.('(max-width: 760px)').matches, pane: 'list', drawer: false,
+  // Mobile (<= 1000 px, téléphones en paysage et tablettes en portrait) : un seul écran à la fois, tiroir pour la barre latérale.
+  mobile: !!globalThis.matchMedia?.('(max-width: 1000px)').matches, pane: 'list', drawer: false,
   offline: globalThis.navigator?.onLine === false,
 };
 
@@ -67,10 +67,16 @@ function render() {
 // Corps et fil sont chargés à la demande : l'état global ne contient que la liste.
 const loading = new Set();
 const compositionBuffers = new Map();
-let selectionVersion = 0;
+let selectionVersion = 0, previewRequest = 0;
 function rememberComposition() {
   if (state.newMail?.messageId) compositionBuffers.set(state.newMail.messageId, state.newMail);
 }
+// Chaque nouveau message a une identité locale (cid) : un retour réseau ne s'applique qu'à sa propre composition.
+let compositionSeq = 0;
+const EMPTY_MAIL = { to: '', cc: '', subject: '', text: '' };
+const mailFields = c => ({ to: c.to, cc: c.cc, subject: c.subject, text: c.text });
+const newComposition = fields => ({ ...EMPTY_MAIL, saved: EMPTY_MAIL, busy: false, saving: false, ...fields, cid: ++compositionSeq });
+const mailChanged = c => !!c && ['to', 'cc', 'subject', 'text'].some(k => c[k] !== (c.saved || EMPTY_MAIL)[k]);
 let prependAnchor = null;
 const known = id => state.data.messages.some(m => m.id === id) || (state.selectedRow?.id === id && state.selectedId === id);
 // Identité d'un élément du fil, pour fusionner des pages sans doublon.
@@ -157,16 +163,18 @@ function filtersChanged(next) {
 }
 
 function applyData(data, extra = {}) {
-  const before = new Map((state.data?.messages || []).map(m => [m.id, m.sortAt + ':' + m.count]));
+  // Empreinte d'une ligne : dernier message, nombre et version du brouillon (modifié sur un autre appareil).
+  const mark = m => `${m.sortAt}:${m.count}:${m.draftVersion ?? ''}`;
+  const before = new Map((state.data?.messages || []).map(m => [m.id, mark(m)]));
   const details = Object.fromEntries(Object.entries(state.details).flatMap(([id, full]) => {
     const m = data.messages.find(x => x.id === Number(id)) || (Number(id) === state.selectedId && state.selectedRow?.id === state.selectedId ? state.selectedRow : null);
     if (!m) return [];
-    if (!full.stale && before.get(m.id) === m.sortAt + ':' + m.count) return [[id, full]];
+    if (!full.stale && before.get(m.id) === mark(m)) return [[id, full]];
     // Garder les bulles pendant le rechargement préserve l'ancrage de lecture.
     return m.channel === 'whatsapp' && !full.failed ? [[id, { ...full, refreshing: true }]] : [];
   }));
   const a = state.ai, updated = a && (data.messages.find(m => m.id === a.forId) || (state.selectedRow?.id === a.forId ? state.selectedRow : null));
-  const ai = a && (!updated || (before.has(updated.id) && before.get(updated.id) !== updated.sortAt + ':' + updated.count)) ? null : a;
+  const ai = a && (!updated || (before.has(updated.id) && before.get(updated.id).replace(/:[^:]*$/, '') !== `${updated.sortAt}:${updated.count}`)) ? null : a;
   // La ligne sélectionnée reste connue même hors de la page affichée (même profil).
   const row = data.messages.find(m => m.id === state.selectedId);
   set({ data, details, ai, ...(row ? { selectedRow: row } : {}), ...extra });
@@ -203,25 +211,39 @@ const draftTimers = new Map();
 // Version fournie par le serveur (monotone, jamais supposée) ; null pour un ancien serveur sans versions.
 const versionOf = full => Number.isInteger(full?.draftVersion) ? full.draftVersion : Number.isInteger(full?.draft?.version) ? full.draft.version : null;
 const withBase = (input, version) => (version === null || version === undefined ? input : { ...input, baseVersion: version });
-const serverText = id => state.details[id]?.draft?.text ?? '';
-const draftText = id => state.drafts[id] ?? serverText(id);
 const setMeta = (id, patch) => set(s => ({ draftMeta: { ...s.draftMeta, [id]: { ...s.draftMeta[id], ...patch } } }));
-const dirty = id => { const m = state.draftMeta[id]; return !!m && (m.saving || m.conflict || draftText(id) !== (m.savedText ?? serverText(id))); };
+// Ce qu'un brouillon enregistre : texte, mode et destinataire d'un transfert. Changer seulement le mode
+// (transférer, répondre à tous) ou le destinataire est une modification à enregistrer comme le texte.
+function serverDraft(full) {
+  const mode = full?.draft?.mode || 'reply';
+  return { text: full?.draft?.text ?? '', mode, to: mode === 'forward' ? (full?.draft?.to ?? '') : null };
+}
+// Référence : dernier état enregistré connu (pas le détail rechargé, qui peut venir d'un autre appareil).
+const savedDraft = id => state.draftMeta[id]?.saved || serverDraft(state.details[id]);
+const draftText = id => state.drafts[id] ?? savedDraft(id).text;
+function localDraft(id) {
+  const base = savedDraft(id), mode = (state.selectedId === id && state.composing) || base.mode;
+  return { text: draftText(id), mode, to: mode === 'forward' ? (state.composeTo[id] ?? base.to ?? '') : null };
+}
+const sameDraft = (a, b) => !!a && !!b && a.text === b.text && a.mode === b.mode && a.to === b.to;
+const changed = id => !!state.draftMeta[id] && !sameDraft(localDraft(id), savedDraft(id));
+const dirty = id => { const m = state.draftMeta[id]; return !!m && (m.saving || m.conflict || changed(id)); };
 
-// Version reçue du serveur. Si elle change alors que le texte local n'est pas enregistré : conflit, jamais d'écrasement.
+// Version reçue du serveur. Si elle change alors que le brouillon local n'est pas enregistré : conflit, jamais d'écrasement.
 function syncDraftMeta(id, full) {
   if (full.failed) return;
-  const meta = state.draftMeta[id], version = versionOf(full), text = full.draft?.text ?? '';
-  if (!meta || meta.version === undefined) { state.draftMeta = { ...state.draftMeta, [id]: { ...meta, version, savedText: text, savedAt: full.draft?.savedAt } }; return; }
+  const meta = state.draftMeta[id], version = versionOf(full), saved = serverDraft(full);
+  if (!meta || meta.version === undefined) { state.draftMeta = { ...state.draftMeta, [id]: { ...meta, version, saved, savedText: saved.text, savedAt: full.draft?.savedAt } }; return; }
   if (meta.saving || version === meta.version) return;
-  if (state.drafts[id] !== undefined && state.drafts[id] !== meta.savedText) {
+  if (changed(id)) {
     state.draftMeta = { ...state.draftMeta, [id]: { ...meta, conflict: true } };
     return;
   }
-  const drafts = { ...state.drafts };
-  delete drafts[id];
-  state.drafts = drafts;
-  state.draftMeta = { ...state.draftMeta, [id]: { ...meta, version, savedText: text, savedAt: full.draft?.savedAt, conflict: false, error: null } };
+  // Brouillon local propre : la version du serveur est reprise.
+  const drafts = { ...state.drafts }, composeTo = { ...state.composeTo };
+  delete drafts[id]; delete composeTo[id];
+  state.drafts = drafts; state.composeTo = composeTo;
+  state.draftMeta = { ...state.draftMeta, [id]: { ...meta, version, saved, savedText: saved.text, savedAt: full.draft?.savedAt, conflict: false, error: null } };
 }
 
 function scheduleAutosave(id) {
@@ -229,28 +251,26 @@ function scheduleAutosave(id) {
   draftTimers.set(id, setTimeout(() => { draftTimers.delete(id); saveDraftNow(id); }, AUTOSAVE_MS));
 }
 
-// Un seul enregistrement en vol par message ; le texte modifié pendant la requête reste « non enregistré »
-// puis part au passage suivant.
+// Un seul enregistrement en vol par message ; ce qui est modifié pendant la requête reste « non enregistré »
+// puis part au passage suivant. Hors ligne : aucune requête, le brouillon reste local et non enregistré.
 async function saveDraftNow(id, { overwrite = false } = {}) {
   const full = state.details[id], meta = state.draftMeta[id] || {};
-  if (!full || full.failed || meta.version === undefined) return;
+  if (!full || full.failed || meta.version === undefined || state.offline) return;
   if (meta.saving) { setMeta(id, { again: true }); return; }
   if (meta.conflict && !overwrite) return;
-  const text = draftText(id);
-  if (!overwrite && text === (meta.savedText ?? serverText(id)) && !meta.error) return;
-  const mode = (state.selectedId === id && state.composing) || full.draft?.mode || 'reply';
-  const to = mode === 'forward' ? (state.composeTo[id] ?? full.draft?.to ?? '') : null;
+  const local = localDraft(id);
+  if (!overwrite && sameDraft(local, savedDraft(id)) && !meta.error) return;
   setMeta(id, { saving: true, again: false, error: null });
   try {
-    const draft = await api.saveDraft(id, withBase({ text, mode, to }, meta.version));
+    const draft = await api.saveDraft(id, withBase({ text: local.text, mode: local.mode, to: local.to }, meta.version));
     if (draft.previousDraftKept) notify('Un ancien brouillon est conservé chez le fournisseur.');
     const cur = state.details[id];
     if (cur) cur.draft = draft;
     const row = state.data.messages.find(m => m.id === id) || (state.selectedRow?.id === id ? state.selectedRow : null);
-    if (row) row.draft = { savedAt: draft.savedAt, gmail: draft.gmail, synced: draft.synced ?? draft.gmail };
+    if (row) { row.draft = { savedAt: draft.savedAt, gmail: draft.gmail, synced: draft.synced ?? draft.gmail }; if (Number.isInteger(draft.version)) row.draftVersion = draft.version; }
     const again = state.draftMeta[id]?.again;
-    setMeta(id, { saving: false, again: false, version: Number.isInteger(draft.version) ? draft.version : meta.version, savedText: text, savedAt: draft.savedAt, conflict: false, error: null });
-    if (again || draftText(id) !== text) scheduleAutosave(id);
+    setMeta(id, { saving: false, again: false, version: Number.isInteger(draft.version) ? draft.version : meta.version, saved: local, savedText: local.text, savedAt: draft.savedAt, conflict: false, error: null });
+    if (again || changed(id)) scheduleAutosave(id);
   } catch (e) {
     if (e.status === 409 && e.code === 'draft_conflict') setMeta(id, { saving: false, again: false, conflict: true });
     else setMeta(id, { saving: false, again: false, error: e.message });
@@ -264,15 +284,15 @@ async function resolveConflict(id, keepMine) {
   if (!known(id)) return;
   const merged = mergeHistory(state.details[id], full);
   state.details = { ...state.details, [id]: merged };
-  const version = versionOf(full), text = full.draft?.text ?? '';
+  const version = versionOf(full), saved = serverDraft(full);
   if (keepMine) {
-    setMeta(id, { version, savedText: text, conflict: false, error: null });
+    setMeta(id, { version, saved, savedText: saved.text, conflict: false, error: null });
     return saveDraftNow(id, { overwrite: true });
   }
   set(s => {
-    const drafts = { ...s.drafts };
-    delete drafts[id];
-    return { drafts, draftMeta: { ...s.draftMeta, [id]: { version, savedText: text, savedAt: full.draft?.savedAt, conflict: false, error: null } } };
+    const drafts = { ...s.drafts }, composeTo = { ...s.composeTo };
+    delete drafts[id]; delete composeTo[id];
+    return { drafts, composeTo, draftMeta: { ...s.draftMeta, [id]: { version, saved, savedText: saved.text, savedAt: full.draft?.savedAt, conflict: false, error: null } } };
   });
 }
 
@@ -368,6 +388,8 @@ function derive(s) {
 
   return {
     profile, inProfile, byNav, list, sel, contactsMine, contacts, counts,
+    // Brouillon de la sélection modifié depuis le dernier enregistrement (texte, mode ou destinataire).
+    draftChanged: !!sel && s === state && changed(sel.id),
     // Canaux proposés : en mode paginé, ceux des comptes du profil (la page ne les contient pas tous).
     channels: s.paged ? [...new Set(profile.accounts.map(a => a.channel))] : [...new Set(byNav.map(m => m.channel))],
     picked: contacts.filter(c => s.picked[c.id]),
@@ -579,29 +601,94 @@ function startSync() {
 }
 
 // Un même compositeur pour tous les comptes email pris en charge.
-async function saveNewMail() {
-  let c = state.newMail;
-  if (!c || c.busy || !c.accountId) return null;
-  set({ newMail: { ...c, busy: true, error: null } });
+// Enregistrement automatique différé ; une seule création ou écriture en vol. Les champs restent modifiables
+// pendant la requête : ce qui est saisi entre-temps reste « non enregistré » et part au passage suivant.
+// Jamais d'écriture automatique après une erreur, un conflit, ou hors ligne.
+let newMailTimer = null, newMailFlight = null;
+const accountKnown = id => state.data?.profiles?.some(p => p.accounts.some(a => a.id === id));
+const compositionFromServer = full => newComposition({ messageId: full.id, version: versionOf(full), accountId: full.accountId, to: full.draft?.to || '', cc: full.draft?.cc || '', subject: full.subject || '', text: full.draft?.text || '', savedAt: full.draft?.savedAt, synced: full.draft?.synced });
+function findComposition(cid) {
+  if (state.newMail?.cid === cid) return state.newMail;
+  for (const c of compositionBuffers.values()) if (c.cid === cid) return c;
+  return null;
+}
+// Applique un retour à la composition qui l'a demandé : affichée, ou gardée en mémoire après fermeture ou
+// changement de profil. `fallback` : instantané pris au départ, si la composition n'est plus nulle part.
+function patchComposition(cid, patch, fallback = null) {
+  const current = state.newMail?.cid === cid;
+  const kept = [...compositionBuffers.values()].find(c => c.cid === cid);
+  if (current) set(s => ({ newMail: { ...s.newMail, ...patch } }));
+  const base = kept || (!current && fallback);
+  const id = patch.messageId ?? base?.messageId;
+  if (base && id && accountKnown(base.accountId)) compositionBuffers.set(id, { ...base, ...(current ? state.newMail : {}), ...patch });
+}
+function scheduleNewMailSave() {
+  clearTimeout(newMailTimer);
+  const c = state.newMail;
+  if (!c?.accountId || c.busy || c.conflict || c.saveError || state.offline || !mailChanged(c)) return;
+  const cid = c.cid;
+  newMailTimer = setTimeout(() => { newMailTimer = null; if (state.newMail?.cid === cid) saveNewMail({ auto: true }); }, AUTOSAVE_MS);
+}
+async function saveNewMail({ auto = false } = {}) {
+  clearTimeout(newMailTimer);
+  const c = state.newMail;
+  if (!c?.accountId || c.conflict) return null;
+  if (state.offline) { if (!auto) set({ newMail: { ...c, error: 'Hors ligne : le brouillon reste ici, non enregistré.' } }); return null; }
+  if (auto && c.saveError) return null;
+  if (newMailFlight) {
+    if (auto) return null; // le passage en cours replanifie si besoin
+    await newMailFlight;
+    return state.newMail?.cid === c.cid ? saveNewMail() : null;
+  }
+  // Rien de nouveau : la version connue suffit (aperçu sans écriture inutile).
+  if (c.messageId && !mailChanged(c) && !c.saveError) return { c, input: withBase({ mode: 'new', ...mailFields(c) }, c.version) };
+  newMailFlight = writeNewMail(c);
+  try { return await newMailFlight; } finally { newMailFlight = null; if (state.newMail?.cid === c.cid) scheduleNewMailSave(); }
+}
+async function writeNewMail(start) {
+  const cid = start.cid, sent = mailFields(start);
+  let c = { ...start };
+  patchComposition(cid, { saving: true, error: null, saveError: null });
   try {
     if (!c.messageId) {
       const m = await api.createComposition(c.accountId);
       c = { ...c, messageId: m.id, version: versionOf(m) };
-      set({ newMail: { ...c, busy: true } });
+      patchComposition(cid, { messageId: c.messageId, version: c.version }, c);
     }
-    const input = { mode: 'new', to: c.to, cc: c.cc, subject: c.subject, text: c.text };
+    const input = { mode: 'new', ...sent };
     const draft = await api.saveDraft(c.messageId, withBase(input, c.version));
     if (draft.previousDraftKept) notify('Un ancien brouillon est conservé chez le fournisseur.');
-    c = { ...c, version: Number.isInteger(draft.version) ? draft.version : c.version };
-    set({ newMail: { ...state.newMail, messageId: c.messageId, version: c.version, busy: false, savedAt: draft.savedAt, synced: draft.synced ?? draft.gmail, error: null, conflict: false } });
-    try { await reload({ refresh: true }); } catch { /* l'enregistrement est déjà confirmé */ }
-    return { c, input: withBase(input, c.version) };
+    const version = Number.isInteger(draft.version) ? draft.version : c.version;
+    patchComposition(cid, { messageId: c.messageId, version, saving: false, saved: sent, savedAt: draft.savedAt, synced: draft.synced ?? draft.gmail, saveError: null, conflict: false }, { ...c, ...sent });
+    reload({ refresh: true }).catch(() => { /* l'enregistrement est déjà confirmé */ });
+    return { c: { ...c, ...sent, version }, input: withBase(input, version) };
   } catch (e) {
-    // Conflit : le texte saisi reste affiché ; rien n'est écrasé sans action explicite.
+    // Conflit : le texte saisi reste affiché ; rien n'est écrasé sans choix explicite (Recharger / Garder ma version).
     const conflict = e.status === 409 && e.code === 'draft_conflict';
-    set({ newMail: { ...state.newMail, busy: false, conflict, error: conflict ? 'Ce brouillon a été modifié sur un autre appareil. Ton texte est conservé ici : copie-le si besoin, puis rouvre le brouillon pour charger la version enregistrée.' : e.message } });
+    patchComposition(cid, { saving: false, conflict, saveError: conflict ? null : e.message }, c);
     return null;
   }
+}
+// Résolution explicite d'un conflit : relire la version du serveur, puis la reprendre ou la remplacer
+// par une écriture conditionnelle sur cette version relue.
+async function resolveNewMail(keepMine) {
+  const c = state.newMail;
+  if (!c?.conflict || !c.messageId || c.saving || c.busy) return;
+  if (state.offline) return set({ newMail: { ...c, error: 'Hors ligne : la résolution demande le réseau.' } });
+  const cid = c.cid;
+  set({ newMail: { ...c, saving: true, error: null } });
+  let full;
+  try { full = await api.message(c.messageId); } catch (e) {
+    if (state.newMail?.cid === cid) set({ newMail: { ...state.newMail, saving: false, error: e.message } });
+    return;
+  }
+  if (state.newMail?.cid !== cid) return; // fermée ou remplacée entre-temps : rien n'est appliqué
+  const server = compositionFromServer(full);
+  if (keepMine) {
+    set({ newMail: { ...state.newMail, version: server.version, saved: mailFields(server), saving: false, conflict: false, saveError: null } });
+    return saveNewMail();
+  }
+  set({ newMail: { ...state.newMail, ...mailFields(server), version: server.version, saved: mailFields(server), savedAt: server.savedAt, synced: server.synced, saving: false, conflict: false, saveError: null, error: null } });
 }
 
 // ---------- Actions ----------
@@ -619,32 +706,53 @@ const actions = {
     const accounts = derive(state).profile.accounts.filter(a => a.channel === 'email' && a.perms?.includes('read'));
     if (state.newMail?.accountId && accounts.some(a => a.id === state.newMail.accountId)) return set({ newMailOpen: true });
     const accountId = accounts.find(a => a.id === derive(state).sel?.accountId)?.id ?? accounts[0]?.id ?? null;
-    set({ newMailOpen: true, newMail: { accountId, to: '', cc: '', subject: '', text: '', busy: false } });
+    rememberComposition();
+    set({ newMailOpen: true, newMail: newComposition({ accountId }) });
   },
-  newMailField: ({ field }, e) => { if (!state.newMail?.busy) set({ newMail: { ...state.newMail, [field]: field === 'accountId' ? Number(e.target.value) : e.target.value, savedAt: null, error: null } }); },
+  newMailField: ({ field }, e) => {
+    const c = state.newMail;
+    if (!c || c.busy || (field === 'accountId' && (c.messageId || c.saving))) return;
+    set({ newMail: { ...c, [field]: field === 'accountId' ? Number(e.target.value) : e.target.value, error: null } });
+    scheduleNewMailSave();
+  },
   closeNewMail: () => { if (!state.newMail?.busy) { rememberComposition(); set({ newMailOpen: false }); } },
+  newMailReload: () => resolveNewMail(false),
+  newMailKeepMine: () => resolveNewMail(true),
   newMailConnect: () => { set({ newMailOpen: false }); openWizard(); },
-  saveNewMail: () => saveNewMail(),
+  saveNewMail: () => { if (!state.newMail?.busy) saveNewMail(); },
+  // Aperçu : champs figés (busy) pendant l'enregistrement puis la vérification ; résultat lié à cette composition.
   previewNewMail: async () => {
-    if (state.confirm) return;
+    const c0 = state.newMail;
+    if (state.confirm || !c0 || c0.busy) return;
+    if (state.offline) return set({ newMail: { ...c0, error: 'Hors ligne : la vérification avant l’envoi demande le réseau.' } });
+    const cid = c0.cid, ours = () => state.newMail?.cid === cid && state.newMailOpen;
+    set({ newMail: { ...c0, busy: true, error: null } });
     const saved = await saveNewMail();
-    if (!saved) return;
+    if (!saved || !ours()) { patchComposition(cid, { busy: false }); return; }
     const { c, input } = saved;
-    set({ newMail: { ...state.newMail, busy: true } });
     try {
       const preview = await api.previewSend(c.messageId, input);
+      if (!ours() || state.confirm) { patchComposition(cid, { busy: false }); return; }
       set({ newMailOpen: false, newMail: { ...state.newMail, busy: false }, confirm: { kind: 'send', newMail: true, messageId: c.messageId, input, preview, busy: false, error: null } });
       pushLayer('confirm');
-    } catch (e) { set({ newMail: { ...state.newMail, busy: false, error: e.message } }); }
+    } catch (e) {
+      const conflict = e.status === 409 && e.code === 'draft_conflict';
+      patchComposition(cid, { busy: false, ...(conflict ? { conflict: true } : { error: e.message }) });
+    }
   },
   aiNewMail: async () => {
+    const c0 = state.newMail;
+    if (!c0 || c0.busy) return;
+    const cid = c0.cid;
+    set({ newMail: { ...c0, busy: true, error: null } });
     const saved = await saveNewMail();
-    if (!saved) return;
-    set({ newMail: { ...state.newMail, busy: true } });
+    if (!saved || state.newMail?.cid !== cid) { patchComposition(cid, { busy: false }); return; }
     try {
       const r = await api.draftReply(saved.c.messageId, 'Cordial', 'Améliore ce nouveau message sans inventer de faits.');
-      set({ newMail: { ...state.newMail, busy: false, text: r.text, savedAt: null } });
-    } catch (e) { set({ newMail: { ...state.newMail, busy: false, error: e.message } }); }
+      if (state.newMail?.cid !== cid) return patchComposition(cid, { busy: false });
+      set({ newMail: { ...state.newMail, busy: false, text: r.text } });
+      scheduleNewMailSave();
+    } catch (e) { patchComposition(cid, { busy: false, error: e.message }); }
   },
   toggleProfileMenu: () => set({ menu: !state.menu, accountMenu: null }),
   selectProfile: ({ id }) => {
@@ -732,10 +840,11 @@ const actions = {
     if (m.kind === 'new') {
       try {
         const cached = compositionBuffers.get(m.id);
-        if (cached) { set({ newMailOpen: true, newMail: cached }); return; }
+        if (cached) { set({ newMailOpen: true, newMail: { ...cached, busy: false } }); return; }
         const full = await api.message(m.id);
         if (selectionVersion !== version || state.profileId !== profileId || state.selectedId !== m.id) return;
-        set({ newMailOpen: true, newMail: { messageId: full.id, version: versionOf(full), accountId: full.accountId, to: full.draft?.to || '', cc: full.draft?.cc || '', subject: full.subject, text: full.draft?.text || '', savedAt: full.draft?.savedAt, synced: full.draft?.synced, busy: false } });
+        rememberComposition();
+        set({ newMailOpen: true, newMail: compositionFromServer(full) });
       } catch (e) { fail(e); }
       return;
     }
@@ -766,6 +875,8 @@ const actions = {
     if (derive(state).sel?.channel === 'whatsapp' && mode !== 'reply') return;
     set({ composing: mode });
     if (derive(state).sel?.channel !== 'whatsapp') pushLayer('compose');
+    const id = state.selectedId;
+    if (changed(id)) scheduleAutosave(id);
   },
   closeComposer: () => { if (layers.includes('compose')) backFrom('compose'); else set({ composing: null }); },
   composeTo: (_, e) => { const id = state.selectedId, v = e.target.value; set(s => ({ composeTo: { ...s.composeTo, [id]: v } })); scheduleAutosave(id); },
@@ -818,7 +929,14 @@ const actions = {
   aiInsert: () => {
     const id = state.ai?.forId, text = state.ai?.result?.text;
     if (id == null || !text || state.selectedId !== id || state.ai?.mode !== 'draft' || state.ai.loading) return;
-    if (layers.at(-1) === 'ai') { layers.pop(); try { history.back?.(); } catch { /* sans historique */ } layers.push('__skip'); }
+    const email = derive(state).sel?.channel !== 'whatsapp';
+    if (layers.at(-1) === 'ai') {
+      // Mobile : l'entrée de l'assistant devient celle de la rédaction ; « Retour » fermera la rédaction, pas la lecture.
+      if (email && !layers.includes('compose')) {
+        layers[layers.length - 1] = 'compose';
+        try { history.replaceState?.({ relay: 'compose', depth: layers.length }, ''); } catch { /* historique indisponible */ }
+      } else { layers.pop(); try { history.back?.(); } catch { /* sans historique */ } layers.push('__skip'); }
+    }
     set(s => ({ drafts: { ...s.drafts, [id]: text }, ai: null, composing: 'reply' }));
     scheduleAutosave(id);
   },
@@ -855,24 +973,36 @@ const actions = {
   sendPreview: async () => {
     const sel = derive(state).sel;
     if (!sel || state.confirm) return;
-    const id = sel.id;
+    if (state.offline) return notify('Hors ligne : la vérification avant l’envoi demande le réseau.');
+    const id = sel.id, profileId = state.profileId, request = ++previewRequest;
     clearTimeout(draftTimers.get(id));
-    set({ confirm: { kind: 'send', messageId: id, input: null, preview: null, busy: true, error: null } });
+    // Pendant l'attente, le compositeur est en lecture seule ; l'aperçu reste lié à cette demande précise.
+    set({ confirm: { kind: 'send', messageId: id, request, input: null, preview: null, busy: true, error: null } });
+    const ours = () => state.confirm?.request === request;
     if (state.draftMeta[id]?.saving) await new Promise(r => { const t = setInterval(() => { if (!state.draftMeta[id]?.saving) { clearInterval(t); r(); } }, 50); });
-    if (state.draftMeta[id]?.version !== undefined && draftText(id) !== state.draftMeta[id].savedText) await saveDraftNow(id);
+    if (state.draftMeta[id]?.version !== undefined && changed(id)) await saveDraftNow(id);
     const meta = state.draftMeta[id] || {};
-    if (meta.conflict || meta.error) { set({ confirm: null }); if (meta.error) fail(new Error(meta.error)); return; }
-    const mode = state.composing || 'reply';
-    const input = withBase({
-      text: draftText(id),
-      mode,
-      to: mode === 'forward' ? (state.composeTo[id] ?? state.details[id]?.draft?.to ?? '') : null,
-    }, meta.version);
+    if (!ours()) return;
+    if (meta.conflict || meta.error || (meta.version !== undefined && changed(id))) {
+      set({ confirm: null });
+      if (meta.error) fail(new Error(meta.error));
+      else if (!meta.conflict) notify('Brouillon non enregistré : vérification annulée.');
+      return;
+    }
+    const sent = localDraft(id);
+    const input = withBase({ text: sent.text, mode: sent.mode, to: sent.to }, meta.version);
     try {
       const preview = await api.previewSend(id, input);
-      set({ confirm: { kind: 'send', messageId: id, input, preview, busy: false, error: null } });
+      if (!ours()) return;
+      // Sélection, profil ou brouillon modifiés pendant l'attente : cet aperçu ne correspond plus, il est écarté.
+      if (state.profileId !== profileId || state.selectedId !== id || !sameDraft(localDraft(id), sent)) {
+        set({ confirm: null });
+        return notify('Le brouillon a changé pendant la vérification : vérifie à nouveau avant d’envoyer.');
+      }
+      set({ confirm: { kind: 'send', messageId: id, request, input, preview, busy: false, error: null } });
       pushLayer('confirm');
     } catch (e) {
+      if (!ours()) return;
       set({ confirm: null });
       if (e.status === 409 && e.code === 'draft_conflict') setMeta(id, { conflict: true });
       else fail(e);
@@ -881,6 +1011,7 @@ const actions = {
   confirmSend: async () => {
     const c = state.confirm;
     if (c?.kind !== 'send' || c.busy || !c.preview) return;
+    if (state.offline) return set({ confirm: { ...c, error: 'Hors ligne : rien n’a été envoyé.' } });
     set({ confirm: { ...c, busy: true, error: null } });
     let r;
     try {
@@ -894,19 +1025,23 @@ const actions = {
     // Envoi confirmé par le serveur : plus rien ici ne doit inviter à renvoyer.
     const id = c.messageId;
     compositionBuffers.delete(id);
-    clearTimeout(draftTimers.get(id));
+    // Texte saisi après l'aperçu : jamais effacé, il reste local et non enregistré (le brouillon envoyé a disparu).
+    const newer = !c.newMail && !sameDraft(localDraft(id), { text: c.input.text, mode: c.input.mode, to: c.input.to ?? null });
+    if (!newer) clearTimeout(draftTimers.get(id));
     if (layers.at(-1) === 'confirm') { layers.pop(); try { history.back?.(); } catch { /* sans historique */ } layers.push('__skip'); }
     // L'entrée d'historique du compositeur devient neutre : le retour suivant ne rouvre ni ne ferme rien d'autre.
     if (layers.includes('compose')) layers[layers.lastIndexOf('compose')] = '__skip';
     set(s => {
       const drafts = { ...s.drafts }, composeTo = { ...s.composeTo }, details = { ...s.details }, draftMeta = { ...s.draftMeta };
-      delete drafts[id]; delete composeTo[id]; delete details[id]; delete draftMeta[id];
-      return { confirm: null, composing: null, drafts, composeTo, details, draftMeta, ...(c.newMail ? { newMail: null, newMailOpen: false, selectedId: s.selectedId === id ? null : s.selectedId, data: { ...s.data, messages: s.data.messages.filter(m => m.id !== id) } } : {}) };
+      if (!newer) { delete drafts[id]; delete composeTo[id]; }
+      delete details[id]; delete draftMeta[id];
+      return { confirm: null, composing: newer ? s.composing : null, drafts, composeTo, details, draftMeta, ...(c.newMail ? { newMail: null, newMailOpen: false, selectedId: s.selectedId === id ? null : s.selectedId, data: { ...s.data, messages: s.data.messages.filter(m => m.id !== id) } } : {}) };
     });
     const m = state.data.messages.find(x => x.id === id);
     if (m) m.draft = null;
+    if (newer) scheduleAutosave(id);
     const sent = r.draftRemoved === false ? 'Message envoyé. Le brouillon local est effacé ; son brouillon chez le fournisseur est conservé, supprime-le si besoin.' : 'Message envoyé.';
-    notify(sent);
+    notify(newer ? `${sent} Le texte modifié depuis la vérification est conservé, non enregistré.` : sent);
     try {
       await reload({ refresh: true });
     } catch {
@@ -979,7 +1114,7 @@ document.addEventListener('keydown', e => {
 
 // Navigateur seulement (absent des tests en machine virtuelle) : retour, format d'écran, clavier, réseau.
 globalThis.addEventListener?.('popstate', onPopState);
-const mobileQuery = globalThis.matchMedia?.('(max-width: 760px)');
+const mobileQuery = globalThis.matchMedia?.('(max-width: 1000px)');
 mobileQuery?.addEventListener?.('change', e => { layers.length = 0; set({ mobile: e.matches, drawer: false, pane: e.matches && state.selectedId != null ? 'reader' : 'list' }); });
 const viewport = globalThis.visualViewport;
 if (viewport && document.documentElement) {
@@ -992,7 +1127,7 @@ globalThis.addEventListener?.('offline', () => set({ offline: true }));
 globalThis.addEventListener?.('online', () => { set({ offline: false }); if (state.data) reload({ refresh: true }).catch(() => {}); else if (state.loadError === 'offline') location.reload(); });
 // Texte pas encore enregistré : le navigateur demande confirmation avant de quitter la page.
 globalThis.addEventListener?.('beforeunload', e => {
-  if (Object.keys(state.draftMeta).some(id => dirty(Number(id))) || state.newMail && !state.newMail.savedAt && state.newMail.text) { e.preventDefault(); e.returnValue = ''; }
+  if (Object.keys(state.draftMeta).some(id => dirty(Number(id))) || state.newMail && (state.newMail.saving || state.newMail.conflict || mailChanged(state.newMail))) { e.preventDefault(); e.returnValue = ''; }
 });
 
 api.session()

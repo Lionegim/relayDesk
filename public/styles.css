@@ -438,8 +438,8 @@ svg { display: block; }
 .mobile-only { display: none; }
 .drawer-close { display: none; }
 
-/* ---------- Mobile (≤ 760 px) : un écran à la fois, cibles de 44 px, zones sûres ---------- */
-@media (max-width: 760px) {
+/* ---------- Mobile et tablette portrait (≤ 1000 px, téléphones en paysage compris) : un écran à la fois, cibles de 44 px, zones sûres ---------- */
+@media (max-width: 1000px) {
   html, body { height: 100%; overscroll-behavior: none; }
   body { -webkit-text-size-adjust: 100%; }
   .app.is-mobile {
