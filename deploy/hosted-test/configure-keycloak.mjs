@@ -13,6 +13,17 @@
 //
 // Options : --realm (relay-test), --client-id (relay-desk), --owner (owner-test), --acr (relay-mfa),
 //           --ssl-required (all), --recreate (supprime puis recrée le realm de test : nouveaux secrets).
+//
+// Mode --enrolment (propriétaire réel, realm distinct « relay » par défaut, jamais « relay-test ») :
+//   aucun mot de passe permanent ni OTP n'est généré. Le propriétaire reçoit un mot de passe TEMPORAIRE à usage
+//   unique et les actions requises UPDATE_PASSWORD, CONFIGURE_TOTP et VERIFY_PROFILE : il choisit lui-même son mot
+//   de passe, enrôle son OTP et saisit son nom et son adresse à la première connexion.
+//   Sorties : relay/* et owner/username, owner/temporary-password.
+//   Garde des secrets : ce mode n'exporte aucun facteur permanent, mais il n'isole pas l'opérateur. Toute personne
+//   ayant l'accès root à la VM ou l'administration de Keycloak peut lire les secrets du serveur, réinitialiser les
+//   identifiants du propriétaire ou se connecter avec le mot de passe temporaire tant qu'il n'a pas été changé.
+//   Le propriétaire doit donc se connecter sans délai, et l'accès root et l'administration Keycloak doivent être
+//   détenus par des personnes de confiance.
 import { fileURLToPath } from 'node:url';
 import { resolve } from 'node:path';
 import { randomAlnum, randomSecret, otpauthUri, isLoopbackUrl, prepareOutputDir, writePrivate, readSecretFile, parseArgs } from './lib.mjs';
@@ -56,6 +67,18 @@ export function clientSettings({ clientId, secret, publicUrl, acr }) {
       'post.logout.redirect.uris': '',
       'backchannel.logout.session.required': 'false',
     },
+  };
+}
+
+// Propriétaire à enrôler : mot de passe temporaire (changement imposé) et enrôlement OTP imposé ; aucun OTP importé.
+// Le profil déclaratif de Keycloak 26 exige prénom, nom et adresse : le propriétaire les saisit lui-même à la première
+// connexion (VERIFY_PROFILE) ; aucune donnée personnelle n'est écrite par ce script.
+export const ENROLMENT_ACTIONS = Object.freeze(['UPDATE_PASSWORD', 'CONFIGURE_TOTP', 'VERIFY_PROFILE']);
+export function enrolmentOwnerRepresentation({ username, temporaryPassword }) {
+  return {
+    username, enabled: true, emailVerified: false,
+    requiredActions: [...ENROLMENT_ACTIONS],
+    credentials: [{ type: 'password', value: temporaryPassword, temporary: true }],
   };
 }
 
@@ -117,7 +140,12 @@ class AdminApi {
 const enc = encodeURIComponent;
 
 export async function configureKeycloak(opts, { fetchImpl = globalThis.fetch, log = console.log } = {}) {
-  const { adminUrl, adminUser, adminPassword, publicUrl, issuerBase, out, realm = 'relay-test', clientId = 'relay-desk', owner = 'owner-test', acr = 'relay-mfa', sslRequired = 'all', recreate = false } = opts;
+  const { enrolment = false } = opts;
+  const { adminUrl, adminUser, adminPassword, publicUrl, issuerBase, out, realm = enrolment ? 'relay' : 'relay-test', clientId = 'relay-desk', owner = enrolment ? 'owner' : 'owner-test', acr = 'relay-mfa', sslRequired = 'all', recreate = false } = opts;
+  // Enrôlement réel : realm distinct du test, jamais de recréation implicite d'un realm réel.
+  if (enrolment && realm === 'relay-test') throw new Error('--enrolment exige un realm distinct du realm de test (relay par défaut).');
+  if (enrolment && recreate) throw new Error('--recreate est refusé avec --enrolment : un realm réel n’est jamais supprimé par ce script.');
+  if (enrolment && !/^[a-z][a-z0-9._-]{1,40}$/.test(owner)) throw new Error('--owner invalide.');
   if (!isLoopbackUrl(adminUrl)) throw new Error('--admin-url doit viser la boucle locale (127.0.0.1, localhost ou [::1]) : l’administration n’est jamais publique.');
   let pub;
   try { pub = new URL(publicUrl); } catch { throw new Error('--public-url invalide.'); }
@@ -171,13 +199,19 @@ export async function configureKeycloak(opts, { fetchImpl = globalThis.fetch, lo
   const defaults = (await api.call('GET', `${r}/clients/${enc(client.id)}/default-client-scopes`)).data;
   if (!defaults.some(s => s.id === acrScope.id)) await api.call('PUT', `${r}/clients/${enc(client.id)}/default-client-scopes/${enc(acrScope.id)}`);
 
-  // 4. Propriétaire fictif : mot de passe et OTP neufs, importés (aucune action requise au premier accès).
-  const password = randomAlnum(24), otpSecret = randomAlnum(32);
-  await api.call('POST', `${r}/partialImport`, { ifResourceExists: 'FAIL', users: [ownerRepresentation({ username: owner, password, otpSecret })] });
+  // 4. Propriétaire : fictif avec mot de passe et OTP neufs (test), ou à enrôler par lui-même (--enrolment).
+  const password = enrolment ? null : randomAlnum(24), otpSecret = enrolment ? null : randomAlnum(32);
+  const temporaryPassword = enrolment ? randomAlnum(24) : null;
+  const ownerRep = enrolment ? enrolmentOwnerRepresentation({ username: owner, temporaryPassword }) : ownerRepresentation({ username: owner, password, otpSecret });
+  await api.call('POST', `${r}/partialImport`, { ifResourceExists: 'FAIL', users: [ownerRep] });
   const user = (await api.call('GET', `${r}/users?username=${enc(owner)}&exact=true`)).data[0];
   if (!user?.id) throw new Error('propriétaire introuvable après import.');
   const creds = (await api.call('GET', `${r}/users/${enc(user.id)}/credentials`)).data.map(c => c.type).sort();
-  if (creds.join(',') !== 'otp,password') throw new Error('identifiants du propriétaire incomplets après import.');
+  if (creds.join(',') !== (enrolment ? 'password' : 'otp,password')) throw new Error('identifiants du propriétaire inattendus après import.');
+  if (enrolment) {
+    const actions = [...((await api.call('GET', `${r}/users/${enc(user.id)}`)).data.requiredActions || [])].sort();
+    if (actions.join(',') !== [...ENROLMENT_ACTIONS].sort().join(',')) throw new Error('actions requises du propriétaire absentes après import.');
+  }
 
   // 5. Fichiers de sortie (0400), puis résumé sans secret.
   const issuer = `${idp.origin}/realms/${realm}`;
@@ -189,13 +223,23 @@ export async function configureKeycloak(opts, { fetchImpl = globalThis.fetch, lo
     `AUTH_MFA_ACR=${acr}`,
   ].join('\n'));
   writePrivate(out, 'owner/username', owner);
-  writePrivate(out, 'owner/password', password);
-  writePrivate(out, 'owner/otp-secret', otpSecret);
-  writePrivate(out, 'owner/otpauth-uri', otpauthUri({ secretValue: otpSecret, account: owner, issuer: realm }));
+  if (enrolment) {
+    // Seul le mot de passe temporaire est remis : aucun facteur permanent n'est exporté.
+    writePrivate(out, 'owner/temporary-password', temporaryPassword);
+  } else {
+    writePrivate(out, 'owner/password', password);
+    writePrivate(out, 'owner/otp-secret', otpSecret);
+    writePrivate(out, 'owner/otpauth-uri', otpauthUri({ secretValue: otpSecret, account: owner, issuer: realm }));
+  }
   log(`Realm ${realm} configuré : inscription, grant direct et implicite désactivés ; MFA OTP obligatoire (acr ${acr} = LoA 2).`);
   log(`Client ${clientId} : confidentiel, PKCE S256, retour ${pub.origin}/auth/callback.`);
-  log(`Propriétaire fictif ${owner} : sub ${user.id}.`);
-  log(`Secrets écrits (0400) dans ${out} : relay/auth_client_id, relay/auth_client_secret, relay/auth.env, owner/*.`);
+  if (enrolment) {
+    log(`Propriétaire ${owner} à enrôler : sub ${user.id} ; à la première connexion, changement du mot de passe, enrôlement OTP et saisie du profil imposés.`);
+    log(`Secrets écrits (0400) dans ${out} : relay/auth_client_id, relay/auth_client_secret, relay/auth.env, owner/username, owner/temporary-password.`);
+  } else {
+    log(`Propriétaire fictif ${owner} : sub ${user.id}.`);
+    log(`Secrets écrits (0400) dans ${out} : relay/auth_client_id, relay/auth_client_secret, relay/auth.env, owner/*.`);
+  }
   return { sub: user.id, clientUuid: client.id, issuer };
 }
 
@@ -203,14 +247,14 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
   try {
     const a = parseArgs(process.argv.slice(2), {
       'admin-url': 'value', 'admin-user-file': 'value', 'admin-password-file': 'value', 'public-url': 'value', 'issuer-base': 'value',
-      out: 'value', realm: 'value', 'client-id': 'value', owner: 'value', acr: 'value', 'ssl-required': 'value', recreate: 'flag',
+      out: 'value', realm: 'value', 'client-id': 'value', owner: 'value', acr: 'value', 'ssl-required': 'value', recreate: 'flag', enrolment: 'flag',
     });
     for (const k of ['admin-url', 'admin-user-file', 'admin-password-file', 'public-url', 'issuer-base', 'out']) if (!a[k]) throw new Error(`--${k} est requis.`);
     await configureKeycloak({
       adminUrl: a['admin-url'], adminUser: readSecretFile(a['admin-user-file'], '--admin-user-file'),
       adminPassword: readSecretFile(a['admin-password-file'], '--admin-password-file'),
       publicUrl: a['public-url'], issuerBase: a['issuer-base'], out: a.out, realm: a.realm, clientId: a['client-id'], owner: a.owner,
-      acr: a.acr, sslRequired: a['ssl-required'], recreate: !!a.recreate,
+      acr: a.acr, sslRequired: a['ssl-required'], recreate: !!a.recreate, enrolment: !!a.enrolment,
     });
   } catch (e) {
     console.error(`Configuration refusée : ${e.message}`);

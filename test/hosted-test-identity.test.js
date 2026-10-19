@@ -56,7 +56,8 @@ test('TOTP RFC 6238 (SHA-1) et base32', async () => {
 });
 
 // API d'administration Keycloak simulée : enregistre les appels et répond comme Keycloak pour ce parcours.
-function fakeKeycloak() {
+// realmName : realm visé par le script ; ses chemins sont ramenés à ceux du realm de test simulé.
+function fakeKeycloak(realmName = 'relay-test') {
   const calls = [], flows = new Map([['relay browser loa', []]]);
   let realm = null, client = null, user = null, nextId = 1;
   const id = () => `00000000-0000-4000-8000-${String(nextId++).padStart(12, '0')}`;
@@ -65,7 +66,7 @@ function fakeKeycloak() {
     req.on('data', d => { body += d; });
     req.on('end', () => {
       const json = body && req.headers['content-type']?.includes('json') ? JSON.parse(body) : body;
-      const url = new URL(req.url, 'http://x'), p = decodeURIComponent(url.pathname);
+      const url = new URL(req.url, 'http://x'), p = decodeURIComponent(url.pathname).replace(new RegExp(`^/admin/realms/${realmName}(?=/|$)`), '/admin/realms/relay-test');
       calls.push({ method: req.method, path: p, body: json });
       const send = (status, data) => { res.writeHead(status, { 'content-type': 'application/json' }); res.end(data === undefined ? '' : JSON.stringify(data)); };
       if (p === '/realms/master/protocol/openid-connect/token') return send(200, { access_token: 'jeton-admin-fictif' });
@@ -95,6 +96,7 @@ function fakeKeycloak() {
       if (p.endsWith('/default-client-scopes/scope-acr') && req.method === 'PUT') return send(204);
       if (p === '/admin/realms/relay-test/partialImport') { user = { ...json.users[0], id: id() }; return send(200, { added: 1 }); }
       if (p === '/admin/realms/relay-test/users') return send(200, user ? [{ id: user.id, username: user.username }] : []);
+      if (user && p === `/admin/realms/relay-test/users/${user.id}` && req.method === 'GET') return send(200, { id: user.id, username: user.username, requiredActions: user.requiredActions });
       if (p.endsWith('/credentials')) return send(200, user.credentials.map(c => ({ type: c.type })));
       return send(404);
     });
@@ -174,4 +176,57 @@ test('configuration Keycloak : administration en boucle locale seulement, hôtes
   await assert.rejects(configureKeycloak({ ...base, publicUrl: 'https://relay.example.test/app' }), /origine sans chemin/);
   await assert.rejects(configureKeycloak({ ...base, out: new URL('../deploy', import.meta.url).pathname }), /dans le dépôt/);
   assert.equal(existsSync(out), false, 'aucun répertoire créé avant les contrôles');
+});
+
+test('enrôlement du propriétaire : realm distinct, aucun facteur permanent généré ni exporté, actions imposées', async t => {
+  const { configureKeycloak, ENROLMENT_ACTIONS } = await import('../deploy/hosted-test/configure-keycloak.mjs');
+  const kc = fakeKeycloak('relay');
+  await new Promise(r => kc.server.listen(0, '127.0.0.1', r));
+  t.after(() => kc.server.close());
+  const root = mkdtempSync(join(tmpdir(), 'relay-enrol-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const out = join(root, 'out'), logs = [];
+  const base = { adminUrl: `http://127.0.0.1:${kc.server.address().port}`, adminUser: 'admin-fictif', adminPassword: 'mot-de-passe-admin-fictif', publicUrl: 'https://relay.example.test', issuerBase: 'https://auth.relay.example.test', out, enrolment: true };
+  const r = await configureKeycloak(base, { log: m => logs.push(m) });
+
+  // Realm et client distincts du test : realm « relay », même politique MFA, nouveau secret de client.
+  assert.ok(kc.calls.some(c => c.method === 'POST' && c.path === '/admin/realms' && c.body.realm === 'relay'));
+  assert.equal(kc.realm.realm, 'relay');
+  assert.equal(kc.realm.registrationAllowed, false);
+  assert.deepEqual(JSON.parse(kc.realm.attributes['acr.loa.map']), { 'relay-mfa': 2 });
+  assert.equal(kc.client.attributes['minimum.acr.value'], 'relay-mfa');
+  assert.equal(kc.client.directAccessGrantsEnabled, false);
+
+  // Propriétaire : un seul identifiant, temporaire ; aucun OTP ; actions imposées.
+  assert.equal(kc.user.username, 'owner');
+  assert.deepEqual(kc.user.credentials.map(c => [c.type, c.temporary]), [['password', true]]);
+  assert.deepEqual(kc.user.requiredActions, ['UPDATE_PASSWORD', 'CONFIGURE_TOTP', 'VERIFY_PROFILE']);
+  assert.deepEqual([...ENROLMENT_ACTIONS], kc.user.requiredActions);
+  assert.equal(kc.user.firstName ?? kc.user.lastName ?? kc.user.email ?? null, null, 'aucune donnée personnelle écrite');
+
+  // Sorties : aucun facteur permanent (ni mot de passe définitif, ni secret OTP, ni URI otpauth).
+  const files = [];
+  const walk = d => readdirSync(join(out, d), { withFileTypes: true }).forEach(e => e.isDirectory() ? walk(join(d, e.name)) : files.push(join(d, e.name)));
+  walk('.');
+  assert.deepEqual(files.map(f => f.replace(/^\.\//, '')).sort(), ['owner/temporary-password', 'owner/username', 'relay/auth.env', 'relay/auth_client_id', 'relay/auth_client_secret']);
+  for (const f of files) assert.equal(statSync(join(out, f)).mode & 0o777, 0o400, f);
+  const temp = readFileSync(join(out, 'owner/temporary-password'), 'utf8').trim();
+  assert.equal(temp, kc.user.credentials[0].value);
+  assert.equal(readFileSync(join(out, 'relay/auth.env'), 'utf8'), `AUTH_ISSUER=https://auth.relay.example.test/realms/relay\nAUTH_OWNER_SUB=${r.sub}\nAUTH_MFA_ACR=relay-mfa\n`);
+  for (const v of [temp, kc.client.secret, 'mot-de-passe-admin-fictif']) assert.ok(!logs.join('\n').includes(v));
+
+  // Refus : realm de test, recréation d'un realm réel, realm existant.
+  await assert.rejects(configureKeycloak({ ...base, out: join(root, 'o2'), realm: 'relay-test' }), /realm distinct du realm de test/);
+  await assert.rejects(configureKeycloak({ ...base, out: join(root, 'o3'), recreate: true }), /--recreate est refusé avec --enrolment/);
+  await assert.rejects(configureKeycloak({ ...base, out: join(root, 'o4') }), /existe déjà/);
+  assert.equal(kc.calls.filter(c => c.method === 'DELETE').length, 0, 'aucun realm supprimé');
+});
+
+test('mode synthétique inchangé : realm relay-test et propriétaire fictif par défaut', async () => {
+  const { ownerRepresentation, enrolmentOwnerRepresentation } = await import('../deploy/hosted-test/configure-keycloak.mjs');
+  const fict = ownerRepresentation({ username: 'owner-test', password: 'p', otpSecret: 's' });
+  assert.deepEqual(fict.credentials.map(c => c.type), ['password', 'otp']);
+  assert.deepEqual(fict.requiredActions, []);
+  const enrol = enrolmentOwnerRepresentation({ username: 'owner', temporaryPassword: 't' });
+  assert.ok(!enrol.credentials.some(c => c.type === 'otp' || c.temporary === false));
 });
