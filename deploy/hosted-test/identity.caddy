@@ -1,0 +1,33 @@
+# Site d'identité de TEST pour Relay Desk : à importer dans le Caddyfile du proxy (« import identity.caddy »).
+# Seuls le realm de test et les ressources statiques de Keycloak sont publics. Tout le reste répond 404 :
+# console et API d'administration (/admin), realm master, console de compte, santé et métriques (port 9000,
+# jamais relié au proxy). L'administration se fait par la boucle locale de la VM (tunnel SSH).
+# IDENTITY_DOMAIN : p. ex. auth.relay.migeoncorp.fr ; KEYCLOAK_UPSTREAM : p. ex. keycloak:8080.
+{$IDENTITY_DOMAIN} {
+	encode zstd gzip
+
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "no-referrer"
+		-Server
+	}
+
+	request_body {
+		max_size 64KB
+	}
+
+	# Exclusion dans le matcher lui-même : « handle » passe avant « respond » dans l'ordre des directives de Caddy.
+	@public {
+		path /realms/relay-test/* /resources/*
+		not path /realms/relay-test/account /realms/relay-test/account/*
+	}
+	handle @public {
+		# Caddy remplace les en-têtes X-Forwarded-* reçus du client (aucun proxy de confiance en amont).
+		reverse_proxy {$KEYCLOAK_UPSTREAM}
+	}
+
+	handle {
+		respond 404
+	}
+}
