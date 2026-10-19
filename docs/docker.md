@@ -135,3 +135,5 @@ Validation après lot 4 : **233 tests réussis sur Mac et Linux**, puis recette 
 Le lot 5 ajoute la navigation tactile, la pagination et les brouillons versionnés entre appareils, ainsi qu’un manifeste PWA et un cache limité aux ressources publiques. Voir `docs/mobile.md`. Les API, QR, messages, brouillons et HTML privé ne sont pas mis en cache par le service worker ; les ressources statiques génériques sont publiques sans donner accès aux données.
 
 Validation après lot 5 : **275 tests réussis sur Mac et Linux**, puis recette Docker hors réseau réussie, y compris persistance et restauration de la version des brouillons. La recette Chrome utilise exclusivement une base éphémère et des fournisseurs simulés. La vérification sur téléphones physiques et sur le futur domaine HTTPS reste à réaliser.
+
+Validation complémentaire Safari : le contournement de rendu et les tests d’équivalence portent le total à **279 tests réussis sur Mac et Linux** ; la recette Docker reste verte. La recette Device Hub complète passe sur le simulateur iOS 27.1 ; le runtime iOS 26.2 reste instable et n’est pas déclaré corrigé. Voir `docs/mobile.md`.
