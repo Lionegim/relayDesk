@@ -492,7 +492,7 @@ function aiPanel(s, sel) {
       <div class="ai-head">
         <span class="ai-logo">✳</span>
         <span style="display:flex;flex-direction:column;flex:1;min-width:0">
-          <span style="font-size:14px;font-weight:600">Assistant</span>
+          <span class="network-eyebrow">UN REGARD EN PLUS</span><h2 class="ai-title">Assistant</h2>
           <span class="muted ellipsis" style="font-size:12px">${sel.subject} · ${plural(n, 'message')}</span>
         </span>
         <button class="close-btn" data-on-click="aiClose" aria-label="Fermer">×</button>
@@ -528,7 +528,7 @@ function aiPanel(s, sel) {
               ${folders.map(f => html`<option value="${f.id}" ${raw(ai.folderId === f.id ? 'selected' : '')}>${f.name}</option>`)}
             </select>
           </label>
-          <p class="muted" style="font-size:12px;margin:0">${result.appliedAt ? 'Classement déjà appliqué.' : localLabels ? 'Catégorie, priorité et dossier restent dans Relay Desk, dans Relay Desk.' : 'La catégorie et la priorité restent dans Relay Desk. Le dossier choisi sera synchronisé avec ton compte.'}</p>` : html`<div class="ai-result">${result.text}</div>`)}
+          <p class="muted" style="font-size:12px;margin:0">${result.appliedAt ? 'Classement déjà appliqué.' : localLabels ? 'Catégorie, priorité et dossier restent dans Relay Desk, dans Relay Desk.' : 'La catégorie et la priorité restent dans Relay Desk. Le dossier choisi sera synchronisé avec ton compte.'}</p>` : html`<div class="ai-result"><span class="network-eyebrow">${draftMode?'PROPOSITION DE RÉPONSE':'L’ESSENTIEL DU FIL'}</span><div class="ai-result-text">${result.text}</div></div>`)}
         ${when(draftMode && result?.personHistory,()=>html`<section class="reply-memory person-reply-context" aria-label="Historique utilisé pour la suggestion"><strong>Historique de ${result.personHistory.person.name}</strong><p>${plural(result.personHistory.sources.length,'conversation')} associées${result.personHistory.styleSamples?` · ${plural(result.personHistory.styleSamples,'exemple')} de ton style en complément`:''}.</p><details><summary>Voir les échanges utilisés</summary>${result.personHistory.sources.map(x=>html`<p><strong>${x.subject}</strong><br><span class="muted">${whenLabel(x.at)} · ${x.account}</span></p>`)}</details></section>`)}
         ${when(draftMode && result?.memoryUsed,()=>html`<span class="muted">Proposition adaptée à ${result.memorySamples} exemples de cette conversation.</span>`)}
         ${when(result?.createdAt, () => html`<span class="muted" style="font-size:11px">Analyse enregistrée à ${timeOf(result.createdAt)}${result.cached ? ' · réutilisée' : ''}</span>`)}
@@ -820,16 +820,15 @@ function sendDialog(c, offline = false) {
   const p = c.preview;
   return html`
     <div class="overlay" data-on-click="confirmCancel">
-      <div class="dialog" role="alertdialog" aria-modal="true" aria-label="Vérifier le message avant l’envoi" data-on-click="noop">
-        <div class="dialog-body">
-          <h3>Vérifier avant d’envoyer${p.channel === 'whatsapp' ? ' sur WhatsApp' : ''}</h3>
+      <div class="dialog send-preview" role="alertdialog" aria-modal="true" aria-label="Vérifier le message avant l’envoi" data-on-click="noop">
+        <header class="writing-head"><div><span class="network-eyebrow">DERNIÈRE RELECTURE</span><h3>Vérifier avant d’envoyer${p.channel === 'whatsapp' ? ' sur WhatsApp' : ''}</h3></div><span class="writing-step">Votre validation</span></header><div class="dialog-body">
           <div class="recap">
             <span class="muted">De</span><span>${p.from}</span>
             <span class="muted">À</span><span>${p.to.join(', ')}</span>
             ${when(p.cc.length, () => html`<span class="muted">Cc</span><span>${p.cc.join(', ')}</span>`)}
             ${when(p.channel !== 'whatsapp', () => html`<span class="muted">Objet</span><span style="font-weight:600">${p.subject}</span>`)}
           </div>
-          <div class="send-body">${p.body}</div>
+          <div class="send-preview-letter"><span class="network-eyebrow">MESSAGE EXACT</span><div class="send-body">${p.body}</div></div>
           <p class="muted" style="margin:0;font-size:12px">Ce texte est exactement celui qui sera envoyé. Toute modification demande une nouvelle vérification.</p>
           ${when(c.error, () => html`<div class="alert">${c.error}</div>`)}
           ${when(offline && !c.error, () => html`<div class="alert">Hors ligne : l’envoi reprendra seulement quand tu le confirmeras en ligne.</div>`)}
@@ -860,8 +859,8 @@ function newMailDialog(s, v) {
   const account = accounts.find(a => a.id === c.accountId);
   const disabled = raw(c.busy ? 'disabled' : '');
   return html`<div class="overlay"><section class="dialog new-mail-dialog" role="dialog" aria-modal="true" aria-label="Nouveau message">
-    <div class="composer-head"><h3 class="grow">Nouveau message</h3><button class="composer-close" data-on-click="closeNewMail" aria-label="Fermer le nouveau message" ${disabled}>×</button></div>
-    ${accounts.length ? html`
+    <div class="composer-head writing-head"><div class="grow"><span class="network-eyebrow">PRENDRE LE TEMPS D’ÉCRIRE</span><h3>Nouveau message</h3></div><button class="composer-close" data-on-click="closeNewMail" aria-label="Fermer le nouveau message" ${disabled}>×</button></div>
+    ${accounts.length ? html`<div class="compose-fields">
       <label>De<select data-on-change="newMailField" data-field="accountId" ${raw(c.busy || c.saving || c.messageId ? 'disabled' : '')}>
         ${accounts.map(a => html`<option value="${a.id}" ${raw(a.id === c.accountId ? 'selected' : '')}>${a.profileName?`${a.profileName} · `:''}${a.name} — ${a.address || ''}</option>`)}
       </select></label>
@@ -869,14 +868,14 @@ function newMailDialog(s, v) {
       <label>À<input data-key="new-to" data-on-input="newMailField" data-field="to" value="${c.to}" maxlength="2000" placeholder="adresse@exemple.fr" ${disabled}></label>
       <label>Cc<input data-key="new-cc" data-on-input="newMailField" data-field="cc" value="${c.cc}" maxlength="2000" ${disabled}></label>
       <label>Objet<input data-key="new-subject" data-on-input="newMailField" data-field="subject" value="${c.subject}" maxlength="998" ${disabled}></label>
-      <label>Message<textarea data-key="new-body" data-on-input="newMailField" data-field="text" maxlength="20000" placeholder="Rédige ton message…" ${disabled}>${c.text}</textarea></label>
+      <label class="compose-message">Message<textarea data-key="new-body" data-on-input="newMailField" data-field="text" maxlength="20000" placeholder="Rédige ton message…" ${disabled}>${c.text}</textarea></label>
       ${when(c.conflict, () => html`<div class="draft-conflict" role="alert">
         <p>Ce brouillon a été modifié ailleurs. Ton texte est conservé ici et n’a pas été enregistré.</p>
         <div><button class="btn btn-ghost" data-on-click="newMailReload" ${raw(c.saving || c.busy ? 'disabled' : '')}>Recharger</button>
         <button class="btn btn-ghost" data-on-click="newMailKeepMine" ${raw(c.saving || c.busy ? 'disabled' : '')}>Garder ma version</button></div>
       </div>`)}
       ${when(c.error || c.saveError, () => html`<p role="alert" class="error">${c.error || `Non enregistré : ${c.saveError}`}</p>`)}
-      <div class="composer-foot"><button class="btn btn-ghost" data-on-click="aiNewMail" ${raw(c.busy || !s.data.ai?.configured ? 'disabled' : '')}>✳ Améliorer avec l’IA</button>
+      </div><div class="composer-foot"><button class="btn btn-ghost" data-on-click="aiNewMail" ${raw(c.busy || !s.data.ai?.configured ? 'disabled' : '')}>✳ Améliorer avec l’IA</button>
         <span class="composer-status" role="status">${newMailStatus(c)}</span>
         <button class="btn btn-ghost" data-on-click="saveNewMail" ${raw(c.busy || c.conflict || s.offline ? 'disabled' : '')}>Enregistrer</button>
         <button class="btn btn-brand" data-on-click="previewNewMail" ${raw(!c.busy && !c.saving && !c.conflict && !s.offline && account?.perms?.includes('send') && c.text.trim() && c.to.trim() ? '' : 'disabled')}>Vérifier avant l’envoi</button>
