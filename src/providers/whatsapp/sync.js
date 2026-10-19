@@ -164,7 +164,8 @@ export function createWhatsAppSync({ store, vault, lib, makeSocket, log = consol
     openingAuth.add(auth);
     if (stopped || paused || epoch(accountId) !== at || !store.hasAccount(accountId) || (link && link.done)) { openingAuth.delete(auth); auth.close(); return; }
     // Ce choix est conservé avec les identifiants chiffrés : les reprises gardent le profil de l'appairage.
-    if (link) auth.state.creds.relayHistoryProfile = 'desktop-full';
+    // WhatsApp currently rejects new DARWIN/Desktop pairings before emitting QR (Baileys#2677).
+    if (link) auth.state.creds.relayHistoryProfile = 'chrome-full';
     const historyProfile = auth.state.creds.relayHistoryProfile || (auth.state.creds.relayDesktop ? 'desktop-full' : null);
     let sock;
     try {sock=await makeSocket({auth,historyProfile});}

@@ -14,12 +14,12 @@ test('reliaison avec historique : même compte, données locales conservées, va
  const link=await c.wa.relink({profileId:'perso',name:'WhatsApp perso',accountId,windowDays:7});await tick();
  assert.equal(link.accountId,accountId);assert.equal(sock.loggedOut,true);
  assert.equal(c.store.getMessage(id).flagged,true);assert.equal(c.store.getMessage(id).draft.text,'Brouillon conservé');
- assert.equal(c.sockets.last().historyProfile,'desktop-full');
- await pairAndOpen(c);assert.equal(c.sockets.last().historyProfile,'desktop-full');
+ assert.equal(c.sockets.last().historyProfile,'chrome-full');
+ await pairAndOpen(c);assert.equal(c.sockets.last().historyProfile,'chrome-full');
  await assert.rejects(c.wa.outbox.send(id,{text:'Brouillon conservé',mode:'reply',digest:preview.digest}),e=>e.status===409);
  assert.equal(c.sockets.last().sent.length,0);
  c.wa.sync.stop();await c.wa.sync.start();await tick();
- assert.equal(c.sockets.last().historyProfile,'desktop-full','même profil après redémarrage de la session');
+ assert.equal(c.sockets.last().historyProfile,'chrome-full','même profil après redémarrage de la session');
 });
 
 test('reliaison tardive : un compte remplacé ne perd jamais sa nouvelle authentification',async t=>{
