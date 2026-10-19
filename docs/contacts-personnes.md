@@ -34,3 +34,7 @@ Dans cette vue, **Doublons à vérifier** inclut les correspondances entre Anove
 **Liens et fusions** affiche les 500 décisions les plus récentes (la base conserve toutes les décisions), avec date, noms au moment de la décision, portée et éventuelle annulation. La migration 016 reprend les fusions locales précédentes. Les entrées d’audit restent présentes si un compte est retiré ; une ancienne source devenue indisponible n’est pas recréée par l’historique. Les liens unifiés sont liés à l’identité de leurs comptes sources pour empêcher leur réactivation sous un autre compte qui réutiliserait un identifiant local.
 
 Les fusions locales gardent leur annulation dans l’ordre inverse. Les liens unifiés sont rejoués comme des relations explicites : annuler un lien recalcule la personne à partir des liens encore actifs. Les alias manuels restent enregistrés sur leur fiche source principale. Rien n’est envoyé par la gestion des contacts et la validation de l’aperçu exact avant chaque envoi reste inchangée.
+
+## Historique importé et assistant
+
+Les fiches utilisent désormais une recherche indexée, avec compteurs de messages et activité par canal. Les suggestions peuvent utiliser les échanges pertinents de la personne dans le profil d’envoi, avec sources datées et respect des réglages de mémoire. Voir [le fonctionnement et les limites](historique-personnes-ia.md).

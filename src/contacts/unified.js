@@ -1,3 +1,4 @@
+import {personTimeline} from './timeline.js';
 import {randomUUID,createHash} from 'node:crypto';
 import {badRequest,notFound} from '../http/errors.js';
 import {normalizeIdentity} from './identity.js';
@@ -15,10 +16,9 @@ export function createUnifiedPeople(db,people,changed=()=>{}) {
  function person(id){const p=list().find(c=>c.id===id || c.members.some(m=>m.id===id));if(!p)throw notFound('Personne introuvable');return p;}
  function timeline(p,{offset=0,limit=50}={}){if(!Number.isSafeInteger(offset)||offset<0||offset>100000||!Number.isSafeInteger(limit)||limit<1||limit>100)throw badRequest('Pagination invalide');
   const owners=new Map();for(const c of list())for(const i of c.identities){const key=i.kind+':'+i.normalized;owners.set(key,(owners.get(key)||0)+1);}
-  const keys=new Set(p.identities.filter(i=>!i.needsCountryCode && owners.get(i.kind+':'+i.normalized)===1).map(i=>i.kind+':'+i.normalized));for(const a of q('SELECT address FROM accounts').all())keys.delete('email:'+normalizeIdentity('email',a.address));
-  const direct=p.members.map(m=>q('SELECT account_id,external_id FROM contacts WHERE id=?').get(m.id));const indexed=new Map();for(const i of q('SELECT * FROM message_identities').all()){if(!indexed.has(i.message_id))indexed.set(i.message_id,[]);indexed.get(i.message_id).push(i.kind+':'+i.normalized);}
-  const items=q("SELECT m.*,p.name profile_name FROM messages m JOIN accounts a ON a.id=m.account_id AND a.profile_id=m.profile_id JOIN profiles p ON p.id=m.profile_id WHERE m.compose_kind!='new' ORDER BY m.sort_at DESC,m.id DESC").all().filter(m=>direct.some(c=>c.account_id===m.account_id && c.external_id===m.external_id) || indexed.get(m.id)?.some(k=>keys.has(k))).map(m=>({id:m.id,p:m.profile_id,profileName:m.profile_name,accountId:m.account_id,channel:m.channel,from:m.from_name,subject:m.subject,preview:m.preview,sortAt:m.sort_at,count:m.message_count,account:m.account}));
-  return {items:items.slice(offset,offset+limit),total:items.length,nextOffset:offset+limit<items.length?offset+limit:null};
+  const keys=new Set(p.identities.filter(i=>!i.needsCountryCode && owners.get(i.kind+':'+i.normalized)===1).map(i=>i.kind+':'+i.normalized));for(const a of q('SELECT address FROM accounts').all())for(const kind of ['email','phone']){const value=normalizeIdentity(kind,a.address);if(value)keys.delete(kind+':'+value);}
+  const direct=p.members.map(m=>q('SELECT account_id,external_id FROM contacts WHERE id=?').get(m.id));
+  return personTimeline(db,{keys:[...keys].map(key=>{const colon=key.indexOf(':');return {kind:key.slice(0,colon),normalized:key.slice(colon+1)};}),direct},{offset,limit});
  }
  function history(scope='all'){if(scope!=='all' && !q('SELECT 1 FROM profiles WHERE id=?').get(scope))throw notFound('Profil introuvable');return q(`SELECT h.*,CASE WHEN h.kind='unified' THEN 1 ELSE EXISTS(SELECT 1 FROM contact_merge_events e WHERE e.id=h.id) END available FROM contact_link_history h ${scope==='all'?'':'WHERE h.scope=?'} ORDER BY h.created_at DESC,h.rowid DESC LIMIT 500`).all(...(scope==='all'?[]:[scope])).map(e=>{let origins={};try{origins=JSON.parse(e.members).origins || {};}catch{}return {...e,sourceProfiles:origins.source || [e.scope_name],targetProfiles:origins.target || [e.scope_name],available:e.kind==='unified'?Number(validEdge(e)):e.available,canUndo:(e.kind==='unified' || !!e.available) && !e.undone_at};});}
  return {list,history,

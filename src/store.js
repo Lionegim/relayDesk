@@ -1,3 +1,4 @@
+import {createPersonHistory} from './ai/person-history.js';
 import {createHistoryRepository} from './mail/history/repository.js';
 import {createUnifiedPeople} from './contacts/unified.js';
 import {createDuplicateRepository} from './contacts/duplicates.js';
@@ -50,6 +51,7 @@ export function createStore(db) {
   let seq = 0;
   const memory = createReplyMemoryRepository(db);
   const people = createContactsRepository(db,changed);
+  const personHistory=createPersonHistory(db,{people});
   const unified=createUnifiedPeople(db,people,changed);
   const duplicates=createDuplicateRepository(db,{people,unified,changed});
 
@@ -93,6 +95,7 @@ export function createStore(db) {
     learnAvailableReplies() {
       for(const m of q("SELECT id FROM messages WHERE channel='whatsapp' AND account_id IS NOT NULL").all()) this.getReplyMemory(m.id);
     },
+    getPersonReplyContext:(id,memory)=>personHistory(id,memory),
     getReplyMemory(id, {internal=false}={}) {
       const scope=memoryScope(id);
       if(scope && accountOf(scope.accountId).svc==='whatsapp') {

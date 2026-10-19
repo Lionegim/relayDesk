@@ -1011,7 +1011,7 @@ const actions = {
   personField:({field},e)=>{if(['personKind','personValue','personMerge'].includes(field))set({[field]:e.target.value});},
   personMore:async()=>{
     const profile=state.profileId,id=state.personOpen,old=state.person;if(!old?.timeline.nextOffset || state.personBusy)return;
-    set({personBusy:true});try{const value=await api.person(profile,id,{offset:old.timeline.nextOffset});if(state.profileId===profile && state.personOpen===id)set({person:{...value,timeline:{...value.timeline,items:[...old.timeline.items,...value.timeline.items]}}});}catch(e){fail(e);}finally{if(state.profileId===profile && state.personOpen===id)set({personBusy:false});}
+    set({personBusy:true});try{const value=await api.person(profile,id,{offset:old.timeline.nextOffset});if(state.profileId===profile && state.personOpen===id)set({person:{...value,timeline:{...value.timeline,items:[...new Map([...old.timeline.items,...value.timeline.items].map(m=>[m.id,m])).values()]}}});}catch(e){fail(e);}finally{if(state.profileId===profile && state.personOpen===id)set({personBusy:false});}
   },
   addPersonIdentity:async()=>{
     const profile=state.profileId,id=state.personOpen;if(state.personBusy)return;set({personBusy:true,personError:null});
@@ -1262,6 +1262,14 @@ api.session()
           await reload({ refresh: true });
           if(state.app==='duplicates' && !state.duplicatesBusy)await loadDuplicates();
           if(state.app==='history' && !state.historyBusy)await loadContactHistory();
+          // Keep the first page of an open person timeline current as history
+          // arrives. Do not reset a reader paging through older conversations.
+          if(state.personOpen && !state.personBusy && (state.person?.timeline.items.length || 0)<=50){
+            const personId=state.personOpen,profile=state.profileId;
+            try{const person=await api.person(profile,personId);
+              if(state.personOpen===personId && state.profileId===profile && !state.personBusy && (state.person?.timeline.items.length || 0)<=50)set({person,personError:null});
+            }catch(e){if(state.personOpen===personId && state.profileId===profile)set({personError:e.message});}
+          }
           const id = state.selectedId;
           if (state.app==='mail' && id != null && known(id) && !state.confirm) {
             detailRevisions.set(id, (detailRevisions.get(id) || 0) + 1);

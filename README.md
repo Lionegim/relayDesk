@@ -97,3 +97,7 @@ test/                  tests node:test (API et client Mistral)
 ### Historique complet des emails
 
 Le menu de chaque compte Gmail/Outlook permet d’importer toutes les dates en arrière-plan, avec progression persistante, pause/reprise et déduplication. Les mises à jour en direct et la validation de l’aperçu exact avant envoi sont conservées. Voir [le périmètre et la reprise](docs/import-historique-mail.md).
+
+### Historique des personnes et réponses IA
+
+Les fiches regroupent les échanges importés avec compteurs d’activité et pagination indexée. Les suggestions peuvent s’appuyer sur des échanges anciens pertinents et les messages envoyés à cette personne, dans le profil d’envoi, avec sources visibles et validation de l’aperçu exact avant tout envoi. [Détails](docs/historique-personnes-ia.md).

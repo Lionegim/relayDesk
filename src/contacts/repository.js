@@ -1,3 +1,4 @@
+import {personTimeline} from './timeline.js';
 import {randomUUID,createHash} from 'node:crypto';
 import {transaction} from '../db/index.js';
 import {badRequest,notFound,HttpError} from '../http/errors.js';
@@ -26,17 +27,9 @@ export function createContactsRepository(db,changed=()=>{}) {
   contact(profile,id);id=root(id);contact(profile,id);
   if(!Number.isSafeInteger(offset)||offset<0||offset>100000||!Number.isSafeInteger(limit)||limit<1||limit>100)throw badRequest('Pagination invalide');
   const ids=members(id), keys=new Set(identities(ids).filter(x=>owners(profile,x.kind,x.normalized)===1).map(x=>`${x.kind}:${x.normalized}`));
-  const own=new Set(q('SELECT address FROM accounts WHERE profile_id=?').all(profile).map(a=>normalizeIdentity('email',a.address)).filter(Boolean));
-  for(const email of own)keys.delete(`email:${email}`);
+  for(const a of q('SELECT address FROM accounts').all())for(const kind of ['email','phone']){const value=normalizeIdentity(kind,a.address);if(value)keys.delete(`${kind}:${value}`);}
   const legacy=ids.map(key=>q('SELECT account_id,external_id FROM contacts WHERE id=?').get(key));
-  const matched=[];
-  // Query only structured participant metadata, never message bodies, quoted signatures or display names.
-  for(const m of q("SELECT m.id,m.account_id,m.external_id,m.channel,m.from_name,m.subject,m.preview,m.sort_at,m.message_count,m.account FROM messages m JOIN accounts a ON a.id=m.account_id AND a.profile_id=m.profile_id WHERE m.profile_id=? AND m.compose_kind!='new' ORDER BY m.sort_at DESC,m.id DESC").all(profile)) {
-   const direct=legacy.some(c=>c.account_id===m.account_id && c.external_id===m.external_id);
-   const found=direct || q('SELECT kind,normalized FROM message_identities WHERE message_id=?').all(m.id).some(x=>keys.has(`${x.kind}:${x.normalized}`));
-   if(found)matched.push({id:m.id,p:profile,accountId:m.account_id,channel:m.channel,from:m.from_name,subject:m.subject,preview:m.preview,sortAt:m.sort_at,count:m.message_count,account:m.account});
-  }
-  return {items:matched.slice(offset,offset+limit),total:matched.length,nextOffset:offset+limit<matched.length?offset+limit:null};
+  return personTimeline(db,{profile,keys:[...keys].map(key=>{const colon=key.indexOf(':');return {kind:key.slice(0,colon),normalized:key.slice(colon+1)};}),direct:legacy},{offset,limit});
  }
  return {
   indexMessage,

@@ -1,3 +1,4 @@
+import {personHistoryRevision} from '../ai/person-history.js';
 import { createHash, randomUUID } from 'node:crypto';
 import { summaryPrompt, draftPrompt, classifyPrompt, parseClassification } from '../ai/assistant.js';
 import { HttpError, badRequest } from '../http/errors.js';
@@ -14,11 +15,12 @@ export function createAssistantService({ store, ai, mail, ownerName }) {
     const source = store.getMessageSource(id);
     const account = source.accountId ? store.getAccount(source.accountId) : null;
     const memory = kind === 'draft' ? store.getReplyMemory(id, {internal:true}) : null;
+    const history=kind==='draft' ? store.getPersonReplyContext(id,memory) : null;
     const folders = kind === 'classify' ? store.aiFolders(m.p).slice(0, 200) : [];
     const fingerprint = digest({ version: 1, model: ai.model, ownerName, source: { accountId: source.accountId, externalId: source.externalId, svc: account?.svc, address: account?.address }, profile: m.p,
-      memoryRevision: memory?.revision, memoryEnabled: memory?.enabled, kind: m.kind, subject: m.subject, from: m.from, handle: m.handle, body: m.body, trail: m.trail,
+      personHistoryRevision:history?personHistoryRevision(history):null, memoryRevision: memory?.revision, memoryEnabled: memory?.enabled, kind: m.kind, subject: m.subject, from: m.from, handle: m.handle, body: m.body, trail: m.trail,
       count: m.count, sortAt: m.sortAt, ...(kind === 'draft' ? { draft: m.draft } : {}), folders });
-    return { m, folders, fingerprint, memory };
+    return { m, folders, fingerprint, memory, history };
   }
   function currentResult(id, kind) {
     const c = context(id, kind), r = store.getAIResult(id, kind);
@@ -39,11 +41,11 @@ export function createAssistantService({ store, ai, mail, ownerName }) {
       if (pending.has(key)) return pending.get(key);
       const job = (async () => {
         const prompts = kind === 'summary' ? summaryPrompt(c.m, ownerName)
-          : kind === 'classify' ? classifyPrompt(c.m, ownerName, c.folders) : draftPrompt(c.m, ownerName, {...options, memory:c.memory});
+          : kind === 'classify' ? classifyPrompt(c.m, ownerName, c.folders) : draftPrompt(c.m, ownerName, {...options, memory:c.memory, history:c.history});
         const text = await ai.complete(prompts, { temperature: kind === 'draft' ? 0.5 : 0.1, maxTokens: kind === 'summary' ? 400 : 1000, json: kind === 'classify' });
         if (typeof text !== 'string' || !text.trim() || text.length > 20000) throw new HttpError(502, 'Réponse IA invalide.', 'ai_invalid');
         if (context(id, kind).fingerprint !== c.fingerprint) throw stale();
-        if (kind === 'draft') {store.markAIReply(id,text.trim());return { text: text.trim(), fingerprint: c.fingerprint, memoryUsed: !!(c.memory?.enabled && c.memory?.sampleCount), memorySamples: c.memory?.enabled ? c.memory.sampleCount : 0 };}
+        if (kind === 'draft') {store.markAIReply(id,text.trim());return { text: text.trim(), fingerprint: c.fingerprint, memoryUsed: !!(c.memory?.enabled && c.memory?.sampleCount), memorySamples: c.memory?.enabled ? c.memory.sampleCount : 0, personHistory:c.history?.person && (c.history.sources.length || c.history.styleExamples.length)?{person:c.history.person,sources:c.history.sources.map(({excerpt,...source})=>source),styleSamples:c.history.styleExamples.length}:null };}
         const result = kind === 'classify' ? parseClassification(text, c.folders) : { text: text.trim() };
         return { ...store.saveAIResult(id, kind, c.fingerprint, result, randomUUID()), cached: false };
       })();

@@ -468,13 +468,13 @@ function replyMemoryPanel(s, sel) {
   if(!memory.available) return html`<p class="muted">La mémoire de style sera disponible dans une conversation d’un compte connecté.</p>`;
   const busy=a.loading || a.memoryBusy;
   return html`<section class="reply-memory" aria-label="Mémoire de cette conversation">
-    <div class="reply-memory-head"><strong>Ton style, ici</strong><span class="reply-memory-badge">Sur ce Mac</span></div>
+    <div class="reply-memory-head"><strong>Ton style, ici</strong><span class="reply-memory-badge">Dans Relay Desk</span></div>
     <p>${memory.enabled ? memory.sampleCount ? `${plural(memory.sampleCount,'exemple')} de tes messages envoyés` : 'La mémoire apprendra de tes prochains messages envoyés.' : 'Mémoire en pause pour cette conversation.'}</p>
     ${when(memory.enabled && memory.sampleCount>0,()=>html`
       <div class="reply-memory-traits">${memory.traits.map(t=>html`<span>${t}</span>`)}</div>
       ${when(memory.sampleCount<3,()=>html`<p class="muted">Encore peu d’exemples : le style reste à affiner.</p>`)}
       <details><summary>Voir quelques exemples</summary>${memory.examples.map(e=>html`<blockquote>${e.text}</blockquote>`)}</details>`)}
-    <p class="muted">Mémoire séparée par conversation et compte. Jusqu’à 24 exemples distincts, conservés 180 jours.</p>
+    <p class="muted">Exemples de style par conversation : jusqu’à 24, conservés 180 jours. Une suggestion peut aussi utiliser les échanges de cette personne dans le profil d’envoi, si son identité est unique. Mettre en pause désactive aussi cet historique pour les suggestions.</p>
     ${when(a.memoryConfirm,()=>html`<div class="reply-memory-reset"><p>Effacer cette mémoire ? Elle repartira de tes prochains envois. Les messages de la conversation seront conservés.</p>
       <button class="btn btn-ghost" data-on-click="aiMemoryCancel">Annuler</button><button class="btn btn-ghost" data-on-click="aiMemoryConfirm" ${raw(busy?'disabled':'')}>Effacer la mémoire</button></div>`)}
     ${when(!a.memoryConfirm,()=>html`<div class="reply-memory-actions"><button class="btn btn-ghost" data-on-click="aiMemoryToggle" ${raw(busy?'disabled':'')}>${memory.enabled?'Mettre en pause':'Réactiver'}</button><button class="btn btn-ghost" data-on-click="aiMemoryReset" ${raw(busy || !memory.sampleCount?'disabled':'')}>Réinitialiser</button></div>`)}
@@ -505,7 +505,7 @@ function aiPanel(s, sel) {
           <button class="${cls('ai-tab', ai.mode === mode && 'is-on')}" data-on-click="aiTab" data-mode="${mode}">${label}</button>`)}
       </div>
       <div class="ai-body">
-        <p class="muted" style="font-size:12px;margin:0">${configured ? (draftMode ? 'À ta demande, le fil et jusqu’à 5 courts exemples de tes réponses à cette conversation sont transmis à Mistral si la mémoire est active. Aucun envoi automatique.' : 'À ta demande, le texte de ce fil est transmis à Mistral. Aucun déplacement ni envoi automatique.') : 'L’IA attend sa configuration. Ajoute MISTRAL_API_KEY au fichier .env sur ton Mac, puis redémarre Relay Desk.'}</p>
+        <p class="muted" style="font-size:12px;margin:0">${configured ? (draftMode ? 'À ta demande, le fil est transmis à Mistral. Avec la mémoire active, jusqu’à cinq exemples de ton style et des échanges pertinents de la personne dans le profil d’envoi peuvent le compléter. Aucun envoi automatique.' : 'À ta demande, le texte de ce fil est transmis à Mistral. Aucun déplacement ni envoi automatique.') : 'L’IA attend sa configuration. Ajoute MISTRAL_API_KEY au fichier .env sur ton Mac, puis redémarre Relay Desk.'}</p>
         ${when(draftMode, () => html`
           ${replyMemoryPanel(s,sel)}
           <label class="field">
@@ -531,7 +531,8 @@ function aiPanel(s, sel) {
               ${folders.map(f => html`<option value="${f.id}" ${raw(ai.folderId === f.id ? 'selected' : '')}>${f.name}</option>`)}
             </select>
           </label>
-          <p class="muted" style="font-size:12px;margin:0">${result.appliedAt ? 'Classement déjà appliqué.' : localLabels ? 'Catégorie, priorité et dossier restent dans Relay Desk, sur ce Mac.' : 'La catégorie et la priorité restent dans Relay Desk. Le dossier choisi sera synchronisé avec ton compte.'}</p>` : html`<div class="ai-result">${result.text}</div>`)}
+          <p class="muted" style="font-size:12px;margin:0">${result.appliedAt ? 'Classement déjà appliqué.' : localLabels ? 'Catégorie, priorité et dossier restent dans Relay Desk, dans Relay Desk.' : 'La catégorie et la priorité restent dans Relay Desk. Le dossier choisi sera synchronisé avec ton compte.'}</p>` : html`<div class="ai-result">${result.text}</div>`)}
+        ${when(draftMode && result?.personHistory,()=>html`<section class="reply-memory person-reply-context" aria-label="Historique utilisé pour la suggestion"><strong>Historique de ${result.personHistory.person.name}</strong><p>${plural(result.personHistory.sources.length,'conversation')} associées${result.personHistory.styleSamples?` · ${plural(result.personHistory.styleSamples,'exemple')} de ton style en complément`:''}.</p><details><summary>Voir les échanges utilisés</summary>${result.personHistory.sources.map(x=>html`<p><strong>${x.subject}</strong><br><span class="muted">${whenLabel(x.at)} · ${x.account}</span></p>`)}</details></section>`)}
         ${when(draftMode && result?.memoryUsed,()=>html`<span class="muted">Proposition adaptée à ${result.memorySamples} exemples de cette conversation.</span>`)}
         ${when(result?.createdAt, () => html`<span class="muted" style="font-size:11px">Analyse enregistrée à ${timeOf(result.createdAt)}${result.cached ? ' · réutilisée' : ''}</span>`)}
       </div>
@@ -931,8 +932,9 @@ function personDialog(s,v) {
  <label>Autre fiche dans ce profil<select data-on-change="personField" data-field="personMerge"><option value="">Choisir une fiche…</option>${v.contactsMine.filter(c=>c.id!==p.id).map(c=>html`<option value="${c.id}" ${raw(s.personMerge===c.id?'selected':'')}>${c.name} · ${(c.identities || []).map(i=>i.value).slice(0,2).join(' · ')}</option>`)}</select></label>
  ${when(source,()=>html`<div class="merge-review"><strong>${source.name}</strong><ul class="identity-list">${identityList((source.identities || []).map(i=>({...i,source:i.source==='manual'?'Ajout manuel (autre fiche)':i.source})))}</ul><p>Cette fiche et celle de ${p.name} seront regroupées. Les conversations et destinataires d’origine seront conservés.</p><button class="btn btn-brand" data-on-click="mergePerson" ${disabled}>Confirmer la liaison de ces fiches</button></div>`)}
  ${p.merges.map(m=>html`<p><button class="link-btn" data-on-click="undoPersonMerge" data-id="${m.id}" ${disabled}>Annuler la liaison du ${new Date(m.created_at).toLocaleString('fr-FR')}</button></p>`)}</details>
- <h4>Échanges · ${p.timeline.total} conversation${p.timeline.total>1?'s':''}</h4><p class="muted">Historique déjà importé dans ce profil. Les discussions de groupe et leurs participants restent intacts.</p>
- ${when(p.identities.some(i=>i.sharedWith>1),()=>html`<p class="muted">Les identifiants partagés ne regroupent pas les échanges automatiquement. Lie les fiches après vérification si elles représentent la même personne.</p>`)}<div class="person-timeline">${p.timeline.items.map(m=>html`<button class="person-exchange" data-on-click="personConversation" data-id="${m.id}"><span>${CH[m.channel]?.label || m.channel} · ${m.profileName?m.profileName+' · ':''}${m.account} · ${whenLabel(m.sortAt)}</span><strong>${m.subject}</strong><span class="ellipsis">${m.preview}</span></button>`)}</div>
+ <h4>Échanges · ${p.timeline.total} conversation${p.timeline.total>1?'s':''}</h4>
+ ${when(p.timeline.activity,()=>html`<p class="person-activity">${plural(p.timeline.activity.messages,'message')}${p.timeline.activity.firstAt?` · depuis ${whenLabel(p.timeline.activity.firstAt)}`:''}</p><p class="muted">${p.timeline.activity.channels.map(c=>`${CH[c.channel]?.label || c.channel} : ${c.conversations}`).join(' · ')}</p>`)}<p class="muted">L’historique s’enrichit à mesure des imports, sans créer de doublons. Les groupes et leurs participants restent intacts.</p>
+ ${when(p.identities.some(i=>i.sharedWith>1),()=>html`<p class="muted">Les identifiants partagés ne regroupent pas les échanges automatiquement. Lie les fiches après vérification si elles représentent la même personne.</p>`)}<div class="person-timeline">${p.timeline.items.map(m=>html`<button class="person-exchange" data-on-click="personConversation" data-id="${m.id}"><span>${CH[m.channel]?.label || m.channel} · ${m.profileName?m.profileName+' · ':''}${m.account} · ${whenLabel(m.sortAt)} · ${plural(m.count,'message')}</span><strong>${m.subject}</strong><span class="ellipsis">${m.preview}</span></button>`)}</div>
  ${when(!p.timeline.items.length,()=>html`<p>Aucun échange correspondant dans l’historique importé. Ajoute un email ou téléphone connu, ou lie une autre fiche de cette personne.</p>`)}
  ${when(p.timeline.nextOffset!==null,()=>html`<button class="btn btn-ghost" data-on-click="personMore" ${disabled}>Afficher les conversations plus anciennes</button>`)}
  <p class="muted">Pour répondre, ouvre une conversation. Chaque envoi exige toujours ta validation de l’aperçu exact.</p>`:html`<p>Chargement de la fiche…</p>`}</div></section></div>`;
