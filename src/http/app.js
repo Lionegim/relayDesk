@@ -72,7 +72,7 @@ const accountId = raw => {
 };
 
 // gmail : { oauth, sync, redirectUri, disconnect, outbox } (facultatif). allowedHosts : protège contre le DNS rebinding.
-export function createApp({ store, ai, ownerName, gmail = null, providers = {}, allowedHosts = null, health = null, auth = null }) {
+export function createApp({ store, ai, ownerName, gmail = null, providers = {}, allowedHosts = null, health = null, readiness = null, operations = null, auth = null }) {
   providers = { ...providers, ...(gmail ? { gmail } : {}) };
   const access=createSessionAccess();
   const mail = createMailService({ store, providers });
@@ -137,6 +137,7 @@ export function createApp({ store, ai, ownerName, gmail = null, providers = {}, 
 
   // [méthode, motif, gestionnaire(params, body)]
   const routes = [
+    ['GET', /^\/api\/ops\/health$/, () => operations?operations():({status:'unconfigured'})],
     ['GET', /^\/api\/health$/, () => health ? health() : auth ? ({ok:true}) : ({ ok: true, ai: { provider: 'mistral', configured: ai.configured, model: ai.model } })],
     ['GET', /^\/api\/state$/, (_,body,session,url) => {
       const params=Object.fromEntries(url.searchParams),paged=params.paged==='1';
@@ -219,7 +220,8 @@ export function createApp({ store, ai, ownerName, gmail = null, providers = {}, 
       if(!auth && pathname==='/auth/session' && req.method==='GET') return send(res,200,{enabled:false,authenticated:false});
       // Ressources publiques fixes : uniquement du code et des images génériques, jamais index.html ni contenu privé.
       const publicLogin=['/login','/js/login.js','/js/app.js','/js/api.js','/js/views.js','/js/dom.js','/js/constants.js','/js/pwa.js','/styles.css','/sw.js','/manifest.webmanifest','/offline.html','/fonts/inter-latin-wght-normal.woff2','/fonts/jetbrains-mono-latin-wght-normal.woff2'].includes(pathname) || /^\/icons\/[a-zA-Z0-9_-]+\.(png|svg)$/.test(pathname);
-      const publicHealth=pathname==='/api/health' && req.method==='GET';
+      const publicHealth=['/api/health','/api/ready'].includes(pathname) && req.method==='GET';
+      if(pathname==='/api/ready' && req.method==='GET') {const value=readiness?readiness():{ok:true};return send(res,value.ok?200:503,{ok:!!value.ok});}
       let session=null;
       if(auth && !publicLogin && !publicHealth) {
         try {session=auth.requireSession(req);}catch(error) {

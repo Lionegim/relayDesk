@@ -106,6 +106,8 @@ Le QR WhatsApp pourra être affiché dans la session Relay Desk sur ordinateur e
 
 ### Lot 6 Exploitation du serveur
 
+**État : préparation locale réalisée avec données fictives.** Outils et recette de sauvegarde/restauration chiffrées, suspension des connecteurs après restauration, supervision et configuration d’exploitation : voir [backups.md](backups.md) et [operations.md](operations.md). Aucun hébergement créé ou déployé, aucune donnée réelle transférée. Les validations HTTPS, Keycloak réel, redémarrage de VM et copie hors VM restent à réaliser lors d’une future étape autorisée.
+
 Choisir une VM Linux persistante, sa région, son domaine et le dimensionnement après mesure de la consommation d’un import historique WhatsApp. Docker Compose convient à une instance personnelle disponible en continu. Le domaine et les DNS permettront la terminaison HTTPS avec renouvellement des certificats par Caddy. [HTTPS automatique Caddy](https://caddyserver.com/docs/automatic-https). L’accès d’administration sera séparé de l’accès à l’application.
 
 Préparer les sauvegardes cohérentes de SQLite, leur chiffrement et leur stockage hors de la VM. Conserver la clé de restauration par un autre chemin sécurisé. Utiliser une sauvegarde SQLite cohérente, plutôt qu’une simple copie de `relay.db` pendant que WAL est actif. [API de sauvegarde SQLite](https://www.sqlite.org/backup.html). Tester une restauration complète incluant les messages, les identités de mémoire et le déchiffrement des jetons. Le parcours de restauration laissera les connecteurs arrêtés ; en particulier, une ancienne session WhatsApp ne sera jamais réactivée automatiquement à partir d’une sauvegarde. Sa reprise exigera une action explicite et pourra nécessiter une nouvelle liaison QR.

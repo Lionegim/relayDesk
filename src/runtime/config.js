@@ -57,6 +57,10 @@ export function readConfig(env=process.env,{cwd=process.cwd()}={}) {
     if(mailOAuthMode==='web' && !!id!==!!value) invalid(`${prefix}_WEB_CLIENT_ID et ${prefix}_WEB_CLIENT_SECRET sont requis ensemble.`);
   }
   return Object.freeze({
+    backupStatusFile:env.BACKUP_STATUS_FILE?resolve(cwd,env.BACKUP_STATUS_FILE):null,
+    opsMinFreeBytes:number(env,'OPS_MIN_FREE_BYTES',512*1024**2,0,Number.MAX_SAFE_INTEGER),
+    opsBackupMaxAgeMs:number(env,'OPS_BACKUP_MAX_AGE_HOURS',26,1,8760)*3600000,
+    opsSyncStaleMs:number(env,'OPS_SYNC_STALE_MINUTES',15,1,10080)*60000,
     mailOAuthMode,auth,mode,host,port,publicBaseUrl:base.origin,dataDir:resolve(cwd,env.DATA_DIR || 'data'),
     keyFile:resolve(cwd,env.DATA_DIR || 'data','secret.key'),secrets:Object.freeze(secrets),
     allowedHosts:[...new Set([base.host,...(mode==='local'?[port,base.port || (base.protocol==='https:'?443:80)].flatMap(p=>[`127.0.0.1:${p}`,`localhost:${p}`,`[::1]:${p}`]):[])])],

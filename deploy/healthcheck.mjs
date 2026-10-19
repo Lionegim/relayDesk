@@ -8,7 +8,7 @@ try {
   if (process.env.PUBLIC_BASE_URL) host = new URL(process.env.PUBLIC_BASE_URL).host;
 } catch { /* URL invalide : le serveur refusera de démarrer, la sonde échouera d'elle-même */ }
 
-const req = request({ host: '127.0.0.1', port, path: '/api/health', method: 'GET', headers: { host }, timeout: 3000 }, res => {
+const req = request({ host: '127.0.0.1', port, path: '/api/ready', method: 'GET', headers: { host }, timeout: 3000 }, res => {
   res.resume();
   process.exit(res.statusCode === 200 ? 0 : 1);
 });

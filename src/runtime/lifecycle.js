@@ -9,6 +9,8 @@ import { createMistralClient } from '../ai/mistral.js';
 import { createApp } from '../http/app.js';
 import { acquireInstanceLock } from './instance-lock.js';
 import { assembleProviders } from './providers.js';
+import {RESTORE_HOLD} from '../ops/backup.js';
+import {databaseReady,operationsHealth} from '../ops/health.js';
 
 // Contrôler les données chiffrées AVANT toute migration, import ou nouvelle identité WhatsApp.
 function verifyExistingVault(path,vault) {
@@ -24,6 +26,8 @@ function verifyExistingVault(path,vault) {
 }
 
 export function createRuntime(config,{providerFactory=assembleProviders,appFactory=createApp,authFactory=null,log=console}={}) {
+  const startedAt=Date.now();
+  let effectiveConfig=config;
   let state='created',db,store,server,releaseLock,bundle,maintenance,startPromise,stopPromise,stopRequested=false,url,ownerAuth;
   const syncs=()=>bundle?.syncs || [];
   const requests=new Set();
@@ -64,10 +68,13 @@ export function createRuntime(config,{providerFactory=assembleProviders,appFacto
           ownerAuth=await factory({config,db});
           if(!ownerAuth) throw new Error('Authentification indisponible.');
         }
-        bundle=await providerFactory({config,store,vault,log});
-        const ai=createMistralClient({apiKey:config.aiEnabled?config.secrets.MISTRAL_API_KEY:'',model:config.mistralModel});
+        // Une copie restaurée reste isolée même si l'environnement demande des connecteurs actifs.
+        const held=existsSync(join(config.dataDir,RESTORE_HOLD));
+        effectiveConfig=held?{...config,connectorsEnabled:false,aiEnabled:false}:config;
+        bundle=await providerFactory({config:effectiveConfig,store,vault,log});
+        const ai=createMistralClient({apiKey:effectiveConfig.aiEnabled?config.secrets.MISTRAL_API_KEY:'',model:config.mistralModel});
         const allowedHosts=[...config.allowedHosts];
-        server=appFactory({store,ai,providers:bundle.providers,gmail:bundle.gmail,ownerName:config.ownerName,allowedHosts,auth:ownerAuth,health:()=>({ok:state==='running'})});
+        server=appFactory({store,ai,providers:bundle.providers,gmail:bundle.gmail,ownerName:config.ownerName,allowedHosts,auth:ownerAuth,health:()=>({ok:state==='running'}),readiness:()=>({ok:state==='running'&&databaseReady(db)}),operations:()=>operationsHealth({db,dataDir:config.dataDir,config:effectiveConfig,state,startedAt})});
         trackRequests();
         server.on('request',(_req,res)=>res.once('finish',()=>{if(state==='stopping') setImmediate(()=>server.closeIdleConnections?.());}));
         await new Promise((resolve,reject)=>{server.once('error',reject);server.listen(config.port,config.host,()=>{server.off('error',reject);resolve();});});

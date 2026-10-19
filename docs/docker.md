@@ -12,8 +12,8 @@ Aucun de ces fichiers ne lit le `.env` réel, ni les données ou secrets du Mac.
 | Fichier | Rôle |
 | --- | --- |
 | `Dockerfile` | Étapes `deps` (dépendances de production), `test` (suite complète) et `runtime` (image finale). Image de base épinglée par version et empreinte. |
-| `.dockerignore` | Liste blanche : seuls `package*.json`, `server.js`, `src/`, `public/`, `test/` et la sonde de santé entrent dans le contexte. `.env*`, `*.key`, `*.pem`, `data/`, `backups/`, `exports/`, archives et bases SQLite sont exclus partout. |
-| `deploy/healthcheck.mjs` | Sonde `GET /api/health` en local, avec le Host de `PUBLIC_BASE_URL`. |
+| `.dockerignore` | Liste blanche : seuls `package*.json`, `server.js`, `src/`, `public/`, `test/`, la sonde de santé et `scripts/backup.mjs` entrent dans le contexte. `.env*`, `*.key`, `*.pem`, `data/`, `backups/`, `exports/`, archives et bases SQLite sont exclus partout. |
+| `deploy/healthcheck.mjs` | Sonde `GET /api/ready` en local, avec le Host de `PUBLIC_BASE_URL`. |
 | `deploy/test/compose.env` | Fichier d'environnement de Compose pour le test : il remplace la lecture automatique du `.env` du projet. Aucun secret. |
 | `compose.dev.yaml` | Test local. Une clé de coffre aléatoire est générée dans un volume Docker dédié, jamais dans le dépôt. |
 | `compose.yaml`, `deploy/Caddyfile` | Préparation de l'hébergement : application sans port publié, Caddy seul sur 80 et 443. Ne pas démarrer. |
@@ -137,3 +137,7 @@ Le lot 5 ajoute la navigation tactile, la pagination et les brouillons versionn�
 Validation après lot 5 : **275 tests réussis sur Mac et Linux**, puis recette Docker hors réseau réussie, y compris persistance et restauration de la version des brouillons. La recette Chrome utilise exclusivement une base éphémère et des fournisseurs simulés. La vérification sur téléphones physiques et sur le futur domaine HTTPS reste à réaliser.
 
 Validation complémentaire Safari : le contournement de rendu et les tests d’équivalence portent le total à **279 tests réussis sur Mac et Linux** ; la recette Docker reste verte. La recette Device Hub complète passe sur le simulateur iOS 27.1 ; le runtime iOS 26.2 reste instable et n’est pas déclaré corrigé. Voir `docs/mobile.md`.
+
+## Exploitation préparée (lot 6)
+
+Sauvegarde chiffrée, restauration isolée, supervision et procédures sont décrites dans [backups.md](backups.md) et [operations.md](operations.md). Le moteur local requis est Node 24.13 minimum. Aucune VM ni destination de sauvegarde distante n’a été créée.

@@ -24,6 +24,7 @@ COPY server.js ./
 COPY src ./src
 COPY public ./public
 COPY test ./test
+COPY scripts/backup.mjs ./scripts/backup.mjs
 USER node
 ENV RELAY_CONNECTORS_ENABLED=false RELAY_AI_ENABLED=false DEMO_DATA=1
 RUN --network=none npm test
@@ -40,6 +41,7 @@ COPY package.json package-lock.json server.js ./
 COPY src ./src
 COPY public ./public
 COPY deploy/healthcheck.mjs ./deploy/healthcheck.mjs
+COPY scripts/backup.mjs ./scripts/backup.mjs
 # /data : seul répertoire inscriptible (volume). Le secret du coffre est monté à part, en lecture seule.
 RUN mkdir -p /data && chown node:node /data && chmod 0700 /data
 USER node

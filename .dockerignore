@@ -7,6 +7,7 @@
 !public/**
 !test/**
 !deploy/healthcheck.mjs
+!scripts/backup.mjs
 
 # Exclusions prioritaires, même à l'intérieur des dossiers autorisés : secrets, données, sauvegardes, exports, archives.
 **/.env
