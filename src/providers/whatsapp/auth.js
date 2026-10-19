@@ -1,3 +1,4 @@
+import {directJid} from './parse.js';
 // État d'authentification Baileys stocké dans SQLite, chiffré par le coffre : identifiants de session (creds) et
 // chaque clé Signal séparément. Remplace useMultiFileAuthState (fichiers JSON en clair).
 // Chaque valeur chiffrée porte son type et son identifiant ({ t, i, v }) : une ligne déplacée vers une autre clé
@@ -5,7 +6,7 @@
 
 const CREDS = 'creds';
 
-export function createAuthState({ store, vault, accountId, lib }) {
+export function createAuthState({ store, vault, accountId, lib, onAliasesChanged=()=>{} }) {
   const { BufferJSON, initAuthCreds, proto } = lib;
   const seal = (t, i, value) => vault.seal(accountId, { t, i, v: JSON.stringify(value, BufferJSON.replacer) });
   const open = (t, i) => {
@@ -24,7 +25,26 @@ export function createAuthState({ store, vault, accountId, lib }) {
   const creds = open(CREDS, '') || initAuthCreds();
   let live = true;
 
+  function jidAliases(value) {
+    const jid=directJid(value);
+    if(!jid)return [value]; // Groups have no phone/LID alias.
+    const ownPhone=directJid(creds.me?.id),ownLid=directJid(creds.me?.lid);
+    if(ownPhone?.endsWith('@s.whatsapp.net') && ownLid?.endsWith('@lid') && [ownPhone,ownLid].includes(jid))return [ownPhone,ownLid];
+    const [user,domain]=jid.split('@');
+    try {
+      if(domain==='lid') {
+        const phone=open('lid-mapping',`${user}_reverse`);
+        if(typeof phone==='string' && /^\d{5,20}$/.test(phone) && open('lid-mapping',phone)===user)return [jid,`${phone}@s.whatsapp.net`];
+      } else {
+        const lid=open('lid-mapping',user);
+        if(typeof lid==='string' && /^\d{5,20}$/.test(lid) && open('lid-mapping',`${lid}_reverse`)===user)return [jid,`${lid}@lid`];
+      }
+    } catch { /* An unreadable or inconsistent mapping never changes another identity's policy. */ }
+    return [jid];
+  }
+
   return {
+    jidAliases,
     state: {
       creds,
       keys: {
@@ -48,6 +68,7 @@ export function createAuthState({ store, vault, accountId, lib }) {
               }
             }
           });
+          if(data['lid-mapping'])onAliasesChanged();
         },
         clear: async () => { if (live) store.waAuthClear(accountId); },
       },

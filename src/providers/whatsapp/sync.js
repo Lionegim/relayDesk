@@ -156,7 +156,10 @@ export function createWhatsAppSync({ store, vault, lib, makeSocket, log = consol
     }
     const protocol=await lib();
     if(stopped || paused || epoch(accountId)!==at || !store.hasAccount(accountId)) return;
-    const auth = createAuthState({ store, vault, accountId, lib: protocol });
+    let s;
+    const auth = createAuthState({ store, vault, accountId, lib: protocol,
+      onAliasesChanged:()=>{if(s && current(accountId,s))reconcilePolicies(accountId,s);},
+    });
     openingAuth.add(auth);
     if (stopped || paused || epoch(accountId) !== at || !store.hasAccount(accountId) || (link && link.done)) { openingAuth.delete(auth); auth.close(); return; }
     // Ce choix est conservé avec les identifiants chiffrés : les reprises gardent le profil de l'appairage.
@@ -166,7 +169,7 @@ export function createWhatsAppSync({ store, vault, lib, makeSocket, log = consol
     try {sock=await makeSocket({auth,historyProfile});}
     catch(error){openingAuth.delete(auth);auth.close();throw error;}
     openingAuth.delete(auth);
-    const s = { sock, auth, at, link, open: false, verified: false, closed: false, pending: [], ephemeral: new Set(store.waEphemeralChats(accountId)), settle: null };
+    s = { sock, auth, at, link, open: false, verified: false, closed: false, pending: [], ephemeral: new Set(store.waEphemeralChats(accountId)), settle: null };
     if (stopped || paused || epoch(accountId) !== at || !store.hasAccount(accountId) || (link && link.done)) { endSocket(s); return; }
     dropSession(accountId, { resetRetry: false });
     sessions.set(accountId, s);
@@ -174,6 +177,7 @@ export function createWhatsAppSync({ store, vault, lib, makeSocket, log = consol
     sock.ev.on('creds.update', () => {
       if (!current(accountId, s)) return;
       auth.saveCreds();
+      if(s.verified)reconcilePolicies(accountId,s);
       // Le téléphone a validé le QR : la liaison ne peut plus être annulée par la fermeture de la fenêtre.
       if (link && !link.done && auth.state.creds.me?.id && !link.paired) {
         link.paired = true;
@@ -321,6 +325,7 @@ export function createWhatsAppSync({ store, vault, lib, makeSocket, log = consol
       const h = beginHistory(accountId, 'link');
       if (s.auth.state.creds.relayHistoryProfile || s.auth.state.creds.relayDesktop) h.mode = 'full';
     }
+    reconcilePolicies(accountId,s);
     pruneAndRebuild(accountId);
     if (s.droppedPending) lostHistory(accountId, 'Une partie des lots reçus avant la vérification a été ignorée.');
     for (const [kind, data, notify] of s.pending.splice(0)) enqueue(accountId, s, kind, data, notify);
@@ -382,6 +387,14 @@ export function createWhatsAppSync({ store, vault, lib, makeSocket, log = consol
     return touched;
   }
 
+  function reconcilePolicies(accountId,s) {
+    // Learning an authenticated alias must also purge text imported before that
+    // mapping was known. Infer only the restrictive state; OFF needs a new policy event.
+    for(const jid of [...s.ephemeral])for(const alias of s.auth.jidAliases(jid))if(!s.ephemeral.has(alias)) {
+      s.ephemeral.add(alias);store.waSetEphemeral(accountId,alias,true);
+    }
+  }
+
   function policies(accountId, s, chats) {
     for (const ch of Array.isArray(chats) ? chats : []) {
       const jid = chatJid(ch?.id);
@@ -389,8 +402,12 @@ export function createWhatsAppSync({ store, vault, lib, makeSocket, log = consol
       const value = Number(ch.ephemeralExpiration);
       if (!Number.isFinite(value) || value < 0) continue;
       const ephemeral = value > 0;
-      if (ephemeral) s.ephemeral.add(jid); else s.ephemeral.delete(jid);
-      store.waSetEphemeral(accountId, jid, ephemeral);
+      // WhatsApp delivers policy changes under phone JIDs and messages under LIDs.
+      // Apply an explicit policy update to both authenticated aliases of this account.
+      for(const alias of s.auth.jidAliases(jid)) {
+        if (ephemeral) s.ephemeral.add(alias); else s.ephemeral.delete(alias);
+        store.waSetEphemeral(accountId, alias, ephemeral);
+      }
     }
   }
 
@@ -465,7 +482,7 @@ export function createWhatsAppSync({ store, vault, lib, makeSocket, log = consol
   // Une tranche : aucun message n'est écarté avant le filtre (fenêtre, discussion directe, texte).
   function step(job) {
     const { accountId, s } = job;
-    const list = job.raw.slice(job.i, job.i + CHUNK).map(m => parseMessage(m, { since: job.since })).filter(m => m && !s.ephemeral.has(m.chatJid));
+    const list = job.raw.slice(job.i, job.i + CHUNK).map(m => parseMessage(m, { since: job.since })).filter(m => m && !s.auth.jidAliases(m.chatJid).some(jid=>s.ephemeral.has(jid)));
     job.i += CHUNK;
     for (const m of list) {
       // Nom public de l'expéditeur seulement pour une discussion directe sans nom connu ; jamais comme titre de groupe.

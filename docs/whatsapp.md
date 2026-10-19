@@ -65,3 +65,9 @@ Dans le profil de destination, choisir Ajouter un canal → WhatsApp. Relay Desk
 En hébergé, une session du propriétaire, l’authentification récente et les protections CSRF restent exigées. Le scan sur le téléphone autorise la liaison. L’identité est vérifiée avant import ; une reconnexion ne peut remplacer le numéro enregistré par un autre. Les sessions anciennes sans identité enregistrée ne reprennent pas automatiquement après redémarrage : une nouvelle liaison QR est nécessaire.
 
 Les groupes restent en lecture/analyse, les brouillons WhatsApp restent locaux, et chaque envoi individuel exige l’aperçu exact et sa validation à usage unique. Relier uniquement un compte possédé ou expressément autorisé. Le connecteur est communautaire, non officiel ; l’historique des sept derniers jours disponible depuis le téléphone peut rester partiel. Le site de test conserve ses connecteurs désactivés jusqu’à la bascule réelle autorisée.
+
+### Cohérence des identités de conversation
+
+WhatsApp peut envoyer les réglages d’une conversation sous son identifiant de numéro (PN) et ses messages sous son identifiant de liaison (LID). Relay applique les mises à jour explicites du mode éphémère aux deux identités uniquement si elles sont reliées par les identifiants authentifiés du compte ou une correspondance PN/LID chiffrée et vérifiée dans les deux sens. Aucun destinataire d’envoi n’est réécrit.
+
+Lorsqu’une correspondance devient connue, au redémarrage ou après une mise à jour d’identité, le mode éphémère actif est propagé et les messages déjà importés sont purgés selon la règle existante. Le connecteur ne déduit jamais une désactivation à partir d’une divergence ancienne : elle exige une mise à jour explicite de WhatsApp. Les messages qui portent eux-mêmes une enveloppe éphémère ou vue unique restent exclus même après désactivation du minuteur.
