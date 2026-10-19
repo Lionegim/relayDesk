@@ -2,13 +2,14 @@
 # À combiner dans le même projet que la compose de Relay (réseau partagé « backend » avec Caddy) :
 #   docker compose --env-file /etc/relay-desk-test/identity.env -f relay.compose.yaml -f identity.compose.yaml …
 # TEST UNIQUEMENT : Keycloak partage la VM de Relay Desk. Avant toute donnée réelle, il doit être déplacé et sauvegardé
-# (voir docs/hosted-test-identity.md). Données, identités et secrets de test neufs seulement.
+# (voir deploy/hosted-test/README.md). Données, identités et secrets de test neufs seulement.
 #
 # Accès : public uniquement via Caddy (realm relay-test + /resources, voir identity.caddy). Administration :
 # 127.0.0.1:18080 sur la VM (tunnel SSH). Port de gestion 9000 (santé) jamais publié. Base sur réseau interne.
 
 services:
   keycloak-db:
+    profiles: ["hosted"]
     image: postgres:17.11-alpine3.24@sha256:b0f9560a2de083e2cc7382e75f808c7381a32852a7ec49117deedb300e552b24
     # Utilisateur postgres de l'image Alpine (uid 70) : aucun passage par root ni capacité.
     user: "70:70"
@@ -41,8 +42,9 @@ services:
       options: { max-size: "10m", max-file: "3" }
 
   keycloak:
+    profiles: ["hosted"]
     build:
-      context: .
+      context: ./deploy/hosted-test
       dockerfile: keycloak.Dockerfile
     image: relay-desk-test/keycloak:26.8.1-optimized
     depends_on:

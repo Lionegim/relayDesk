@@ -7,11 +7,9 @@ import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-const available = existsSync(new URL('../deploy/hosted-test/identity.compose.yaml', import.meta.url));
-const skip = available ? false : 'deploy/ absent de ce contexte (stage Docker de tests)';
 const read = p => readFileSync(new URL(`../deploy/hosted-test/${p}`, import.meta.url), 'utf8');
 
-test('compose d’identité : images épinglées, mode production, aucun port public, base interne', { skip }, () => {
+test('compose d’identité : images épinglées, mode production, aucun port public, base interne', () => {
   const y = read('identity.compose.yaml'), d = read('keycloak.Dockerfile');
   assert.match(y, /image: postgres:17\.11-alpine3\.24@sha256:[0-9a-f]{64}\n/);
   assert.match(d, /keycloak\/keycloak:26\.8\.1@sha256:[0-9a-f]{64}/);
@@ -38,7 +36,7 @@ test('compose d’identité : images épinglées, mode production, aucun port pu
   }
 });
 
-test('extrait Caddy : seuls le realm de test et les ressources sont publics, console de compte exclue', { skip }, () => {
+test('extrait Caddy : seuls le realm de test et les ressources sont publics, console de compte exclue', () => {
   const c = read('identity.caddy');
   const matcher = c.slice(c.indexOf('@public {'), c.indexOf('}', c.indexOf('@public {')));
   assert.match(matcher, /path \/realms\/relay-test\/\* \/resources\/\*/);
@@ -49,7 +47,7 @@ test('extrait Caddy : seuls le realm de test et les ressources sont publics, con
   assert.doesNotMatch(code, /\/admin|master|9000/);
 });
 
-test('TOTP RFC 6238 (SHA-1) et base32', { skip }, async () => {
+test('TOTP RFC 6238 (SHA-1) et base32', async () => {
   const { totp, base32, otpauthUri } = await import('../deploy/hosted-test/lib.mjs');
   const s = '12345678901234567890';
   assert.deepEqual([59000, 1111111109000, 20000000000000].map(time => totp(s, { time, digits: 8 })), ['94287082', '07081804', '65353130']);
@@ -104,7 +102,7 @@ function fakeKeycloak() {
   return { server, calls, flows, get realm() { return realm; }, get client() { return client; }, get user() { return user; } };
 }
 
-test('configuration Keycloak : realm, flux par niveaux, client confidentiel PKCE, propriétaire avec OTP, aucun secret affiché', { skip }, async t => {
+test('configuration Keycloak : realm, flux par niveaux, client confidentiel PKCE, propriétaire avec OTP, aucun secret affiché', async t => {
   const { configureKeycloak, FLOW } = await import('../deploy/hosted-test/configure-keycloak.mjs');
   const kc = fakeKeycloak();
   await new Promise(r => kc.server.listen(0, '127.0.0.1', r));
@@ -166,7 +164,7 @@ test('configuration Keycloak : realm, flux par niveaux, client confidentiel PKCE
   assert.ok(readdirSync(join(root, 'out2')).length === 0);
 });
 
-test('configuration Keycloak : administration en boucle locale seulement, hôtes et realm contrôlés', { skip }, async () => {
+test('configuration Keycloak : administration en boucle locale seulement, hôtes et realm contrôlés', async () => {
   const { configureKeycloak } = await import('../deploy/hosted-test/configure-keycloak.mjs');
   const out = join(tmpdir(), `relay-identity-refus-${process.pid}`);
   const base = { adminUrl: 'http://127.0.0.1:1', adminUser: 'a', adminPassword: 'b', publicUrl: 'https://relay.example.test', issuerBase: 'https://auth.relay.example.test', out };

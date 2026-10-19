@@ -6,7 +6,7 @@
 !src/**
 !public/**
 !test/**
-!deploy/hosted-test/seed.mjs
+!deploy/hosted-test/**
 !deploy/healthcheck.mjs
 !scripts/backup.mjs
 !compose.yaml
