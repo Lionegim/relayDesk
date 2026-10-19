@@ -16,7 +16,7 @@ const state = {
   nav: 'all', folder: null, channel: 'all', query: '', selectedId: null,
   collapsed: (()=>{try{return JSON.parse(storage.get('relay.folderExpansion') || '{}');}catch{return {};}})(), creating: false, folderDraft: '', dragOver: null, moveOpen: false,
   listW: Number(storage.get(LIST_W_KEY)) || 340, resizing: false,
-  composing: null, drafts: {}, expandedTrail: {}, waAttachments:{}, waUploading:null, waEmoji:false,
+  composing: null, drafts: {}, expandedTrail: {}, waAttachments:{}, waUploading:null, waEmoji:false, waMessageMenu:null, waReacting:null,
   ai: null, aiTone: 'Cordial', aiIntent: '',
   contactView:globalThis.matchMedia?.('(max-width:600px)').matches?'list':'network',network:null,networkBusy:false,networkError:null,networkDays:90,groupEditor:null,groupName:'',groupQuery:'',groupBusy:false,
   group: 'all', picked: {}, focusId: null, contactQuery: '', contactSearch: false, sort: 'recent',
@@ -111,7 +111,16 @@ function loadDetails(id) {
   loading.add(id);
   const revision = detailRevisions.get(id) || 0;
   const job = api.message(id)
-    .then(full => {
+    .then(async full => {
+      // Refresh interactions on older pages already on screen without downloading their bodies again.
+      const old=state.details[id];
+      if(full.channel==='whatsapp' && old?.trail?.length && api.whatsAppInteractions) {
+        const ids=old.trail.map(t=>t.waId).filter(id=>id && !(full.trail||[]).some(t=>t.waId===id));
+        const updates=[];
+        for(let i=0;i<ids.length;i+=200)updates.push(...await api.whatsAppInteractions(id,ids.slice(i,i+200)));
+        const byId=new Map(updates.map(m=>[m.waId,m]));
+        if(known(id) && revision===(detailRevisions.get(id)||0) && state.details[id]===old)state.details={...state.details,[id]:{...old,trail:old.trail.filter(t=>!byId.get(t.waId)?.unavailable).map(t=>({...t,...byId.get(t.waId)}))}};
+      }
       if (!known(id) || revision !== (detailRevisions.get(id) || 0)) return true;
       const merged = mergeHistory(state.details[id], full);
       syncDraftMeta(id, merged);
@@ -222,7 +231,7 @@ function filtersChanged(next) {
 function applyData(data, extra = {}) {
   data=withUnified(data);
   // Empreinte d'une ligne : dernier message, nombre et version du brouillon (modifié sur un autre appareil).
-  const mark = m => `${m.sortAt}:${m.count}:${m.draftVersion ?? ''}`;
+  const mark = m => `${m.sortAt}:${m.count}:${m.interactionVersion ?? 0}:${m.draftVersion ?? ''}`;
   const previousAccounts=new Map((state.data?.profiles || []).filter(p=>p.id!=='all').flatMap(p=>p.accounts).map(a=>[a.id,a.historyWindowRevision]));
   const changedWindows=new Set(data.profiles.filter(p=>p.id!=='all').flatMap(p=>p.accounts).filter(a=>previousAccounts.has(a.id) && previousAccounts.get(a.id)!==a.historyWindowRevision).map(a=>a.id));
   const before = new Map((state.data?.messages || []).map(m => [m.id, mark(m)]));
@@ -235,7 +244,7 @@ function applyData(data, extra = {}) {
     return m.channel === 'whatsapp' && !full.failed ? [[id, { ...full, refreshing: true }]] : [];
   }));
   const a = state.ai, updated = a && (data.messages.find(m => m.id === a.forId) || (state.selectedRow?.id === a.forId ? state.selectedRow : null));
-  const ai = a && (!updated || changedWindows.has(updated.accountId) || (before.has(updated.id) && before.get(updated.id).replace(/:[^:]*$/, '') !== `${updated.sortAt}:${updated.count}`)) ? null : a;
+  const ai = a && (!updated || changedWindows.has(updated.accountId) || (before.has(updated.id) && before.get(updated.id).split(':').slice(0,2).join(':') !== `${updated.sortAt}:${updated.count}`)) ? null : a;
   // La ligne sélectionnée reste connue même hors de la page affichée (même profil).
   const row = data.messages.find(m => m.id === state.selectedId);
   set({ data, details, ai, ...(row ? { selectedRow: row } : {}), ...(changedWindows.size && state.personOpen?{person:null}:{}), ...extra });
@@ -279,16 +288,16 @@ const setMeta = (id, patch) => set(s => ({ draftMeta: { ...s.draftMeta, [id]: { 
 // (transférer, répondre à tous) ou le destinataire est une modification à enregistrer comme le texte.
 function serverDraft(full) {
   const mode = full?.draft?.mode || 'reply';
-  return { text: full?.draft?.text ?? '', mode, to: mode === 'forward' ? (full?.draft?.to ?? '') : null };
+  return { ...(full?.channel==='whatsapp'?{replyTo:full?.draft?.replyTo ?? null}:{}),text: full?.draft?.text ?? '', mode, to: mode === 'forward' ? (full?.draft?.to ?? '') : null };
 }
 // Référence : dernier état enregistré connu (pas le détail rechargé, qui peut venir d'un autre appareil).
 const savedDraft = id => state.draftMeta[id]?.saved || serverDraft(state.details[id]);
 const draftText = id => state.drafts[id] ?? savedDraft(id).text;
 function localDraft(id) {
   const base=savedDraft(id),mode=state.draftMeta[id]?.localMode ?? ((state.selectedId===id && state.composing) || base.mode);
-  return { text: draftText(id), mode, to: mode === 'forward' ? (state.composeTo[id] ?? base.to ?? '') : null };
+  return { ...(state.details[id]?.channel==='whatsapp'?{replyTo:state.draftMeta[id]?.localReplyTo !== undefined?state.draftMeta[id].localReplyTo:base.replyTo ?? null}:{}),text: draftText(id), mode, to: mode === 'forward' ? (state.composeTo[id] ?? base.to ?? '') : null };
 }
-const sameDraft = (a, b) => !!a && !!b && a.text === b.text && a.mode === b.mode && a.to === b.to;
+const sameDraft = (a, b) => !!a && !!b && a.text === b.text && a.mode === b.mode && a.to === b.to && (a.replyTo ?? null)===(b.replyTo ?? null);
 const changed = id => !!state.draftMeta[id] && !sameDraft(localDraft(id), savedDraft(id));
 const dirty = id => { const m = state.draftMeta[id]; return !!m && (m.saving || m.conflict || changed(id)); };
 
@@ -307,7 +316,7 @@ function syncDraftMeta(id, full) {
   delete drafts[id]; delete composeTo[id];
   state.drafts = drafts; state.composeTo = composeTo;
   if(state.selectedId===id && state.composing) state.composing=saved.mode;
-  state.draftMeta = { ...state.draftMeta, [id]: { ...meta, version, saved, localMode:undefined, savedText: saved.text, savedAt: full.draft?.savedAt, conflict: false, error: null } };
+  state.draftMeta = { ...state.draftMeta, [id]: { ...meta, version, saved, localMode:undefined,localReplyTo:undefined, savedText: saved.text, savedAt: full.draft?.savedAt, conflict: false, error: null } };
 }
 
 function scheduleAutosave(id) {
@@ -326,7 +335,7 @@ async function saveDraftNow(id, { overwrite = false } = {}) {
   if (!overwrite && sameDraft(local, savedDraft(id)) && !meta.error && !meta.aiAssisted) return;
   setMeta(id, { saving: true, again: false, error: null });
   try {
-    const draft = await api.saveDraft(id, withBase({ text: local.text, mode: local.mode, to: local.to, ...(meta.aiAssisted?{aiAssisted:true}:{}) }, meta.version));
+    const draft = await api.saveDraft(id, withBase({ ...local, ...(meta.aiAssisted?{aiAssisted:true}:{}) }, meta.version));
     if (draft.previousDraftKept) notify('Un ancien brouillon est conservé chez le fournisseur.');
     const cur = state.details[id];
     if (cur) cur.draft = draft;
@@ -967,6 +976,21 @@ const actions = {
   },
   closeComposer: () => { if (layers.includes('compose')) backFrom('compose'); else set({ composing: null }); },
   composeTo: (_, e) => { const id = state.selectedId, v = e.target.value; set(s => ({ composeTo: { ...s.composeTo, [id]: v } })); scheduleAutosave(id); },
+  waMessageMenu:({id})=>{if(!state.confirm)set({waMessageMenu:state.waMessageMenu?.conversationId===state.selectedId && state.waMessageMenu.messageId===id?null:{conversationId:state.selectedId,messageId:id}});},
+  waReply:({id})=>{
+    if(state.confirm)return;const conversation=state.selectedId,full=state.details[conversation];
+    if(!full || full.group || ![full.waId,...(full.trail||[]).map(x=>x.waId)].includes(id))return;
+    setMeta(conversation,{localReplyTo:id});set({waMessageMenu:null});scheduleAutosave(conversation);
+    requestAnimationFrame(()=>document.querySelector(`textarea[data-key="draft-${conversation}"]`)?.focus());
+  },
+  waReplyCancel:()=>{if(state.confirm)return;setMeta(state.selectedId,{localReplyTo:null});scheduleAutosave(state.selectedId);},
+  waReact:async({id,emoji})=>{
+    const conversation=state.selectedId,full=state.details[conversation];
+    if(state.confirm || state.waReacting || state.offline || !full || full.group)return;
+    set({waReacting:conversation,waMessageMenu:null});
+    try{await api.reactWhatsApp(conversation,{messageId:id,emoji});if(known(conversation)){set(s=>({details:{...s.details,[conversation]:{...s.details[conversation],refreshing:true}}}));await loadDetails(conversation);}}
+    catch(e){fail(e);}finally{set({waReacting:null});}
+  },
   waEmojiToggle:()=>{if(!state.confirm)set({waEmoji:!state.waEmoji});},
   waEmojiInsert:({emoji})=>{
     if(state.confirm)return;const id=state.selectedId,el=document.querySelector(`textarea[data-key="draft-${id}"]`);
@@ -1149,7 +1173,7 @@ const actions = {
       return;
     }
     const sent = localDraft(id);
-    const input = withBase({ text: sent.text, mode: sent.mode, to: sent.to, ...(state.waAttachments[id]?{attachmentId:state.waAttachments[id].id}:{}) }, meta.version);
+    const input = withBase({ ...sent, ...(state.waAttachments[id]?{attachmentId:state.waAttachments[id].id}:{}) }, meta.version);
     try {
       const preview = await api.previewSend(id, input);
       if (!ours()) return;
@@ -1187,7 +1211,7 @@ const actions = {
     compositionBuffers.delete(id);
     for(const [cid,draft] of compositionsByCid) if(draft.messageId===id)compositionsByCid.delete(cid);
     // Texte saisi après l'aperçu : jamais effacé, il reste local et non enregistré (le brouillon envoyé a disparu).
-    const newer = !c.newMail && !sameDraft(localDraft(id), { text: c.input.text, mode: c.input.mode, to: c.input.to ?? null });
+    const newer = !c.newMail && !sameDraft(localDraft(id), { text: c.input.text, mode: c.input.mode, to: c.input.to ?? null,replyTo:c.input.replyTo ?? null });
     clearTimeout(draftTimers.get(id));
     if (layers.at(-1) === 'confirm') { layers.pop(); try { history.back?.(); } catch { /* sans historique */ } layers.push('__skip'); }
     // L'entrée d'historique du compositeur devient neutre : le retour suivant ne rouvre ni ne ferme rien d'autre.

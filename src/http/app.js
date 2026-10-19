@@ -211,6 +211,8 @@ export function createApp({ store, ai, ownerName, gmail = null, providers = {}, 
     ['POST', /^\/api\/accounts\/([^/]+)\/disconnect$/, ([id]) => {
       return mail.providerFor(accountId(id)).disconnect(accountId(id));
     }],
+    ['POST', /^\/api\/messages\/([^/]+)\/whatsapp-interactions$/, ([id],body)=>store.waInteractions(messageId(id),body.ids)],
+    ['POST', /^\/api\/messages\/([^/]+)\/whatsapp-reaction$/, ([id],body)=>{const mid=messageId(id),ctx=store.composeContext(mid);if(store.getAccount(ctx.accountId).svc!=='whatsapp' || !providers.whatsapp?.outbox.react)throw badRequest('Réaction indisponible.');return providers.whatsapp.outbox.react(mid,body);}],
     ['GET', /^\/api\/messages\/([^/]+)$/, ([id],body,session,url) => ({ ...store.getMessage(messageId(id),{limit:url.searchParams.get('limit') ?? 50,before:url.searchParams.get('before')}), aiResults: assistant.results(messageId(id)), replyMemory:store.getReplyMemory(messageId(id)) })],
     ['GET', /^\/api\/messages\/([^/]+)\/memory$/, ([id]) => store.getReplyMemory(messageId(id))],
     ['PATCH', /^\/api\/messages\/([^/]+)\/memory$/, ([id],body) => store.changeReplyMemory(messageId(id),body)],

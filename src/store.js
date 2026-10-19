@@ -1,3 +1,4 @@
+import {createWhatsAppInteractions} from './providers/whatsapp/interactions.js';
 import {createHistoryWindows} from './mail/history/windows.js';
 import {createContactNetwork} from './contacts/network.js';
 import {createPersonHistory} from './ai/person-history.js';
@@ -19,10 +20,10 @@ const FREQ_COUNT = 4;
 const bool = v => !!v;
 const toMessage = (r, full) => {
   const m = {
-    requiresPreview:!!r.draft_ai_assisted, draftVersion:r.draft_version, id: r.id, kind: r.compose_kind, p: r.profile_id, accountId: r.account_id, from: r.from_name, initials: r.initials, handle: r.handle, channel: r.channel,
+    interactionVersion:r.interaction_version, requiresPreview:!!r.draft_ai_assisted, draftVersion:r.draft_version, id: r.id, kind: r.compose_kind, p: r.profile_id, accountId: r.account_id, from: r.from_name, initials: r.initials, handle: r.handle, channel: r.channel,
     account: r.account, time: r.time_label, sortAt: r.sort_at, unread: bool(r.unread), flagged: bool(r.flagged), archived: bool(r.archived),
     folderId: r.folder_id, label: r.label, subject: r.subject, preview: r.preview, triage: r.triage, count: r.message_count,
-    draft: r.draft_saved_at ? { version:r.draft_version,savedAt: r.draft_saved_at, gmail: !!r.draft_synced, synced: !!r.draft_synced, ...(full ? { text: r.draft_text, mode: r.draft_mode, to: r.draft_to, cc: r.draft_cc, subject: r.subject } : {}) } : null,
+    draft: r.draft_saved_at ? { version:r.draft_version,savedAt: r.draft_saved_at, gmail: !!r.draft_synced, synced: !!r.draft_synced, ...(full ? { text: r.draft_text, ...(r.channel==='whatsapp'?{replyTo:r.draft_reply_to}:{}), mode: r.draft_mode, to: r.draft_to, cc: r.draft_cc, subject: r.subject } : {}) } : null,
   };
   if (full) Object.assign(m, { body: r.body, trail: JSON.parse(r.trail) });
   return m;
@@ -77,6 +78,7 @@ export function createStore(db) {
 
   return {
     db,
+    ...createWhatsAppInteractions(db,changed),
     contactNetwork:(p,options)=>network.network(p,options),
     savePersonGroup:(p,input,id)=>network.save(p,input,id),
     personGroupMembership:(p,id,personId,on)=>network.membership(p,id,personId,on),
@@ -160,7 +162,7 @@ export function createStore(db) {
       if(r.account_id && ['gmail','outlook'].includes(accountOf(r.account_id).svc)){const window=this.mailWindows.policy(r.account_id);m.historyWindowRevision=`${window.days}:${window.contentRevision}`;}
       const revision=fingerprint([id,r.account_id,r.external_id,r.sort_at,r.message_count,r.trail]);
       if (r.channel === 'whatsapp' && r.account_id && r.external_id) {
-        const select="SELECT m.rowid AS entry_id,m.msg_id,m.from_me,m.ts,m.text,m.author_jid,COALESCE(c.name,NULLIF(m.sender_name,'Participant'),m.sender_name) AS sender_name FROM whatsapp_messages m LEFT JOIN whatsapp_chats c ON c.account_id=m.account_id AND c.chat_jid=m.author_jid WHERE m.account_id=? AND m.chat_jid=?";
+        const select="SELECT m.rowid AS entry_id,m.msg_id,m.from_me,m.ts,m.text,m.author_jid,m.reply_to,COALESCE(c.name,NULLIF(m.sender_name,'Participant'),m.sender_name) AS sender_name FROM whatsapp_messages m LEFT JOIN whatsapp_chats c ON c.account_id=m.account_id AND c.chat_jid=m.author_jid WHERE m.account_id=? AND m.chat_jid=?";
         const latest=q(select+' ORDER BY m.ts DESC,m.rowid DESC LIMIT 1').get(r.account_id,r.external_id);
         let recent;
         if(options) {
@@ -172,6 +174,8 @@ export function createStore(db) {
           m.history={hasMore,nextCursor:hasMore?encodeCursor({revision,kind:'whatsapp',at:last.ts,entry:last.entry_id}):null};recent=latest?[latest,...older]:[];
         } else recent=q(select+' ORDER BY m.ts DESC,m.rowid DESC').all(r.account_id,r.external_id);
         m.group = r.external_id.endsWith('@g.us');
+        if(latest)Object.assign(m,this.waMessageDetails(r.account_id,r.external_id,latest));
+        if(m.draft)m.draft.quote=this.waQuote(r.account_id,r.external_id,m.draft.replyTo);
         m.media = latest ? this.waMediaFor(r.account_id,r.external_id,latest.msg_id) : null;
         m.fromMe = recent.length ? !!recent[0].from_me : false;
         m.at = m.sortAt;
@@ -181,7 +185,7 @@ export function createStore(db) {
           const who = q('SELECT name FROM whatsapp_chats WHERE account_id = ? AND chat_jid = ?').get(r.account_id, r.external_id)?.name || m.subject.replace(/^WhatsApp · /, '');
           m.trail = recent.slice(1).map(t => {
             const from = t.from_me ? 'Moi' : m.group ? t.sender_name || 'Participant' : who;
-            return { id:t.msg_id, media:this.waMediaFor(r.account_id,r.external_id,t.msg_id), from, initials: from.split(/\s+/).slice(0, 2).map(w => w[0] || '').join('').toUpperCase(), fromMe: !!t.from_me, at: t.ts, body: t.text };
+            return { id:t.msg_id, ...this.waMessageDetails(r.account_id,r.external_id,t), media:this.waMediaFor(r.account_id,r.external_id,t.msg_id), from, initials: from.split(/\s+/).slice(0, 2).map(w => w[0] || '').join('').toUpperCase(), fromMe: !!t.from_me, at: t.ts, body: t.text };
           });
         }
       } else if(options) {
@@ -263,7 +267,7 @@ export function createStore(db) {
     },
     markDraftAI(id) {row(id);q('UPDATE messages SET draft_ai_assisted=1 WHERE id=?').run(id);},
     requiresDraftReview(id) {return !!row(id).draft_ai_assisted;},
-    saveDraft(id, text, { expectedVersion, mode = null, to = null, cc = null, subject, externalId, synced = false, threadKey } = {}) {
+    saveDraft(id, text, { expectedVersion, mode = null, to = null, cc = null, subject, externalId, synced = false, threadKey, replyTo = null } = {}) {
       this.assertDraftVersion(id,expectedVersion);
       const r = row(id);
       if (typeof text !== 'string' || text.length > MAX_DRAFT) throw badRequest('Brouillon invalide');
@@ -273,11 +277,11 @@ export function createStore(db) {
       }
       const savedAt = new Date().toISOString();
       const ext = externalId === undefined ? r.draft_external_id : externalId;
-      q('UPDATE messages SET draft_text = ?, draft_saved_at = ?, draft_mode = ?, draft_to = ?, draft_external_id = ?, draft_synced = ? WHERE id = ?')
-        .run(text, savedAt, mode, to, ext, +(synced && !!ext), id);
+      q('UPDATE messages SET draft_text = ?, draft_saved_at = ?, draft_mode = ?, draft_to = ?, draft_external_id = ?, draft_synced = ?, draft_reply_to = ? WHERE id = ?')
+        .run(text, savedAt, mode, to, ext, +(synced && !!ext), replyTo, id);
       if (threadKey !== undefined) q('UPDATE messages SET draft_thread_key = ? WHERE id = ?').run(threadKey, id);
       if (r.compose_kind === 'new') q('UPDATE messages SET subject = ?, draft_cc = ?, preview = ?, sort_at = ? WHERE id = ?').run(subject, cc, text.slice(0, 200), Date.now(), id);
-      return { version:row(id).draft_version, text, savedAt, mode, to, cc, subject: subject ?? r.subject, gmail: synced && !!ext, synced: synced && !!ext };
+      return { ...(r.channel==='whatsapp'?{replyTo,quote:this.waQuote(r.account_id,r.external_id,replyTo)}:{}),version:row(id).draft_version, text, savedAt, mode, to, cc, subject: subject ?? r.subject, gmail: synced && !!ext, synced: synced && !!ext };
     },
     createComposition(accountId) {
       const acc = accountOf(accountId);
@@ -293,7 +297,7 @@ export function createStore(db) {
     },
     clearDraft(id) {
       if (row(id).compose_kind === 'new') { q('DELETE FROM messages WHERE id = ?').run(id); return; }
-      q('UPDATE messages SET draft_text = NULL, draft_saved_at = NULL, draft_mode = NULL, draft_to = NULL, draft_external_id = NULL, draft_synced = 0, draft_thread_key = NULL, draft_ai_assisted = 0 WHERE id = ?').run(id);
+      q('UPDATE messages SET draft_text = NULL, draft_saved_at = NULL, draft_mode = NULL, draft_to = NULL, draft_external_id = NULL, draft_synced = 0, draft_thread_key = NULL, draft_ai_assisted = 0, draft_reply_to = NULL WHERE id = ?').run(id);
     },
     // Lots C et D : de quoi construire une réponse dans le fil.
     composeContext(id) {
@@ -479,6 +483,12 @@ export function createStore(db) {
       q('DELETE FROM whatsapp_auth WHERE account_id = ?').run(accountId);
     },
     // Messages : { chatJid, msgId, fromMe, ts, text }. Renvoie les discussions qui ont reçu au moins un nouveau message.
+    waInteractions(messageId,ids) {
+      const r=row(messageId);
+      if(r.channel!=='whatsapp' || !r.account_id || !r.external_id)throw badRequest('Discussion WhatsApp requise.');
+      if(!Array.isArray(ids) || ids.length>200 || ids.some(id=>typeof id!=='string' || !id || id.length>128))throw badRequest('Messages invalides.');
+      return ids.map(id=>{const m=q('SELECT * FROM whatsapp_messages WHERE account_id=? AND chat_jid=? AND msg_id=?').get(r.account_id,r.external_id,id);return m?this.waMessageDetails(r.account_id,r.external_id,m):{waId:id,unavailable:true};});
+    },
     waMediaPut(m) {
       q('INSERT OR IGNORE INTO whatsapp_media (id,account_id,owner_message,chat_jid,msg_id,mime,kind,size,created_at,iv,tag,ciphertext) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)').run(m.id,m.accountId,m.ownerMessage??null,m.chatJid??null,m.msgId??null,m.mime,m.kind,m.size,Date.now(),m.sealed.iv,m.sealed.tag,m.sealed.ciphertext);
     },
@@ -490,10 +500,13 @@ export function createStore(db) {
     waMediaCounts(accountId) {const rows=q('SELECT kind,count(*) n FROM whatsapp_media WHERE account_id=? AND chat_jid IS NOT NULL GROUP BY kind').all(accountId);return {photos:rows.find(r=>r.kind==='image')?.n || 0,gifs:rows.find(r=>r.kind==='gif')?.n || 0};},
     waMediaBytes() {return q('SELECT COALESCE(SUM(size),0) n FROM whatsapp_media').get().n;},
     waAddMessages(accountId, list) {
-      const ins = q('INSERT OR IGNORE INTO whatsapp_messages (account_id, chat_jid, msg_id, from_me, ts, text, author_jid, sender_name) VALUES (?, ?, ?, ?, ?, ?, ?, ?)');
+      const ins = q('INSERT OR IGNORE INTO whatsapp_messages (account_id, chat_jid, msg_id, from_me, ts, text, author_jid, sender_name, reply_to) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)');
       const changed = new Set();
       transaction(db, () => {
-        for (const m of list) if (ins.run(accountId, m.chatJid, m.msgId, +m.fromMe, m.ts, m.text, m.participantJid || null, m.senderName || null).changes) changed.add(m.chatJid);
+        for (const m of list) {
+          if (ins.run(accountId, m.chatJid, m.msgId, +m.fromMe, m.ts, m.text, m.participantJid || null, m.senderName || null, m.replyTo || null).changes) changed.add(m.chatJid);
+          else if(m.replyTo && q('UPDATE whatsapp_messages SET reply_to=? WHERE account_id=? AND chat_jid=? AND msg_id=? AND reply_to IS NULL').run(m.replyTo,accountId,m.chatJid,m.msgId).changes){changed.add(m.chatJid);q('UPDATE messages SET interaction_version=interaction_version+1 WHERE account_id=? AND external_id=?').run(accountId,m.chatJid);}
+        }
       });
       const scope={accountId,conversationId:null,profileId:accountOf(accountId).profile_id};
       for(const jid of new Set(list.filter(m=>m.fromMe).map(m=>m.chatJid))) {

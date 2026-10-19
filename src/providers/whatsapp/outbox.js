@@ -1,3 +1,4 @@
+import {replyId,validReaction} from './interactions.js';
 // Brouillons (locaux) et envoi WhatsApp. V1 : réponse texte seulement, toujours vers le JID enregistré de la
 // discussion ; ni le navigateur ni l'assistant ne choisissent le destinataire.
 import { createHash, timingSafeEqual } from 'node:crypto';
@@ -9,8 +10,8 @@ const CONFIRM_TTL_MS = 10 * 60000;
 export const MAX_SEND = 4096; // caractères par message envoyé
 
 // L'empreinte lie compte, génération du compte, discussion et texte exact.
-const digestOf = (accountId, generation, chatJid, text, attachment=null) => createHash('sha256')
-  .update(`whatsapp\naccount:${accountId}\ngeneration:${generation}\nchat:${chatJid}\n`).update(text, 'utf8').update(attachment?`\nmedia:${attachment.id}:${attachment.hash}`:'').digest('hex');
+const digestOf = (accountId, generation, chatJid, text, attachment=null, quote=null) => createHash('sha256')
+  .update(`whatsapp\naccount:${accountId}\ngeneration:${generation}\nchat:${chatJid}\n`).update(text, 'utf8').update(attachment?`\nmedia:${attachment.id}:${attachment.hash}`:'').update(quote?`\nquote:${JSON.stringify(quote)}`:'').digest('hex');
 
 export function createWhatsAppOutbox({ store, sync, media=null }) {
   const sending = new Set();
@@ -38,11 +39,36 @@ export function createWhatsAppOutbox({ store, sync, media=null }) {
   }
 
   return {
+    async react(messageId,input) {
+      const {accountId,chatJid}=target(messageId);
+      const emoji=input?.emoji;
+      if(!validReaction(emoji))throw badRequest('Réaction invalide.');
+      if(!sync.permissions(accountId).includes('send'))throw new HttpError(403,'La permission Envoi n’est pas accordée.','send_forbidden');
+      const expectedGeneration=sync.generation(accountId),identity=store.accountIdentity(accountId);
+      const targetId=replyId(input?.messageId);
+      if(!targetId)throw badRequest('Message requis.');
+      if(sending.has(messageId))throw new HttpError(409,'Une action est déjà en cours.','send_in_progress');
+      sending.add(messageId);
+      try{return await sync.serial(accountId,async()=>{
+        if(!store.hasAccount(accountId) || expectedGeneration!==sync.generation(accountId) || identity!==store.accountIdentity(accountId))throw new HttpError(409,'La connexion a changé : recharge la discussion.','account_changed');
+        const currentTarget=target(messageId);
+        if(currentTarget.accountId!==accountId || currentTarget.chatJid!==chatJid)throw new HttpError(409,'La discussion a changé.','account_changed');
+        if(!sync.permissions(accountId).includes('send'))throw new HttpError(403,'La permission Envoi n’est pas accordée.','send_forbidden');
+        const m=store.waInteractionTarget(accountId,chatJid,targetId);
+        const sock=sync.liveSocket(accountId);
+        if(!sock)throw new HttpError(409,'WhatsApp n’est pas connecté.','whatsapp_offline');
+        const generation=sync.generation(accountId),ts=Date.now();
+        try{await sock.sendMessage(chatJid,{react:{text:emoji,key:{remoteJid:chatJid,id:m.msg_id,fromMe:!!m.from_me}}});}
+        catch{throw new HttpError(502,'Réaction WhatsApp incertaine : vérifie sur le téléphone avant de réessayer.','send_uncertain');}
+        if(store.hasAccount(accountId) && generation===sync.generation(accountId))store.waApplyReaction(accountId,{chatJid,msgId:m.msg_id,actor:'me',emoji,ts});
+        return {reacted:true};
+      });}finally{sending.delete(messageId);}
+    },
     // Brouillon local uniquement : WhatsApp n'a pas de brouillon partagé entre appareils.
     async saveDraft(messageId, input) {
       const { text } = read(input);
       const { accountId } = target(messageId, true);
-      return sync.serial(accountId, () => store.saveDraft(messageId, text, { mode: 'reply',expectedVersion:input?.baseVersion }));
+      return sync.serial(accountId, () => {const replyTo=replyId(input?.replyTo);if(replyTo)store.waQuote(accountId,store.composeContext(messageId).threadId,replyTo,true);return store.saveDraft(messageId, text, { mode: 'reply',replyTo,expectedVersion:input?.baseVersion });});
     },
 
     async preview(messageId, input) {
@@ -50,11 +76,12 @@ export function createWhatsAppOutbox({ store, sync, media=null }) {
       const { text } = read(input);
       const { accountId, chatJid } = target(messageId);
       const attachment=media?.draft(messageId,input.attachmentId);
+      const quote=store.waQuote(accountId,chatJid,replyId(input?.replyTo),true);
       checkSend(accountId, text, attachment);
       const account = store.getAccount(accountId);
       const name = store.waChatName(accountId, chatJid);
       const phone = phoneOf(chatJid);
-      const digest = digestOf(accountId, sync.generation(accountId), chatJid, text, attachment);
+      const digest = digestOf(accountId, sync.generation(accountId), chatJid, text, attachment, quote);
       sweep();
       confirmations.set(digest, { messageId, accountId,draftVersion:store.assertDraftVersion(messageId), generation: sync.generation(accountId), expires: Date.now() + CONFIRM_TTL_MS });
       return {
@@ -64,6 +91,7 @@ export function createWhatsAppOutbox({ store, sync, media=null }) {
         cc: [],
         subject: store.composeContext(messageId).subject, // interne : non affiché pour WhatsApp
         body: text,
+        ...(quote?{quote}:{}),
         ...(attachment?{attachment:{id:attachment.id,url:attachment.url,mime:attachment.mime,kind:attachment.kind,size:attachment.size}}:{}),
         digest,
       };
@@ -81,7 +109,8 @@ export function createWhatsAppOutbox({ store, sync, media=null }) {
       try {
         return await sync.serial(accountId, async () => {
           const generation = sync.generation(accountId);
-          const actual = digestOf(accountId, generation, chatJid, text, attachment);
+          const quote=store.waQuote(accountId,chatJid,replyId(input?.replyTo),true);
+          const actual = digestOf(accountId, generation, chatJid, text, attachment, quote);
           if (!timingSafeEqual(Buffer.from(actual), Buffer.from(digest))) {
             throw new HttpError(409, 'Le message a changé depuis sa validation : vérifie-le à nouveau avant d’envoyer.', 'digest_mismatch');
           }
@@ -101,7 +130,9 @@ export function createWhatsAppOutbox({ store, sync, media=null }) {
           const memoryTicket=store.getReplyMemory(messageId,{internal:true});
           const sendStartedAt=Date.now();
           try {
-            sent = await sock.sendMessage(chatJid, attachment ? (attachment.mime==='video/mp4' ? {video:attachment.bytes,mimetype:attachment.mime,gifPlayback:true,caption:text} : {image:attachment.bytes,mimetype:attachment.mime,caption:text}) : { text });
+            const quoted=quote?{key:{remoteJid:chatJid,id:quote.id,fromMe:quote.fromMe},message:{conversation:quote.body}}:null;
+            const content=attachment ? (attachment.mime==='video/mp4' ? {video:attachment.bytes,mimetype:attachment.mime,gifPlayback:true,caption:text} : {image:attachment.bytes,mimetype:attachment.mime,caption:text}) : { text };
+            sent = quoted?await sock.sendMessage(chatJid,content,{quoted}):await sock.sendMessage(chatJid,content);
           } catch {
             // Issue inconnue (le message a pu partir) : nouvelle vérification exigée, jamais de nouvel essai automatique.
             throw new HttpError(502, 'Envoi WhatsApp incertain : vérifie la discussion sur le téléphone avant de renvoyer.', 'send_uncertain');
@@ -110,7 +141,7 @@ export function createWhatsAppOutbox({ store, sync, media=null }) {
           const msgId = typeof sent?.key?.id === 'string' && sent.key.id ? sent.key.id : `relay-${digest.slice(0, 24)}`;
           if (store.hasAccount(accountId)) {
             store.rememberReply(messageId,text,{ticket:memoryTicket,at:sendStartedAt});
-            store.waAddMessages(accountId, [{ chatJid, msgId, fromMe: true, ts: sendStartedAt, text:text || (attachment?.kind==='gif'?'GIF':'Photo') }]);
+            store.waAddMessages(accountId, [{ chatJid, msgId, fromMe: true, ts: sendStartedAt, replyTo:quote?.id, text:text || (attachment?.kind==='gif'?'GIF':'Photo') }]);
             try {media?.sent(accountId,chatJid,msgId,attachment);}catch { /* Delivery succeeded; never suggest a retry because caching failed. */ }
             store.clearDraft(messageId);
             sync.rebuild(accountId, chatJid);

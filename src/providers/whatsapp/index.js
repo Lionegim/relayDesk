@@ -30,6 +30,7 @@ export async function createWhatsAppProvider({ store, vault, makeSocket = makeBa
       stop: () => sync.stop(),
     },
     outbox: {
+      react: (id,input)=>outbox.react(id,input),
       saveDraft: (id, input) => outbox.saveDraft(id, input),
       preview: (id, input) => outbox.preview(id, input),
       send: (id, input) => outbox.send(id, input),

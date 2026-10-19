@@ -64,7 +64,7 @@ export function parseMessage(m, { since = 0 } = {}) {
   const pushName = !key.fromMe && typeof m.pushName === 'string' ? m.pushName.trim().slice(0, 80) : '';
   const participantJid = groupJid(conversation) ? directJid(key.participant || m.participant) : null;
   const senderName = groupJid(conversation) && !key.fromMe ? pushName || phoneOf(participantJid) || 'Participant' : null;
-  return { chatJid: conversation, msgId: key.id, fromMe: !!key.fromMe, ts, text, pushName, participantJid, senderName, ...(media?{media}:{} ) };
+  return { chatJid: conversation, msgId: key.id, fromMe: !!key.fromMe, ts, text, pushName, participantJid, senderName, ...(media?{media}:{} ), replyTo: (()=>{const c=m.message?.extendedTextMessage?.contextInfo || m.message?.imageMessage?.contextInfo || m.message?.videoMessage?.contextInfo || m.message?.documentMessage?.contextInfo;return typeof c?.stanzaId==='string' && c.stanzaId.length<=128?c.stanzaId:null;})() };
 }
 
 // Nom d'un contact WhatsApp (carnet, nom public, nom vérifié).

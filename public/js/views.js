@@ -384,8 +384,8 @@ const isMine = m => m.fromMe === true;
 
 // Chronologie ancien → récent : le fil est stocké du plus récent au plus ancien, le dernier message est `full`.
 function waMessages(sel, full) {
-  const older = [...(full.trail || [])].reverse().map(t => ({ mine: isMine(t), at: t.at, body: t.body, media:t.media, author: full.group && !isMine(t) ? t.from : null }));
-  return [...older, { mine: isMine(full), at: full.at ?? sel.sortAt, body: full.failed ? sel.preview : full.body, media:full.media, author: full.group && !isMine(full) ? full.from : null }];
+  const older = [...(full.trail || [])].reverse().map(t => ({ id:t.waId,quote:t.quote,reactions:t.reactions,mine: isMine(t), at: t.at, body: t.body, media:t.media, author: full.group && !isMine(t) ? t.from : null }));
+  return [...older, { id:full.waId,quote:full.quote,reactions:full.reactions,mine: isMine(full), at: full.at ?? sel.sortAt, body: full.failed ? sel.preview : full.body, media:full.media, author: full.group && !isMine(full) ? full.from : null }];
 }
 
 function waMedia(media) {
@@ -397,7 +397,10 @@ function waMedia(media) {
   </figure>`;
 }
 
-function waTimeline(msgs) {
+function waQuote(quote) {
+  return quote?html`<blockquote class="wa-quote"><strong>${quote.author}</strong><span>${quote.body}</span></blockquote>`:'';
+}
+function waTimeline(msgs,s={},sel={},canSend=false) {
   let prev = null;
   return msgs.map(m => {
     const at = Number.isFinite(m.at) ? m.at : null;
@@ -410,11 +413,14 @@ function waTimeline(msgs) {
       <div class="${cls('wa-msg', m.media && 'wa-has-media', m.mine ? 'wa-out' : 'wa-in', grouped && 'wa-cont')}">
         <div class="wa-bubble">
           ${when(m.author && !grouped, () => html`<strong class="wa-author">${m.author}</strong>`)}
-          <span class="sr-only">${m.mine ? 'Vous' : 'Reçu'} :</span>
+          ${waQuote(m.quote)}<span class="sr-only">${m.mine ? 'Vous' : 'Reçu'} :</span>
           ${waMedia(m.media)}
           ${when(!m.media || !['Photo','GIF'].includes(m.body),()=>html`<span class="wa-text">${m.body}</span>`)}
           ${when(at !== null, () => html`<time class="wa-time" datetime="${new Date(at).toISOString()}" title="${fullDate(at)}">${timeOf(at)}</time>`)}
         </div>
+        ${when(m.id && canSend,()=>html`<button class="wa-message-action" data-on-click="waMessageMenu" data-id="${m.id}" aria-label="Actions du message du ${fullDate(at)}" aria-expanded="${s.waMessageMenu?.conversationId===sel.id && s.waMessageMenu?.messageId===m.id}" ${raw(s.confirm?'disabled':'')}>${icon('more')}</button>`)}
+        ${when(m.reactions?.length,()=>html`<div class="wa-reactions" aria-label="Réactions">${m.reactions.map(r=>canSend?html`<button class="${r.mine?'is-mine':''}" data-on-click="waReact" data-id="${m.id}" data-emoji="${r.mine?'':r.emoji}" aria-label="${r.emoji} · ${r.count} réaction(s)${r.mine?' · Retirer ma réaction':''}" ${raw(s.confirm||s.offline||s.waReacting?'disabled':'')}>${r.emoji}<span>${r.count}</span></button>`:html`<span>${r.emoji} ${r.count}</span>`)}</div>`)}
+        ${when(canSend && s.waMessageMenu?.conversationId===sel.id && s.waMessageMenu?.messageId===m.id,()=>html`<div class="wa-message-menu" role="group" aria-label="Répondre ou réagir au message"><button class="wa-reply-action" data-on-click="waReply" data-id="${m.id}">${icon('reply')} Répondre</button><div class="wa-reaction-picker" role="group" aria-label="Choisir une réaction">${['👍','❤️','😂','😮','😢','🙏'].map(emoji=>html`<button data-on-click="waReact" data-id="${m.id}" data-emoji="${m.reactions?.some(r=>r.mine&&r.emoji===emoji)?'':emoji}" aria-label="Réagir ${emoji}" ${raw(s.offline||s.waReacting?'disabled':'')}>${emoji}</button>`)}</div><button class="wa-menu-close" data-on-click="waMessageMenu" data-id="${m.id}" aria-label="Fermer les actions du message">×</button></div>`)}
       </div>`;
   });
 }
@@ -428,6 +434,9 @@ function whatsappView(s, v, sel) {
   const acc = v.profile.accounts.find(a => a.id === sel.accountId);
   const canSend = !!acc?.perms?.includes('send') && !full?.group;
   const draft = s.drafts[sel.id] ?? full?.draft?.text ?? '';
+  const replyTo=s.draftMeta?.[sel.id]?.localReplyTo!==undefined?s.draftMeta[sel.id].localReplyTo:full?.draft?.replyTo;
+  const selectedQuote=replyTo?waMessages(sel,full || {trail:[]}).find(m=>m.id===replyTo):null;
+  const quote=selectedQuote?{author:selectedQuote.mine?'Vous':selectedQuote.author || name,body:selectedQuote.body}:full?.draft?.quote;
   const tooLong = draft.length > WA_MAX;
   const folderName = s.data.folders.find(f => f.id === sel.folderId)?.name;
   const st = draftState(s, v, sel.id, draft);
@@ -461,12 +470,13 @@ function whatsappView(s, v, sel) {
       <div class="wa-timeline" data-key="wa-timeline-${sel.id}" data-chat-id="${sel.id}" data-ready="${String(!!full && !full.failed)}" role="log" aria-label="Messages, du plus ancien au plus récent">
         <div class="wa-thread">
           ${olderButton(s, full, sel.id)}
-          ${full?.failed ? html`<div class="wa-note"><p>Discussion indisponible. Aperçu du dernier message :</p><p class="wa-text">${sel.preview}</p></div>` : full ? waTimeline(waMessages(sel, full)) : html`
+          ${full?.failed ? html`<div class="wa-note"><p>Discussion indisponible. Aperçu du dernier message :</p><p class="wa-text">${sel.preview}</p></div>` : full ? waTimeline(waMessages(sel, full),s,sel,canSend) : html`
             <div class="wa-msg wa-in"><div class="wa-bubble wa-loading"><div class="skeleton" style="width:220px"></div><div class="skeleton" style="width:140px"></div></div></div>`}
           ${when(full?.failed, () => html`<p class="wa-note">Discussion incomplète : seul l’aperçu est disponible.</p>`)}
         </div>
       </div>
       <footer class="wa-composer">
+        ${when(replyTo,()=>html`<div class="wa-reply-banner" role="region" aria-label="Message cité">${waQuote(quote || {author:'Message indisponible',body:'Choisissez un autre message.'})}<button class="icon-btn" data-on-click="waReplyCancel" aria-label="Annuler la réponse au message" ${raw(s.confirm?'disabled':'')}>×</button></div>`)}
         ${draftConflict(s, sel.id)}
         ${when(s.waAttachments?.[sel.id],()=>html`<div class="wa-attachment">${waMedia(s.waAttachments[sel.id])}<div><strong>${s.waAttachments[sel.id].kind==='gif'?'GIF prêt à envoyer':'Photo prête à envoyer'}</strong><p>Temporaire · à réajouter après actualisation</p><button class="btn btn-ghost" data-on-click="waAttachRemove" ${raw(s.confirm?'disabled':'')}>Retirer</button></div></div>`)}
         ${when(s.waEmoji,()=>html`<div class="wa-emoji" role="group" aria-label="Emojis">${['😀','😊','😂','❤️','👍','🙏','🎉','👋','✅','🤔','😘','🔥','🙌','🙂','😅','💪'].map(emoji=>html`<button data-on-click="waEmojiInsert" data-emoji="${emoji}" aria-label="${emoji}">${emoji}</button>`)}</div>`)}
@@ -854,8 +864,8 @@ function sendDialog(c, offline = false) {
             ${when(p.cc.length, () => html`<span class="muted">Cc</span><span>${p.cc.join(', ')}</span>`)}
             ${when(p.channel !== 'whatsapp', () => html`<span class="muted">Objet</span><span style="font-weight:600">${p.subject}</span>`)}
           </div>
-          <div class="send-preview-letter"><span class="network-eyebrow">MESSAGE EXACT</span>${waMedia(p.attachment)}<div class="send-body">${p.body}</div></div>
-          <p class="muted" style="margin:0;font-size:12px">Le texte et la pièce jointe affichés sont exactement ceux qui seront envoyés. Toute modification demande une nouvelle vérification.</p>
+          <div class="send-preview-letter"><span class="network-eyebrow">MESSAGE EXACT</span>${waQuote(p.quote)}${waMedia(p.attachment)}<div class="send-body">${p.body}</div></div>
+          <p class="muted" style="margin:0;font-size:12px">${p.quote?'Le message cité, le texte et l’éventuelle pièce jointe affichés correspondent exactement à l’envoi.':'Le texte et la pièce jointe affichés sont exactement ceux qui seront envoyés.'} Toute modification demande une nouvelle vérification.</p>
           ${when(c.error, () => html`<div class="alert">${c.error}</div>`)}
           ${when(offline && !c.error, () => html`<div class="alert">Hors ligne : l’envoi reprendra seulement quand tu le confirmeras en ligne.</div>`)}
         </div>

@@ -1,3 +1,4 @@
+import {reactionEvent} from './interactions.js';
 // Sessions WhatsApp (appareil lié) : liaison par QR, reprise des sessions enregistrées, import du texte récent
 // des conversations directes. Rien n'est envoyé ici ; aucune connexion n'est ouverte sans session enregistrée
 // ou demande de liaison explicite.
@@ -199,6 +200,7 @@ export function createWhatsAppSync({ store, vault, lib, makeSocket, log = consol
       enqueue(accountId, s, kind, data, notify);
     };
     sock.ev.on('messaging-history.set', batch('history', false));
+    sock.ev.on('messages.reaction', batch('reactions',false));
     sock.ev.on('messages.upsert', d => batch('messages', d?.type === 'notify')(d));
     sock.ev.on('contacts.upsert', batch('contacts', false));
     sock.ev.on('contacts.update', batch('contacts', false));
@@ -462,6 +464,7 @@ export function createWhatsAppSync({ store, vault, lib, makeSocket, log = consol
 
   function prepare(accountId, s, kind, data, notify) {
     if (!current(accountId, s)) return null;
+    if(kind==='reactions'){for(const item of Array.isArray(data)?data:[]){const event=reactionEvent(item.key,item.reaction);if(event && !s.auth.jidAliases(event.chatJid).some(j=>s.ephemeral.has(j)))store.waApplyReaction(accountId,event);}return null;}
     if (kind === 'chats' || kind === 'groups') {
       if (kind === 'chats') policies(accountId, s, data);
       if(kind==='chats')for(const ch of Array.isArray(data)?data:[])for(const item of ch.messages || [])rememberAnchor(accountId,s,item.message,ch.id);
@@ -513,6 +516,13 @@ export function createWhatsAppSync({ store, vault, lib, makeSocket, log = consol
 
     }
     const inserted = store.waAddMessages(accountId, list);
+    for(const raw of job.raw.slice(job.i-CHUNK,job.i)) {
+      const jid=chatJid(raw?.key?.remoteJid);
+      if(!jid || s.auth.jidAliases(jid).some(j=>s.ephemeral.has(j)))continue;
+      if(raw.message?.reactionMessage){const r=raw.message.reactionMessage;store.waApplyReaction(accountId,reactionEvent(r.key,{key:raw.key,text:r.text,senderTimestampMs:r.senderTimestampMs}));}
+      // History carries the latest reaction per author on each retained message.
+      if(list.some(m=>m.chatJid===jid && m.msgId===raw.key?.id))for(const reaction of raw.reactions || [])store.waApplyReaction(accountId,reactionEvent(raw.key,reaction));
+    }
     if(media)for(const raw of job.raw.slice(job.i-CHUNK,job.i)) {
       const m=list.find(m=>m.msgId===raw.key?.id && m.chatJid===chatJid(raw.key?.remoteJid));
       if(m?.media)media.capture(accountId,m,raw);

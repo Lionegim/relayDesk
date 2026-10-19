@@ -13,7 +13,7 @@ async function ui() {
  const c={api,patch:()=>{if(nextTimeline!==undefined){timeline=nextTimeline;nextTimeline=undefined}},delegate:()=>{},renderApp:()=>'',NAV:[['all','Boîte']],GROUPS:[['all','Tous']],SETTINGS:{},WINDOWS:[7,30,90],
   localStorage:{getItem:()=>null,setItem:()=>{}},document:{getElementById:()=>root,addEventListener:()=>{}},queueMicrotask,setTimeout:()=>1,clearTimeout:()=>{},setInterval:fn=>{intervals.push(fn);return intervals.length},clearInterval:()=>{},URLSearchParams,location:{search:''},history:{replaceState:()=>{}},console};
  vm.createContext(c);
- vm.runInContext(readFileSync(new URL('../public/js/app.js',import.meta.url),'utf8').replace(/^import .*;\n/gm,'')+'\nglobalThis.inspect=()=>state;globalThis.act=actions;globalThis.redraw=render;globalThis.refreshData=applyData;',c);
+ vm.runInContext(readFileSync(new URL('../public/js/app.js',import.meta.url),'utf8').replace(/^import .*;\n/gm,'')+'\nglobalThis.inspect=()=>state;globalThis.act=actions;globalThis.redraw=render;globalThis.refreshData=applyData;globalThis.refreshDetails=loadDetails;',c);
  await tick();
  const open=()=>{c.act.openConnect();c.act.pickService({svc:'whatsapp'})};
  return {c,api,requests,cancelled,intervals,open,failNextSnapshot:()=>{failSnapshot=true},draw:(before,after)=>{timeline=before;nextTimeline=after;c.redraw()}};
@@ -82,4 +82,12 @@ test('reconnexion UI : QR direct pour le compte existant sans saisie du numéro'
 test('liaison UI : nom automatique distinct pour ajouter un autre compte',async()=>{
  const u=await ui();u.c.inspect().data.profiles[0].accounts.push({name:'WhatsApp'},{name:'WhatsApp 2'});
  u.open();assert.equal(u.requests[0].input.name,'WhatsApp 3');
+});
+
+test('older loaded WhatsApp pages refresh reactions without losing history or local quote',async()=>{
+ const u=await ui(),s=u.c.inspect(),m={id:42,p:'anove',accountId:1,channel:'whatsapp',sortAt:100,count:100};
+ s.data.messages.push(m);s.selectedId=42;s.details[42]={...m,waId:'latest',body:'new',at:100,trail:[{id:'old',waId:'old',at:1,body:'old',reactions:[]}],history:{hasMore:false}};
+ u.api.message=async()=>({...m,waId:'latest',body:'new',at:100,trail:[],draft:null});
+ let emoji='👍';u.api.whatsAppInteractions=async(id,ids)=>{assert.equal(id,42);assert.deepEqual([...ids],['old']);return [{waId:'old',reactions:emoji?[{emoji,count:1,mine:true}]:[]}];};
+ for(const value of ['👍','❤️','']){emoji=value;s.details[42].refreshing=true;await u.c.refreshDetails(42);const old=u.c.inspect().details[42].trail[0];assert.equal(old.body,'old');assert.equal(old.reactions.length,emoji?1:0);if(emoji)assert.equal(old.reactions[0].emoji,emoji);}
 });

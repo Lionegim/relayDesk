@@ -28,9 +28,9 @@ export function fakeSockets() {
   const make = async ({ auth, historyProfile }) => {
     const sock = {
       ev: new EventEmitter(), auth, historyProfile, user: undefined, sent: [], ended: false, loggedOut: false, failSend: false,
-      async sendMessage(jid, content) {
+      async sendMessage(jid, content, options) {
         if (sock.failSend) throw new Error('réseau');
-        sock.sent.push({ jid, content });
+        sock.sent.push({ jid, content, ...(options?{options}:{}) });
         return { key: { id: `OUT${sock.sent.length}`, remoteJid: jid, fromMe: true } };
       },
       async logout() { sock.loggedOut = true; },
