@@ -29,18 +29,19 @@ export function createContactNetwork(db,{people,unified,changed=()=>{}}) {
    const own=new Set();for(const a of q('SELECT address FROM accounts').all())for(const kind of ['email','phone']){const n=normalizeIdentity(kind,a.address);if(n)own.add(kind+':'+n);}
    const since=now-days*DAY;
    const nodes=contacts.map(c=>{
+    const owner=c.identities.some(i=>own.has(i.kind+':'+i.normalized) && owners.get(i.kind+':'+i.normalized)===1);
     const keys=c.identities.filter(i=>!i.needsCountryCode && !own.has(i.kind+':'+i.normalized) && owners.get(i.kind+':'+i.normalized)===1).map(i=>({kind:i.kind,normalized:i.normalized}));
     const direct=c.members.map(m=>q('SELECT account_id,external_id FROM contacts WHERE id=?').get(m.id));
     const query=timelineQuery(db,{keys,direct,profile:p==='all'?null:p});
     const rows=query.all('m.id,m.account_id,m.external_id,m.channel,m.sort_at,m.trail,m.reply_meta','AND m.sort_at>=? AND m.sort_at<=?',[since,now]);
     let count=0,score=0,lastAt=null;const seen=new Set();
     const add=(key,at)=>{if(!Number.isFinite(at)||at<since||at>now||seen.has(key))return;seen.add(key);count++;score+=Math.pow(2,-(now-at)/(days*DAY/3));lastAt=Math.max(lastAt || 0,at);};
-    for(const m of rows){if(m.channel==='whatsapp'){
+    for(const m of owner?[]:rows){if(m.channel==='whatsapp'){
       if(!/^\d+@(s\.whatsapp\.net|lid)$/.test(m.external_id || ''))continue;
       for(const w of q('SELECT msg_id,ts FROM whatsapp_messages WHERE account_id=? AND chat_jid=? AND ts>=? AND ts<=?').all(m.account_id,m.external_id,since,now))add(m.account_id+':'+w.msg_id,w.ts);
      }else{let meta={};try{meta=JSON.parse(m.reply_meta || '{}');}catch{}add(m.account_id+':latest:'+m.id,meta.at);for(const t of JSON.parse(m.trail || '[]'))add(m.account_id+':'+(t.id || JSON.stringify([t.at,t.from,t.body])),t.at);}
     }
-    return {id:c.id,name:c.name,messages:count,score:Math.round(score*100)/100,lastAt,band:score>=12?'frequent':score>=3?'regular':count?'occasional':'inactive'};
+    return {id:c.id,name:c.name,owner,messages:count,score:Math.round(score*100)/100,lastAt,band:score>=12?'frequent':score>=3?'regular':count?'occasional':'inactive'};
    }).sort((a,b)=>b.score-a.score || a.name.localeCompare(b.name));
    const coverage=q('SELECT id,name,svc FROM accounts WHERE '+(p==='all'?'1=1':'profile_id=?')+' ORDER BY position,id').all(...(p==='all'?[]:[p])).filter(a=>['gmail','outlook','whatsapp'].includes(a.svc)).map(a=>{
     const firstAt=a.svc==='whatsapp'?q('SELECT MIN(ts) at FROM whatsapp_messages WHERE account_id=? AND ts>0 AND ts<=?').get(a.id,now).at:q('SELECT MIN(sort_at) at FROM messages WHERE account_id=? AND sort_at>0 AND sort_at<=? AND compose_kind!=\'new\'').get(a.id,now).at;

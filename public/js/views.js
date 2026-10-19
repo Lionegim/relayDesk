@@ -152,11 +152,11 @@ function sidebar(s, v) {
 }
 
 function folderRow(s, v, r, indent) {
-  const f = r.f, n = v.folderCount(f.id);
+  const f = r.f, n = v.folderCount(f.id),closed=s.collapsed[f.id] ?? !!r.kids;
   return html`
     <div class="${cls('folder-row', s.folder === f.id && 'is-on', s.dragOver === f.id && 'is-drop')}" style="padding-left:${indent(r.depth)}" data-key="${f.id}"
       data-on-dragover="folderDragOver" data-on-dragleave="folderDragLeave" data-on-drop="folderDrop" data-id="${f.id}">
-      <button class="${cls('folder-caret', !s.collapsed[f.id] && 'is-open', !r.kids && 'is-leaf')}" data-on-click="toggleFolder" data-id="${f.id}" aria-label="${s.collapsed[f.id]?'Déplier':'Replier'} ${f.name}" aria-expanded="${!s.collapsed[f.id]}" ${raw(!r.kids?'disabled':'')}>▶</button>
+      <button class="${cls('folder-caret', !closed && 'is-open', !r.kids && 'is-leaf')}" data-on-click="toggleFolder" data-id="${f.id}" aria-label="${closed?'Déplier':'Replier'} ${f.name}" aria-expanded="${!closed}" ${raw(!r.kids?'disabled':'')}>▶</button>
       <button class="folder-name" data-on-click="selectFolder" data-id="${f.id}">
         <span class="ico">${icon('folder')}</span>
         <span class="grow ellipsis">${f.name}</span>
@@ -235,7 +235,7 @@ function messageList(s, v) {
 
 function reader(s, v) {
   const sel = v.sel;
-  const folderTargets = [{ f: { id: '', name: 'Aucun dossier' }, depth: 0 }, ...v.folders.filter(r => !r.input && (s.profileId!=='all' || r.f.p===sel?.p))];
+  const folderTargets = [{ f: { id: '', name: 'Aucun dossier' }, depth: 0 }, ...(v.allFolders || v.folders).filter(r => !r.input && (s.profileId!=='all' || r.f.p===sel?.p))];
   return html`
     <main class="reader">
       <div class="toolbar">

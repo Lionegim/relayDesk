@@ -57,3 +57,6 @@ test('custom mailbox views include archived labelled Gmail threads and unread ro
  const page=store.snapshot({profile:'perso',folder:parent.id});assert.deepEqual(page.messages.map(m=>m.id),[id]);assert.equal(page.counts.folderUnread[parent.id],1);assert.equal(store.snapshot({profile:'perso'}).messages.length,0);
  const local=store.createFolder({profileId:'perso',name:'Local'}),localChild=store.createFolder({profileId:'perso',name:'Linked child',parentId:local.id});store.linkFolderLabel(localChild.id,a.id,'extra');assert.equal(store.snapshot().folders.find(f=>f.id===localChild.id).accountId,null);
 });
+test('owner identities stay at the center rather than becoming a second network person',t=>{
+ const {store,a}=setup(t);store.importContacts(a.id,[{externalId:'self',name:'Owner',identities:[{kind:'email',value:'owner@example.test'},{kind:'email',value:'former@example.test'}]}]);thread(store,a,{participants:[{kind:'email',value:'former@example.test'}]});const node=store.contactNetwork('perso').nodes.find(n=>n.name==='Owner');assert.equal(node.owner,true);assert.equal(node.messages,0);
+});

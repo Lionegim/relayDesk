@@ -402,11 +402,11 @@ function folderSet(id) {
   return out;
 }
 
-function flatFolders(s) {
+function flatFolders(s,expandAll=false) {
   const rows = [];
   const walk = (parent, depth) => s.data.folders.filter(f => (s.profileId==='all' || f.p === s.profileId) && f.parent === parent).forEach(f => {
     rows.push({ f, depth, kids: s.data.folders.some(c => c.parent === f.id) });
-    if (!s.collapsed[f.id]) walk(f.id, depth + 1);
+    if (expandAll || s.collapsed[f.id]===false || !s.data.folders.some(c=>c.parent===f.id)) walk(f.id, depth + 1);
     if (s.creating === f.id) rows.push({ input: true, depth: depth + 1 });
   });
   walk(null, 0);
@@ -445,6 +445,7 @@ function derive(s) {
     channels: s.paged ? [...new Set(profile.accounts.map(a => a.channel))] : [...new Set(byNav.map(m => m.channel))],
     picked: contacts.filter(c => s.picked[c.id]),
     folders: flatFolders(s),
+    allFolders:flatFolders(s,true),
     folderCount: id => {
       if (counts.folderUnread) return counts.folderUnread[id] || 0;
       const set = folderSet(id); return inProfile.filter(m => m.unread && set.has(m.folderId)).length;
@@ -841,7 +842,7 @@ const actions = {
   // Dossiers
   newRootFolder: () => set({ creating: 'root', folderDraft: '' }),
   addSubfolder: ({ id }, e) => { e.stopPropagation(); set(s => ({ creating: id, folderDraft: '', collapsed: { ...s.collapsed, [id]: false } })); },
-  toggleFolder: ({ id }, e) => { e.stopPropagation(); const collapsed={...state.collapsed,[id]:!state.collapsed[id]};storage.set('relay.folderExpansion',JSON.stringify(collapsed));set({collapsed}); },
+  toggleFolder: ({ id }, e) => { e.stopPropagation(); const initial=id.startsWith('account:')?false:state.data.folders.some(f=>f.parent===id);const collapsed={...state.collapsed,[id]:!(state.collapsed[id] ?? initial)};storage.set('relay.folderExpansion',JSON.stringify(collapsed));set({collapsed}); },
   selectFolder: ({ id }) => { if (state.drawer) backFrom('drawer'); filtersChanged({ folder: id, channel: 'all' }); },
   folderDraft: (_, e) => set({ folderDraft: e.target.value }),
   folderKey: (_, e) => {
