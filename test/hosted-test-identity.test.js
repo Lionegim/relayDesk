@@ -219,7 +219,9 @@ test('enrôlement du propriétaire : realm distinct, aucun facteur permanent gé
   await assert.rejects(configureKeycloak({ ...base, out: join(root, 'o2'), realm: 'relay-test' }), /realm distinct du realm de test/);
   await assert.rejects(configureKeycloak({ ...base, out: join(root, 'o3'), recreate: true }), /--recreate est refusé avec --enrolment/);
   await assert.rejects(configureKeycloak({ ...base, out: join(root, 'o4') }), /existe déjà/);
-  assert.equal(kc.calls.filter(c => c.method === 'DELETE').length, 0, 'aucun realm supprimé');
+  await assert.rejects(configureKeycloak({ ...base, enrolment: false, realm: 'relay', out: join(root, 'o5'), recreate: true }), /réservé au realm fictif relay-test/);
+  assert.equal(existsSync(join(root, 'o5')),false,'refus avant accès au disque ou à Keycloak');
+  assert.equal(kc.calls.filter(c => c.method === 'DELETE').length, 0, 'aucun realm supprimé, même en cas d’oubli du flag enrolment');
 });
 
 test('mode synthétique inchangé : realm relay-test et propriétaire fictif par défaut', async () => {

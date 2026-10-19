@@ -145,6 +145,7 @@ export async function configureKeycloak(opts, { fetchImpl = globalThis.fetch, lo
   // Enrôlement réel : realm distinct du test, jamais de recréation implicite d'un realm réel.
   if (enrolment && realm === 'relay-test') throw new Error('--enrolment exige un realm distinct du realm de test (relay par défaut).');
   if (enrolment && recreate) throw new Error('--recreate est refusé avec --enrolment : un realm réel n’est jamais supprimé par ce script.');
+  if (recreate && realm !== 'relay-test') throw new Error('--recreate est réservé au realm fictif relay-test, quel que soit le mode.');
   if (enrolment && !/^[a-z][a-z0-9._-]{1,40}$/.test(owner)) throw new Error('--owner invalide.');
   if (!isLoopbackUrl(adminUrl)) throw new Error('--admin-url doit viser la boucle locale (127.0.0.1, localhost ou [::1]) : l’administration n’est jamais publique.');
   let pub;
