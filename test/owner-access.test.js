@@ -60,7 +60,7 @@ test('Gmail et Outlook fictifs : aperçu lié appareil, aucun double envoi et se
  t.after(()=>{sync.stop();ctx.sync.stop();ctx.db.close();});
  const {call,revoked}=await serve(t,{store:ctx.store,providers:{gmail:{sync:ctx.sync,outbox:createGmailOutbox(ctx)},outlook:{sync,outbox:createOutlookOutbox({...ctx,sync})}}});
  for(const acc of [google,account]) {
-  const made=await(await call('POST','/api/drafts',{accountId:acc.id})).json(),path=`/api/messages/${made.id}/send`,input={mode:'new',text:'Test sans envoi réel',to:'test@example.test',cc:'',subject:'Fictif'};
+  const made=await(await call('POST','/api/drafts',{accountId:acc.id})).json(),path=`/api/messages/${made.id}/send`,input={baseVersion:made.draftVersion,mode:'new',text:'Test sans envoi réel',to:'test@example.test',cc:'',subject:'Fictif'};
   const p=await(await call('POST',path+'/preview',input)).json();assert.equal(typeof p.approvalToken,'string');
   const send={...input,digest:p.digest,approvalToken:p.approvalToken};assert.equal((await call('POST',path,send,'b')).status,409);
   assert.equal((await call('POST',path,{...send,text:'Texte modifié'})).status,409);
@@ -72,7 +72,7 @@ test('Gmail et Outlook fictifs : aperçu lié appareil, aucun double envoi et se
 test('WhatsApp fictif : l’aperçu exact reste lié à l’appareil et toute reprise exige un nouvel aperçu',async t=>{
  const ctx=await setupWhatsApp(),{accountId,sock}=await linkedAccount(ctx);t.after(()=>{ctx.wa.sync.stop();ctx.db.close();});
  const id=ctx.db.prepare('SELECT id FROM messages WHERE account_id=?').get(accountId).id;
- const {call}=await serve(t,{store:ctx.store,providers:{whatsapp:ctx.wa}}),path=`/api/messages/${id}/send`,input={mode:'reply',text:'Réponse entièrement fictive'};
+ const {call}=await serve(t,{store:ctx.store,providers:{whatsapp:ctx.wa}}),path=`/api/messages/${id}/send`,input={baseVersion:ctx.store.getMessage(id).draftVersion,mode:'reply',text:'Réponse entièrement fictive'};
  const p=await(await call('POST',path+'/preview',input)).json(),send={...input,digest:p.digest,approvalToken:p.approvalToken};
  assert.equal((await call('POST',path,send,'b')).status,409);
  const replies=await Promise.all([call('POST',path,send),call('POST',path,send)]);assert.deepEqual(replies.map(r=>r.status).sort(),[200,409]);assert.equal(sock.sent.length,1);

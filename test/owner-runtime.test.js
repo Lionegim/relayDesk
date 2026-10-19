@@ -30,13 +30,15 @@ test('runtime réel + OIDC signé fictif : deux appareils, redémarrage, aperçu
  }
  async function login(d){const start=await d.call('GET','/auth/login');assert.equal(start.status,303);const grant=idp.authorize(start.headers.get('location'));const back=await d.call('GET',`/auth/callback?code=${grant.code}&state=${grant.state}`);assert.equal(back.status,303);return(await d.call('GET','/auth/session')).json();}
  const mac=device(),phone=device();assert.equal((await mac.call('GET','/api/state')).status,401);
+ assert.equal((await mac.call('GET','/js/app.js')).status,200,'code statique public, sans données');assert.equal((await mac.call('GET','/index.html')).status,401,'HTML applicatif protégé');
  const a=await login(mac),b=await login(phone);assert.equal(a.mfa,true);assert.equal((await mac.call('GET','/api/state')).status,200);
+ const html=await mac.call('GET','/');assert.equal(html.headers.get('cache-control'),'no-store');
  const csrf={'x-csrf-token':a.csrfToken};
  assert.equal((await mac.call('PATCH','/api/messages/1',{flagged:true})).status,403);
  assert.equal((await mac.call('PATCH','/api/messages/1',{flagged:true}, {...csrf,origin:'https://evil.example.test'})).status,403);
  assert.equal((await mac.call('PATCH','/api/messages/1',{flagged:true}, {...csrf,'sec-fetch-site':'cross-site'})).status,403);
  assert.equal((await mac.call('PATCH','/api/messages/1',{flagged:true},csrf)).status,200);
- const draft=await(await mac.call('POST','/api/drafts',{accountId:fakeAccount.id},csrf)).json(),input={mode:'new',text:'Uniquement fictif',to:'synthetic@example.test',cc:'',subject:'Test OIDC'};
+ const draft=await(await mac.call('POST','/api/drafts',{accountId:fakeAccount.id},csrf)).json(),input={baseVersion:draft.draftVersion,mode:'new',text:'Uniquement fictif',to:'synthetic@example.test',cc:'',subject:'Test OIDC'};
  const path=`/api/messages/${draft.id}/send`,p=await(await mac.call('POST',path+'/preview',input,csrf)).json();assert.equal(typeof p.approvalToken,'string');
  assert.equal((await phone.call('POST',path,{...input,digest:p.digest,approvalToken:p.approvalToken},{'x-csrf-token':b.csrfToken})).status,409);
  await runtime.stop();runtime=createRuntime(config,options);await runtime.start();

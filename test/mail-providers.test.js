@@ -24,7 +24,7 @@ test('HTTP : compositeur commun choisit réellement le fournisseur et empêche t
   for(const acc of [account,google]) {
    const made=await call('POST','/api/drafts',{accountId:acc.id});assert.equal(made.status,200);
    const id=made.body.id,input={mode:'new',text:'Message validé',to:acc.address,cc:'',subject:'Essai multi-compte'};
-   assert.equal((await call('PUT',`/api/messages/${id}/draft`,input)).body.synced,true);
+   const saved=await call('PUT',`/api/messages/${id}/draft`,{...input,baseVersion:made.body.draftVersion});assert.equal(saved.body.synced,true);input.baseVersion=saved.body.version;
    assert.equal((await call('POST',`/api/messages/${id}/send`,input)).status,400);
    const p=await call('POST',`/api/messages/${id}/send/preview`,input);assert.match(p.body.from,new RegExp(acc.address.replace(/[.]/g,'\\.')));
    assert.equal((await call('POST',`/api/messages/${id}/send`,{...input,subject:'Non validé',digest:p.body.digest})).status,409);

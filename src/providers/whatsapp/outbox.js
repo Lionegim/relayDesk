@@ -42,10 +42,11 @@ export function createWhatsAppOutbox({ store, sync }) {
     async saveDraft(messageId, input) {
       const { text } = read(input);
       const { accountId } = target(messageId, true);
-      return sync.serial(accountId, () => store.saveDraft(messageId, text, { mode: 'reply' }));
+      return sync.serial(accountId, () => store.saveDraft(messageId, text, { mode: 'reply',expectedVersion:input?.baseVersion }));
     },
 
     async preview(messageId, input) {
+      store.assertDraftVersion(messageId,input?.baseVersion);
       const { text } = read(input);
       const { accountId, chatJid } = target(messageId);
       checkSend(accountId, text);
@@ -54,7 +55,7 @@ export function createWhatsAppOutbox({ store, sync }) {
       const phone = phoneOf(chatJid);
       const digest = digestOf(accountId, sync.generation(accountId), chatJid, text);
       sweep();
-      confirmations.set(digest, { messageId, accountId, generation: sync.generation(accountId), expires: Date.now() + CONFIRM_TTL_MS });
+      confirmations.set(digest, { messageId, accountId,draftVersion:store.assertDraftVersion(messageId), generation: sync.generation(accountId), expires: Date.now() + CONFIRM_TTL_MS });
       return {
         channel: 'whatsapp',
         from: account.address ? `${account.name} (${account.address})` : account.name,
@@ -86,6 +87,7 @@ export function createWhatsAppOutbox({ store, sync }) {
           if (!confirmation || confirmation.messageId !== messageId || confirmation.accountId !== accountId || confirmation.generation !== generation) {
             throw new HttpError(409, 'Validation absente, expirée ou déjà utilisée : vérifie le message à nouveau.', 'confirmation_invalid');
           }
+          store.assertDraftVersion(messageId,confirmation.draftVersion);
           // Hors ligne : rien n'est tenté, la validation reste utilisable.
           const sock = sync.liveSocket(accountId);
           if (!sock) throw new HttpError(409, 'WhatsApp n’est pas connecté : réessaie quand le compte est en ligne.', 'whatsapp_offline');

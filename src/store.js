@@ -1,7 +1,8 @@
 // Dépôt SQLite. Les routes ne voient que ces fonctions ; les secrets n'en sortent jamais par snapshot().
 import { createReplyMemoryRepository } from './ai/reply-memory.js';
 import { SERVICES } from './connectors.js';
-import { badRequest, notFound } from './http/errors.js';
+import { listPage,historyPage,fingerprint,encodeCursor } from './messages/pagination.js';
+import { HttpError,badRequest, notFound } from './http/errors.js';
 import { transaction } from './db/index.js';
 
 const MAX_NAME = 80;
@@ -11,10 +12,10 @@ const FREQ_COUNT = 4;
 const bool = v => !!v;
 const toMessage = (r, full) => {
   const m = {
-    id: r.id, kind: r.compose_kind, p: r.profile_id, accountId: r.account_id, from: r.from_name, initials: r.initials, handle: r.handle, channel: r.channel,
+    draftVersion:r.draft_version, id: r.id, kind: r.compose_kind, p: r.profile_id, accountId: r.account_id, from: r.from_name, initials: r.initials, handle: r.handle, channel: r.channel,
     account: r.account, time: r.time_label, sortAt: r.sort_at, unread: bool(r.unread), flagged: bool(r.flagged), archived: bool(r.archived),
     folderId: r.folder_id, label: r.label, subject: r.subject, preview: r.preview, triage: r.triage, count: r.message_count,
-    draft: r.draft_saved_at ? { savedAt: r.draft_saved_at, gmail: !!r.draft_synced, synced: !!r.draft_synced, ...(full ? { text: r.draft_text, mode: r.draft_mode, to: r.draft_to, cc: r.draft_cc, subject: r.subject } : {}) } : null,
+    draft: r.draft_saved_at ? { version:r.draft_version,savedAt: r.draft_saved_at, gmail: !!r.draft_synced, synced: !!r.draft_synced, ...(full ? { text: r.draft_text, mode: r.draft_mode, to: r.draft_to, cc: r.draft_cc, subject: r.subject } : {}) } : null,
   };
   if (full) Object.assign(m, { body: r.body, trail: JSON.parse(r.trail) });
   return m;
@@ -22,6 +23,7 @@ const toMessage = (r, full) => {
 const toAccount = r => ({ id: r.id, name: r.name, channel: r.channel, svc: r.svc, status: r.status, c: r.c, address: r.address });
 
 export function createStore(db) {
+  db.function('relay_lower',{deterministic:true},value=>String(value ?? '').toLowerCase());
   const q = sql => db.prepare(sql);
   let seq = 0;
   const memory = createReplyMemoryRepository(db);
@@ -81,7 +83,8 @@ export function createStore(db) {
       return true;
     },
 
-    snapshot() {
+    snapshot(options=null) {
+      const paged=options?listPage(db,options):null;
       const accounts = q('SELECT * FROM accounts ORDER BY position, id').all();
       return {
         profiles: q('SELECT * FROM profiles ORDER BY position').all().map(p => ({
@@ -89,7 +92,8 @@ export function createStore(db) {
           accounts: accounts.filter(a => a.profile_id === p.id).map(toAccount),
         })),
         folders: q('SELECT id, profile_id AS p, name, parent_id AS parent FROM folders ORDER BY position, rowid').all().map(f => ({ ...f })),
-        messages: q('SELECT * FROM messages ORDER BY sort_at DESC').all().map(r => toMessage(r, false)),
+        messages:(paged?paged.rows:q('SELECT * FROM messages ORDER BY sort_at DESC,id DESC').all()).map(r=>toMessage(r,false)),
+        ...(paged?{page:paged.page,counts:paged.counts}:{}),
         contacts: q('SELECT * FROM contacts ORDER BY position').all().map(c => ({
           id: c.id, p: c.profile_id, name: c.name, title: c.title, freq: c.freq, ch: JSON.parse(c.channels), last: c.last, g: JSON.parse(c.groups), order: c.position,
         })),
@@ -97,10 +101,21 @@ export function createStore(db) {
     },
 
     hasProfile: id => !!q('SELECT 1 FROM profiles WHERE id = ?').get(id),
-    getMessage(id) {
-      const r = row(id), m = toMessage(r, true);
+    getMessage(id,options=null) {
+      const r=row(id),m=toMessage(r,true);
+      const revision=fingerprint([id,r.account_id,r.external_id,r.sort_at,r.message_count,r.trail]);
       if (r.channel === 'whatsapp' && r.account_id && r.external_id) {
-        const recent = q("SELECT m.from_me, m.ts, m.text, m.author_jid, COALESCE(c.name, NULLIF(m.sender_name, 'Participant'), m.sender_name) AS sender_name FROM whatsapp_messages m LEFT JOIN whatsapp_chats c ON c.account_id = m.account_id AND c.chat_jid = m.author_jid WHERE m.account_id = ? AND m.chat_jid = ? ORDER BY m.ts DESC, m.rowid DESC").all(r.account_id, r.external_id);
+        const select="SELECT m.rowid AS entry_id,m.from_me,m.ts,m.text,m.author_jid,COALESCE(c.name,NULLIF(m.sender_name,'Participant'),m.sender_name) AS sender_name FROM whatsapp_messages m LEFT JOIN whatsapp_chats c ON c.account_id=m.account_id AND c.chat_jid=m.author_jid WHERE m.account_id=? AND m.chat_jid=?";
+        const latest=q(select+' ORDER BY m.ts DESC,m.rowid DESC LIMIT 1').get(r.account_id,r.external_id);
+        let recent;
+        if(options) {
+          const {limit,c}=historyPage(options,revision,'whatsapp');
+          if(c && (!Number.isSafeInteger(c.at) || !Number.isSafeInteger(c.entry))) throw badRequest('Curseur invalide');
+          const before=c || (latest?{at:latest.ts,entry:latest.entry_id}:null);
+          const older=before?q(select+' AND (m.ts<? OR (m.ts=? AND m.rowid<?)) ORDER BY m.ts DESC,m.rowid DESC LIMIT ?').all(r.account_id,r.external_id,before.at,before.at,before.entry,limit+1):[];
+          const hasMore=older.length>limit;older.length=Math.min(older.length,limit);const last=older.at(-1);
+          m.history={hasMore,nextCursor:hasMore?encodeCursor({revision,kind:'whatsapp',at:last.ts,entry:last.entry_id}):null};recent=latest?[latest,...older]:[];
+        } else recent=q(select+' ORDER BY m.ts DESC,m.rowid DESC').all(r.account_id,r.external_id);
         m.group = r.external_id.endsWith('@g.us');
         m.fromMe = recent.length ? !!recent[0].from_me : false;
         m.at = m.sortAt;
@@ -113,6 +128,11 @@ export function createStore(db) {
             return { from, initials: from.split(/\s+/).slice(0, 2).map(w => w[0] || '').join('').toUpperCase(), fromMe: !!t.from_me, at: t.ts, body: t.text };
           });
         }
+      } else if(options) {
+        const {limit,c}=historyPage(options,revision,'email'),offset=c?.offset ?? 0;
+        if(!Number.isSafeInteger(offset) || offset<0) throw badRequest('Curseur invalide');
+        const all=m.trail;m.trail=all.slice(offset,offset+limit);const hasMore=offset+limit<all.length;
+        m.history={hasMore,nextCursor:hasMore?encodeCursor({revision,kind:'email',offset:offset+limit}):null};
       }
       return m;
     },
@@ -178,7 +198,14 @@ export function createStore(db) {
     // `synced` : le contenu enregistré est aussi celui du brouillon Gmail. Un enregistrement local garde le lien
     // vers le brouillon Gmail existant (pour le mettre à jour ensuite) mais le marque comme non synchronisé.
     // `threadKey` : empreinte du rattachement au fil du brouillon distant ; undefined la conserve, null l'efface.
-    saveDraft(id, text, { mode = null, to = null, cc = null, subject, externalId, synced = false, threadKey } = {}) {
+    assertDraftVersion(id,expected) {
+      const current=row(id).draft_version;
+      if(expected!==undefined && (!Number.isSafeInteger(expected) || expected<0)) throw badRequest('Version du brouillon invalide');
+      if(expected!==undefined && current!==expected) throw new HttpError(409,'Le brouillon a été modifié sur un autre appareil. Ton texte est conservé : recharge la version serveur avant de choisir.','draft_conflict');
+      return current;
+    },
+    saveDraft(id, text, { expectedVersion, mode = null, to = null, cc = null, subject, externalId, synced = false, threadKey } = {}) {
+      this.assertDraftVersion(id,expectedVersion);
       const r = row(id);
       if (typeof text !== 'string' || text.length > MAX_DRAFT) throw badRequest('Brouillon invalide');
       if (r.compose_kind === 'new') {
@@ -191,7 +218,7 @@ export function createStore(db) {
         .run(text, savedAt, mode, to, ext, +(synced && !!ext), id);
       if (threadKey !== undefined) q('UPDATE messages SET draft_thread_key = ? WHERE id = ?').run(threadKey, id);
       if (r.compose_kind === 'new') q('UPDATE messages SET subject = ?, draft_cc = ?, preview = ?, sort_at = ? WHERE id = ?').run(subject, cc, text.slice(0, 200), Date.now(), id);
-      return { text, savedAt, mode, to, cc, subject: subject ?? r.subject, gmail: synced && !!ext, synced: synced && !!ext };
+      return { version:row(id).draft_version, text, savedAt, mode, to, cc, subject: subject ?? r.subject, gmail: synced && !!ext, synced: synced && !!ext };
     },
     createComposition(accountId) {
       const acc = accountOf(accountId);

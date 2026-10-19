@@ -23,7 +23,7 @@ export function createMailService({ store, providers }) {
       const p = accountId && providers[store.getAccount(accountId).svc];
       if (p) return p.outbox.saveDraft(id, input);
       const parsed = readComposeInput(input);
-      return store.saveDraft(id, parsed.text, parsed);
+      return store.saveDraft(id,parsed.text,{...parsed,expectedVersion:input?.baseVersion});
     },
     preview: (id, input) => forMessage(id).outbox.preview(id, input),
     send: (id, input) => forMessage(id).outbox.send(id, input),

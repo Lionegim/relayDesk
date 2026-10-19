@@ -81,10 +81,11 @@ export function createOutlookOutbox({ store, sync, ownerName = '' }) {
     // Brouillon Outlook (Mail.ReadWrite) : créé à partir du MIME exact, puis mis à jour (objet, corps, destinataires).
     async saveDraft(messageId, raw) {
       const { text, mode, to, cc, subject, ctx } = input(messageId, raw);
-      const local = () => store.saveDraft(messageId, text, { mode, to, cc, subject });
+      const local=()=>store.saveDraft(messageId,text,{mode,to,cc,subject,expectedVersion:raw?.baseVersion});
       if (!isOutlook(ctx.accountId)) return local();
       if (!can(ctx.accountId, 'drafts') || !hasRecipient({ mode, to })) return sync.queue(ctx.accountId, local);
       return sync.exclusive(ctx.accountId, async ({ graph }) => {
+        store.assertDraftVersion(messageId,raw?.baseVersion);
         await ensureReply(graph, messageId);
         const { mime, env, body, threadId, ctx: fresh } = compose(messageId, { text, mode, to, cc, subject });
         const threadKey = threadKeyOf(mode, env, threadId);
@@ -108,21 +109,23 @@ export function createOutlookOutbox({ store, sync, ownerName = '' }) {
           }
         }
         if (!draftId) draftId = (await graph.createDraftMime(mime)).id;
-        const saved = store.saveDraft(messageId, text, { mode, to, cc, subject, externalId: draftId, synced: true, threadKey });
+        const saved = store.saveDraft(messageId, text, { mode, to, cc, subject, externalId: draftId, synced: true, threadKey,expectedVersion:raw?.baseVersion });
         return previousDraftKept ? { ...saved, previousDraftKept } : saved;
       });
     },
 
     async preview(messageId, raw) {
+      store.assertDraftVersion(messageId,raw?.baseVersion);
       const { text, mode, to, cc, subject, ctx } = input(messageId, raw);
       if (!can(ctx.accountId, 'send')) throw new HttpError(403, 'La permission Envoi n’est pas accordée pour ce compte.', 'send_forbidden');
       if (!text.trim()) throw badRequest('Le message est vide.');
       return sync.exclusive(ctx.accountId, async ({ graph }) => {
+        store.assertDraftVersion(messageId,raw?.baseVersion);
         await ensureReply(graph, messageId);
         const { own, env, body, mime, threadId } = compose(messageId, { text, mode, to, cc, subject });
         const digest = digestOf(mime, threadId);
         sweep();
-        confirmations.set(digest, { messageId, accountId: ctx.accountId, generation: sync.generation(ctx.accountId), expires: Date.now() + CONFIRM_TTL_MS });
+        confirmations.set(digest, { messageId, accountId: ctx.accountId,draftVersion:store.assertDraftVersion(messageId), generation: sync.generation(ctx.accountId), expires: Date.now() + CONFIRM_TTL_MS });
         return { from: formatAddress(own), to: env.to.map(formatAddress), cc: env.cc.map(formatAddress), subject: env.subject, body, digest };
       });
     },
@@ -149,6 +152,7 @@ export function createOutlookOutbox({ store, sync, ownerName = '' }) {
             || confirmation.generation !== sync.generation(accountId)) {
             throw new HttpError(409, 'Validation absente, expirée ou déjà utilisée : vérifie le message à nouveau.', 'confirmation_invalid');
           }
+          store.assertDraftVersion(messageId,confirmation.draftVersion);
           confirmations.delete(digest);
           const memoryTicket=store.getReplyMemory(messageId,{internal:true});
           const sendStartedAt=Date.now();
