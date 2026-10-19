@@ -32,7 +32,7 @@ const FULL_RESPONSE = {
 };
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 
-export function createWhatsAppSync({ store, vault, lib, makeSocket, log = console, timing = {} }) {
+export function createWhatsAppSync({ store, vault, lib, makeSocket, log = console, timing = {}, assertAccountAllowed=()=>{} }) {
   const T = {
     linkTtlMs: 5 * 60000,       // durée maximale d'une liaison avant validation sur le téléphone
     qrTtlMs: 60000,             // durée d'affichage d'un QR (Baileys le renouvelle avant)
@@ -141,6 +141,14 @@ export function createWhatsAppSync({ store, vault, lib, makeSocket, log = consol
 
   async function openSession(accountId, link = null) {
     const at = epoch(accountId);
+    const account=store.getAccount(accountId);
+    if(account.address) {
+      try {assertAccountAllowed('whatsapp',account.address);} catch {
+        if(link) failLink(link,'Ce compte ne fait pas partie des comptes autorisés.');
+        else {store.setAccountStatus(accountId,'À reconnecter','warn');store.setSync(accountId,{status:'error',error:'Ce compte ne fait pas partie des comptes autorisés.'});}
+        return;
+      }
+    }
     const protocol=await lib();
     if(stopped || paused || epoch(accountId)!==at || !store.hasAccount(accountId)) return;
     const auth = createAuthState({ store, vault, accountId, lib: protocol });
@@ -267,9 +275,11 @@ export function createWhatsAppSync({ store, vault, lib, makeSocket, log = consol
       const other = store.getAccount(id);
       return other.profileId === acc.profileId && other.address === phone;
     });
-    const reason = !phone ? 'Identité WhatsApp illisible.'
+    let policyError;
+    try {assertAccountAllowed('whatsapp',phone);} catch {policyError='Ce compte ne fait pas partie des comptes autorisés.';}
+    const reason = policyError || (!phone ? 'Identité WhatsApp illisible.'
       : acc.address && acc.address !== phone ? 'Ce téléphone ne correspond pas au compte WhatsApp enregistré.'
-        : clash ? 'Ce numéro WhatsApp est déjà relié à un autre compte de ce profil.' : null;
+        : clash ? 'Ce numéro WhatsApp est déjà relié à un autre compte de ce profil.' : null);
     if (reason) {
       warn(`identité refusée pour le compte ${accountId}`);
       sessions.delete(accountId);

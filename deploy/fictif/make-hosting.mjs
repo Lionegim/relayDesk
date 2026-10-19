@@ -46,6 +46,8 @@ export function makeFictiveHosting(root, { uid = process.getuid?.() === 0 ? 1000
     'AUTH_ISSUER=https://identity.example.test/realms/relay',
     `AUTH_OWNER_SUB=${randomUUID()}`,
     'AUTH_MFA_ACR=relay-mfa',
+    'RELAY_CONNECTORS_ENABLED=false',
+    'RELAY_AI_ENABLED=false',
     'MICROSOFT_TENANT=consumers',
     '',
   ].join('\n');

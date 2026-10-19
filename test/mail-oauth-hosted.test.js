@@ -17,7 +17,7 @@ async function fixture(t) {
  const idp=fakeIdp(),backend=fakeWebMail(),vault=createVault(Buffer.alloc(32,26));let bundle,runtime;
  const config=readConfig({DATA_DIR:dir,HOST:'127.0.0.1',PORT:String(port),RELAY_MODE:'hosted',PUBLIC_BASE_URL:PUBLIC,RELAY_SECRET_KEY:Buffer.alloc(32,26).toString('hex'),DEMO_DATA:'1',RELAY_CONNECTORS_ENABLED:'false',RELAY_AI_ENABLED:'false',AUTH_ISSUER:ISSUER,AUTH_CLIENT_ID:'relay-client',AUTH_CLIENT_SECRET:'owner-fake-secret',AUTH_OWNER_SUB:OWNER,AUTH_MFA_ACR:ACR,GOOGLE_CLIENT_ID:'desktop-must-not-use',MICROSOFT_CLIENT_ID:'desktop-must-not-use',GOOGLE_WEB_CLIENT_ID:'google-web-client',GOOGLE_WEB_CLIENT_SECRET:'google-web-secret-fake',MICROSOFT_WEB_CLIENT_ID:'microsoft-web-client',MICROSOFT_WEB_CLIENT_SECRET:'microsoft-web-secret-fake'});
  const options={authFactory:({config,db})=>createOwnerAuth({config,db,oidc:{fetch:idp.fetch},log:{warn(){},error(){}}}),providerFactory:async args=>{
-  bundle=await assembleProviders({...args,config:{...args.config,connectorsEnabled:true},fetchImpl:backend.fetch});
+  bundle=await assembleProviders({...args,config:{...args.config,connectorsEnabled:true,allowedAccounts:['gmail:jh@gmail.com','outlook:jh@outlook.fr']},fetchImpl:backend.fetch});
   // La recette ne démarre que les adaptateurs de courrier simulés ; aucun socket WhatsApp n'est construit.
   return{gmail:bundle.gmail,providers:{outlook:bundle.providers.outlook},syncs:[bundle.gmail.sync,bundle.providers.outlook.sync]};
  }};
@@ -68,4 +68,17 @@ test('retour OAuth Web : identité différente, compte supprimé/recréé et ses
  response=await start();grant=f.backend.grant('google',response.data.url);const identity=store.accountIdentity(account.id);await f.bundle.gmail.sync.forget(account.id,()=>store.deleteAccount(account.id));const next=store.upsertAccount('perso',{name,svc:'gmail',channel:'email',address:'jh@gmail.com'});assert.equal(next.id,account.id);assert.notEqual(store.accountIdentity(next.id),identity);const count=f.backend.tokenCalls.length;assert.equal((await mac.call('GET',`/oauth/google/callback?state=${grant.state}&code=${grant.code}`)).status,409);assert.equal(f.backend.tokenCalls.length,count);
  response=await start();grant=f.backend.grant('google',response.data.url);let release,entered;const gate=new Promise(r=>release=r),waiting=new Promise(r=>entered=r);f.backend.beforeToken=async()=>{entered();await gate;};
  const callback=mac.call('GET',`/oauth/google/callback?state=${grant.state}&code=${grant.code}`);await Promise.race([waiting,callback.then(result=>{throw new Error('Retour prématuré : '+result.status+' '+JSON.stringify(result.data));})]);let revocation;try{revocation=await phone.call('DELETE',`/auth/sessions/${a.sessionId}`,{});}finally{release();}assert.equal(revocation.status,200);back=await callback;assert.ok(new URL(back.headers.location,PUBLIC).searchParams.has('connect_error'));assert.equal(store.getSecret(next.id),null);assert.equal((await mac.call('GET','/api/state')).status,401);assert.equal(b.authenticated,true);
+});
+
+// Fresh connection must reject the provider-verified identity before account/token storage.
+test('hébergé : nouvelles boîtes non autorisées refusées après retour fournisseur, sans stockage ni envoi',async t=>{
+ const f=await fixture(t),device=f.device('Chrome synthetic');await device.login();
+ for(const [provider,profile] of [['google','perso'],['microsoft','anove']]) {
+  const name=`Wrong ${provider}`,response=await device.call('POST',`/api/oauth/${provider}/start`,{profile,name,win:7,perms:'read,drafts,send'});assert.equal(response.status,200);
+  const grant=f.backend.grant(provider,response.data.url,{email:'wrong@example.test'});
+  const callback=await device.call('GET',`/oauth/${provider}/callback?state=${grant.state}&code=${grant.code}`);
+  assert.ok(new URL(callback.headers.location,PUBLIC).searchParams.has('connect_error'));
+  assert.equal(f.runtime.store.accountForName(profile,name),null);
+ }
+ assert.equal(f.backend.google.sent.length,0);assert.equal(f.backend.microsoft.sent.length,0);
 });

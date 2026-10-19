@@ -43,7 +43,7 @@ test('configuration hébergée : HTTPS, origine et clé explicites, sans hôte d
   {RELAY_MODE:'hosted',PUBLIC_BASE_URL:'https://localhost',RELAY_SECRET_KEY:KEY},
   {RELAY_MODE:'hosted',PUBLIC_BASE_URL:'https://relay.example.test'},
  ]) assert.throws(()=>readConfig(input),e=>e.code==='configuration_invalid');
- const c=readConfig({...OIDC,RELAY_MODE:'hosted',PUBLIC_BASE_URL:'https://relay.example.test',RELAY_SECRET_KEY:KEY});
+ const c=readConfig({...OIDC,RELAY_MODE:'hosted',PUBLIC_BASE_URL:'https://relay.example.test',RELAY_SECRET_KEY:KEY,RELAY_ALLOWED_ACCOUNTS:'gmail:owner@example.test'});
  assert.deepEqual(c.allowedHosts,['relay.example.test']);assert.equal(c.demo,false);
  assert.equal(c.googleRedirectUri,'https://relay.example.test/oauth/google/callback');
 });
@@ -58,7 +58,7 @@ test('coffre : clés valides uniquement ; ne pas recréer une clé absente avec 
 
 
 test('authentification : OIDC complète obligatoire en hébergé, HTTPS fournisseur et paramètres fixes',()=>{
- const base={...OIDC,RELAY_MODE:'hosted',PUBLIC_BASE_URL:'https://relay.example.test',RELAY_SECRET_KEY:KEY};
+ const base={...OIDC,RELAY_MODE:'hosted',PUBLIC_BASE_URL:'https://relay.example.test',RELAY_SECRET_KEY:KEY,RELAY_ALLOWED_ACCOUNTS:'gmail:owner@example.test'};
  for(const patch of [{AUTH_MODE:'disabled'},{AUTH_OWNER_SUB:''},{AUTH_MFA_ACR:''},{AUTH_CLIENT_ID:''},{AUTH_ISSUER:'http://identity.example.test'},{AUTH_ISSUER:'https://user:pass@identity.example.test'},{AUTH_SESSION_TTL_HOURS:'0'}])assert.throws(()=>readConfig({...base,...patch}),e=>e.code==='configuration_invalid');
  const valid=readConfig(base);assert.equal(valid.auth.enabled,true);assert.equal(valid.auth.secureCookies,true);assert.equal(valid.auth.publicBaseUrl,base.PUBLIC_BASE_URL);
  const local=readConfig({});assert.equal(local.auth.enabled,false);

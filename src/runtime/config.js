@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { isIP } from 'node:net';
 import {readAuthConfig} from '../auth/config.js';
+import {parseAllowedAccounts} from '../providers/account-policy.js';
 
 export class ConfigurationError extends Error {
   constructor(message) { super(`Configuration : ${message}`); this.code='configuration_invalid'; }
@@ -56,6 +57,10 @@ export function readConfig(env=process.env,{cwd=process.cwd()}={}) {
     const id=secrets[`${prefix}_WEB_CLIENT_ID`],value=secrets[`${prefix}_WEB_CLIENT_SECRET`];
     if(mailOAuthMode==='web' && !!id!==!!value) invalid(`${prefix}_WEB_CLIENT_ID et ${prefix}_WEB_CLIENT_SECRET sont requis ensemble.`);
   }
+  const connectorsEnabled=boolean(env,'RELAY_CONNECTORS_ENABLED',true);
+  let allowedAccounts;
+  try {allowedAccounts=parseAllowedAccounts(env.RELAY_ALLOWED_ACCOUNTS);} catch(error) {invalid(error.message);}
+  if(mode==='hosted' && connectorsEnabled && !allowedAccounts?.length) invalid('RELAY_ALLOWED_ACCOUNTS requis pour les connecteurs hébergés.');
   return Object.freeze({
     backupStatusFile:env.BACKUP_STATUS_FILE?resolve(cwd,env.BACKUP_STATUS_FILE):null,
     opsMinFreeBytes:number(env,'OPS_MIN_FREE_BYTES',512*1024**2,0,Number.MAX_SAFE_INTEGER),
@@ -68,7 +73,7 @@ export function readConfig(env=process.env,{cwd=process.cwd()}={}) {
     microsoftRedirectUri:`${env.PUBLIC_BASE_URL?base.origin:`http://localhost:${port}`}/oauth/microsoft/callback`,
     microsoftTenant:env.MICROSOFT_TENANT || 'common',ownerName:env.OWNER_NAME || 'Jean-Hugues',
     mistralModel:env.MISTRAL_MODEL || 'mistral-small-latest',
-    connectorsEnabled:boolean(env,'RELAY_CONNECTORS_ENABLED',true),aiEnabled:boolean(env,'RELAY_AI_ENABLED',true),
+    connectorsEnabled,allowedAccounts,aiEnabled:boolean(env,'RELAY_AI_ENABLED',true),
     demo:boolean(env,'DEMO_DATA',mode==='local'),syncIntervalMs:number(env,'SYNC_INTERVAL_MS',60000,1000,86400000),
     shutdownTimeoutMs:number(env,'SHUTDOWN_TIMEOUT_MS',30000,100,300000),
   });

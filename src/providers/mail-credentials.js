@@ -14,10 +14,11 @@ export function credentialsMatch(oauth,credential) {
 export const changedClient=()=>new HttpError(401,'Client OAuth modifié : reconnecte ce compte avec la configuration actuelle.','oauth_client_changed');
 const changedAccount=()=>new HttpError(409,'Le compte a changé pendant la connexion. Recommence depuis ce compte.','account_changed');
 
-export function prepareMailConnection({store,oauth,service,profileId,name,email,expectedAccount,expectNew=false,authorize=()=>{},generation}) {
+export function prepareMailConnection({store,oauth,service,profileId,name,email,expectedAccount,expectNew=false,authorize=()=>{},assertAccountAllowed=()=>{},generation}) {
  email=email?mailboxAddress(email):null;
  if(oauth.mode==='web' && !email) throw new HttpError(400,'Identité de boîte manquante.','oauth_no_email');
  authorize();
+ assertAccountAllowed(service,email);
  const validateExpected=()=>{
   if(!expectedAccount) return;
   if(!store.hasAccount(expectedAccount.id) || store.accountIdentity(expectedAccount.id)!==expectedAccount.identity) throw changedAccount();
@@ -33,7 +34,7 @@ export function prepareMailConnection({store,oauth,service,profileId,name,email,
  const account=store.upsertAccount(profileId,{name,channel:'email',svc:service,address:email});
  const identity=store.accountIdentity(account.id),at=generation(account.id);
  return {account,email,guard(){
-  authorize();validateExpected();duplicate();
+  authorize();assertAccountAllowed(service,email);validateExpected();duplicate();
   if(!store.hasAccount(account.id) || store.accountIdentity(account.id)!==identity || generation(account.id)!==at) throw changedAccount();
  }};
 }

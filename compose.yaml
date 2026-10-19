@@ -46,6 +46,9 @@ services:
       GOOGLE_WEB_CLIENT_SECRET_FILE: /run/secrets/google_web_client_secret
       MICROSOFT_WEB_CLIENT_ID_FILE: /run/secrets/microsoft_web_client_id
       MICROSOFT_WEB_CLIENT_SECRET_FILE: /run/secrets/microsoft_web_client_secret
+      RELAY_ALLOWED_ACCOUNTS: ${RELAY_ALLOWED_ACCOUNTS:-}
+      RELAY_CONNECTORS_ENABLED: ${RELAY_CONNECTORS_ENABLED:-true}
+      RELAY_AI_ENABLED: ${RELAY_AI_ENABLED:-true}
       MICROSOFT_TENANT: ${MICROSOFT_TENANT:-common}
       DEMO_DATA: "0"
       # État de la dernière sauvegarde, lu (jamais écrit) par le statut d'exploitation.

@@ -31,7 +31,7 @@ async function pool(items, size, fn) {
 const readCursor = raw => { try { const c = JSON.parse(raw); return c && c.v === 1 && c.links ? c : null; } catch { return null; } };
 const writeCursor = (links, ids) => JSON.stringify({ v: 1, links, ids: Object.fromEntries(ids) });
 
-export function createOutlookSync({ store, vault, oauth, fetchImpl = globalThis.fetch, log = console }) {
+export function createOutlookSync({ store, vault, oauth, fetchImpl = globalThis.fetch, log = console, assertAccountAllowed=()=>{} }) {
   const clients = new Map();
   const running = new Map();
   const connecting = new Map();
@@ -55,6 +55,7 @@ export function createOutlookSync({ store, vault, oauth, fetchImpl = globalThis.
     return sealed ? vault.open(accountId, sealed) : null;
   }
   function client(accountId) {
+    assertAccountAllowed('outlook',store.getAccount(accountId).address);
     if (!clients.has(accountId)) {
       const cred = credentials(accountId);
       if (!cred) throw Object.assign(new Error('Aucun jeton pour ce compte.'), { code: 'invalid_grant' });
@@ -223,7 +224,7 @@ export function createOutlookSync({ store, vault, oauth, fetchImpl = globalThis.
 
   return {
     connect({profileId,name,windowDays,refreshToken,email,scopes=[OUTLOOK_SCOPES.read],expectedAccount=null,expectNew=false,authorize=()=>{}}) {
-      const prepared=prepareMailConnection({store,oauth,service:'outlook',profileId,name,email,expectedAccount,expectNew,authorize,generation:epoch});
+      const prepared=prepareMailConnection({store,oauth,service:'outlook',profileId,name,email,expectedAccount,expectNew,authorize,assertAccountAllowed,generation:epoch});
       const {account}=prepared;email=prepared.email;
       let accept,reject;const ready=new Promise((resolve,no)=>{accept=resolve;reject=no;});ready.catch(()=>{});
       const pending={started:false};connecting.set(account.id,pending);

@@ -16,7 +16,7 @@ import {fakeGoogle} from './helpers/fake-google.js';
 import {fakeMicrosoft,ALL_SCOPES} from './outlook-helpers.js';
 
 const scopes=['https://www.googleapis.com/auth/gmail.readonly'];
-const hosted={RELAY_MODE:'hosted',PUBLIC_BASE_URL:'https://relay.example.test',RELAY_SECRET_KEY:'aa'.repeat(32),AUTH_ISSUER:'https://identity.example.test/realms/test',AUTH_CLIENT_ID:'owner-client',AUTH_CLIENT_SECRET:'owner-secret-fake',AUTH_OWNER_SUB:'owner-fake',AUTH_MFA_ACR:'relay-mfa'};
+const hosted={RELAY_ALLOWED_ACCOUNTS:'gmail:owner@example.test',RELAY_MODE:'hosted',PUBLIC_BASE_URL:'https://relay.example.test',RELAY_SECRET_KEY:'aa'.repeat(32),AUTH_ISSUER:'https://identity.example.test/realms/test',AUTH_CLIENT_ID:'owner-client',AUTH_CLIENT_SECRET:'owner-secret-fake',AUTH_OWNER_SUB:'owner-fake',AUTH_MFA_ACR:'relay-mfa'};
 test('configuration OAuth : bureau conservé, Web imposé en hébergé, secrets Web distincts et fichiers',t=>{
  const local=readConfig({});assert.equal(local.mailOAuthMode,'desktop');assert.equal(local.microsoftRedirectUri,'http://localhost:4310/oauth/microsoft/callback');
  const c=readConfig({...hosted,GOOGLE_CLIENT_ID:'desktop-only',MICROSOFT_CLIENT_ID:'desktop-only'});assert.equal(c.mailOAuthMode,'web');assert.equal(c.secrets.GOOGLE_WEB_CLIENT_ID,'');assert.equal(c.googleRedirectUri,'https://relay.example.test/oauth/google/callback');assert.equal(c.microsoftRedirectUri,'https://relay.example.test/oauth/microsoft/callback');

@@ -20,7 +20,7 @@ async function pool(items, size, fn) {
   if (failed) throw failed.reason;
 }
 
-export function createGmailSync({ store, vault, oauth, fetchImpl = globalThis.fetch, log = console }) {
+export function createGmailSync({ store, vault, oauth, fetchImpl = globalThis.fetch, log = console, assertAccountAllowed=()=>{} }) {
   const clients = new Map();
   const running = new Map();
   const connecting = new Map();
@@ -45,6 +45,7 @@ export function createGmailSync({ store, vault, oauth, fetchImpl = globalThis.fe
     return sealed ? vault.open(accountId, sealed) : null;
   }
   function client(accountId) {
+    assertAccountAllowed('gmail',store.getAccount(accountId).address);
     if (!clients.has(accountId)) {
       const cred = credentials(accountId);
       if (!cred) throw Object.assign(new Error('Aucun jeton pour ce compte.'), { code: 'invalid_grant' });
@@ -187,7 +188,7 @@ export function createGmailSync({ store, vault, oauth, fetchImpl = globalThis.fe
   return {
     // Enregistre le compte après l'autorisation et lance l'import en arrière-plan.
     connect({profileId,name,windowDays,refreshToken,email,scopes=[GMAIL_SCOPES.read],expectedAccount=null,expectNew=false,authorize=()=>{}}) {
-      const prepared=prepareMailConnection({store,oauth,service:'gmail',profileId,name,email,expectedAccount,expectNew,authorize,generation:epoch});
+      const prepared=prepareMailConnection({store,oauth,service:'gmail',profileId,name,email,expectedAccount,expectNew,authorize,assertAccountAllowed,generation:epoch});
       const {account}=prepared;email=prepared.email;
       let accept,reject;const ready=new Promise((resolve,no)=>{accept=resolve;reject=no;});ready.catch(()=>{});
       const pending={started:false};connecting.set(account.id,pending);

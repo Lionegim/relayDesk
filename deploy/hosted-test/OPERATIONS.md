@@ -43,3 +43,13 @@ The live public MFA proof verifies real OTP, signature/JWKS, exact issuer/audien
 The first live browser check caught a fresh-installation defect: the UI requested a hardcoded `anove` profile before its fallback could run, causing a 400 when only `perso` existed. The corrected client starts without a profile, the paginated API resolves an existing first profile, and explicit invalid profiles remain rejected. Pagination stays bounded; HTTP and UI regressions cover an installation without `anove`. Runtime image `relay-desk:841df9c` contains this fix; 320 tests pass on Mac and in the Linux Docker test stage, zero skipped. Static cache version was renewed; this environment still contains exactly three fictional conversations and no provider secrets.
 
 Final public restart acceptance: after a second actual VM reboot with all four services installed, Relay/PostgreSQL/Keycloak became healthy, Caddy served both names with exactly the same trusted certificate fingerprints, and the daily backup timer was active. The existing Chrome session and exact saved fictional draft survived page reload. External TCP checks found 22/80/443 open and 4310/5432/9000/18080 closed or filtered; SSH remains restricted by UFW to the administrator IP. The extended live MFA proof passed all 32 checks, including bounded paginated bootstrap without a hardcoded profile and rejection of an explicitly unknown profile.
+
+## Préparation ultérieure des comptes personnels
+
+Le plan `docs/connexion-comptes-reels.md` et le modèle désactivé
+`deploy/personal/connection.env.example` préparent une génération distincte. Ils
+n'autorisent pas l'activation des connecteurs sur cette instance fictive. Le runtime
+exige désormais `RELAY_ALLOWED_ACCOUNTS` si des connecteurs hébergés sont actifs ;
+le préflight accepte `RELAY_CONNECTORS_ENABLED=false` pour cette recette. Lors d'une
+future mise à jour du test, inclure ce paramètre dans sa projection de préflight,
+puisqu'il est aussi imposé par l'overlay de test. Conserver l'IA désactivée.

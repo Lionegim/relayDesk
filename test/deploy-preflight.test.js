@@ -192,3 +192,12 @@ test('clé de sauvegarde : format invalide et même clé encodée autrement refu
     const r=await s.run();assert.ok(has(r.errors,equivalent?/distincte de la clé du coffre/:/32 octets/));assert.ok(!has(r.notes,/validation du runtime/));
   }
 });
+
+test('préflight : connecteurs hébergés actifs exigent une liste de comptes, test hors réseau accepté', {skip}, async t=>{
+ const missing=await setup(t,{RELAY_CONNECTORS_ENABLED:'true'});
+ assert.ok(has((await missing.run()).errors,/RELAY_ALLOWED_ACCOUNTS/));
+ const allowed=await setup(t,{RELAY_CONNECTORS_ENABLED:'true',RELAY_ALLOWED_ACCOUNTS:'gmail:owner@example.test,outlook:work@example.test'});
+ assert.deepEqual((await allowed.run()).errors,[]);
+ const bad=await setup(t,{RELAY_ALLOWED_ACCOUNTS:'gmail:*@example.test'});
+ assert.ok(has((await bad.run()).errors,/RELAY_ALLOWED_ACCOUNTS/));
+});

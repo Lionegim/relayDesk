@@ -29,7 +29,7 @@ export const SECRET_FILES = Object.freeze({
   microsoft_web_client_secret: 'MICROSOFT_WEB_CLIENT_SECRET',
 });
 export const REQUIRED_VARS = ['RELAY_IMAGE_TAG', 'PUBLIC_BASE_URL', 'RELAY_DOMAIN', 'ACME_EMAIL', 'RELAY_SECRETS_DIR', 'RELAY_DATA_DIR', 'RELAY_BACKUP_DIR', 'RELAY_BACKUP_KEY_FILE', 'AUTH_ISSUER', 'AUTH_OWNER_SUB', 'AUTH_MFA_ACR'];
-export const OPTIONAL_VARS = ['MICROSOFT_TENANT', 'ACME_CA', 'COMPOSE_PROJECT_NAME', 'RELAY_BACKUP_TMPFS_SIZE', 'RELAY_BACKUP_MEM_LIMIT'];
+export const OPTIONAL_VARS = ['RELAY_ALLOWED_ACCOUNTS', 'RELAY_CONNECTORS_ENABLED', 'RELAY_AI_ENABLED', 'MICROSOFT_TENANT', 'ACME_CA', 'COMPOSE_PROJECT_NAME', 'RELAY_BACKUP_TMPFS_SIZE', 'RELAY_BACKUP_MEM_LIMIT'];
 // Sous-répertoires de RELAY_BACKUP_DIR : archives chiffrées, état lu par l'application. Aucun snapshot en clair ici.
 export const BACKUP_SUBDIRS = ['archives', 'status'];
 // Valeurs par défaut de compose.yaml pour le service « backup ».
@@ -244,6 +244,7 @@ export async function preflight({ envFile, uid = 1000, fictif = false, compose =
     const env = {
       RELAY_MODE: 'hosted', AUTH_MODE: 'oidc', HOST: '0.0.0.0', PORT: '4310', DATA_DIR: '/data', MAIL_OAUTH_MODE: 'web', DEMO_DATA: '0',
       PUBLIC_BASE_URL: vars.PUBLIC_BASE_URL, AUTH_ISSUER: vars.AUTH_ISSUER, AUTH_OWNER_SUB: vars.AUTH_OWNER_SUB, AUTH_MFA_ACR: vars.AUTH_MFA_ACR,
+      RELAY_ALLOWED_ACCOUNTS: vars.RELAY_ALLOWED_ACCOUNTS, RELAY_CONNECTORS_ENABLED: vars.RELAY_CONNECTORS_ENABLED, RELAY_AI_ENABLED: vars.RELAY_AI_ENABLED,
       MICROSOFT_TENANT: vars.MICROSOFT_TENANT || 'common',
       ...Object.fromEntries(Object.entries(SECRET_FILES).map(([file, name]) => [`${name}_FILE`, join(secretsDir, file)])),
     };

@@ -1,0 +1,57 @@
+# Préparation des comptes réels — relay.noegim.com
+
+État au 19 octobre 2026 : préparation du code et de la configuration uniquement. Le site public conserve son image et ses trois conversations fictives, connecteurs et IA désactivés. Aucun compte réel, secret ou message n’a été copié depuis le Mac. Aucun client Web créé, aucune nouvelle ressource payante. Le modèle `deploy/personal/connection.env.example` est volontairement incomplet et ne constitue pas une commande de mise en production.
+
+## Comptes et retours exacts
+
+| Fournisseur | Identité attendue | Profil prévu | Retour HTTPS |
+| --- | --- | --- | --- |
+| Gmail | jhmigeon@gmail.com | Personnel (`perso`) | https://relay.noegim.com/oauth/google/callback |
+| Outlook professionnel | jean-hugues.migeon@anove.ai | Anove (`anove`) | https://relay.noegim.com/oauth/microsoft/callback |
+| WhatsApp | Numéro international à renseigner par le propriétaire | Personnel (`perso`) | Nouveau QR dans Relay Desk ; aucun retour OAuth |
+
+La liste `RELAY_ALLOWED_ACCOUNTS` contient des identités exactes, préfixées par `gmail:`, `outlook:` ou `whatsapp:` et séparées par des virgules. Elle est obligatoire au démarrage hébergé si les connecteurs sont actifs. Les emails sont comparés sans distinction de casse ; ni alias implicite, ni joker, ni numéro national n’est accepté. Un fournisseur absent de la liste ne peut recevoir aucun compte. Cette restriction ne remplace pas l’authentification du propriétaire et n’impose pas à elle seule un profil.
+
+Pour le courrier, l’identité provient du profil fournisseur vérifié sous le jeton d’accès ; elle est contrôlée avant création du compte et stockage du refresh token. Le contrôle est également effectué lors de l’utilisation d’un client existant. Pour WhatsApp, le numéro est vérifié avant import ; une mauvaise liaison est fermée, son retrait distant est tenté, les identifiants locaux de cette liaison sont purgés. Le retrait distant reste à vérifier dans « Appareils connectés » si le réseau était indisponible.
+
+## Constat des consoles, en lecture seule
+
+- Google, projet **Relay Desk** (`cool-discipline-512019-p9`) : **External / In production**, 1 utilisateur sur 100 ; avertissement de vérification toujours visible. La liste contient uniquement **Relay Desk — Mac local**, type Desktop. Aucun client Web observé. Ne pas modifier/supprimer ce client : le Mac l’utilise.
+- Microsoft, annuaire **Anove**, tenant `0598ea6d-9321-4600-be58-24ce96b18828` : l’application Relay Desk existante possède uniquement le retour Mobile and desktop `http://localhost:4310/oauth/microsoft/callback`. Créer une inscription Web dédiée à l’hébergement, limitée à cet annuaire ; ne pas transformer l’inscription du Mac. Aucun secret consulté ou créé durant cette préparation.
+
+## Ordre de bascule préparé
+
+1. **Identité et récupération, avant tout message réel.** Créer un realm distinct `relay` et un client confidentiel distinct. Le propriétaire choisit lui-même son mot de passe permanent et inscrit son propre OTP lors de l’enrôlement. Le compte `owner-test`, son mot de passe et son OTP connus des agents restent exclusivement fictifs. Le propriétaire doit aussi détenir un accès administrateur de secours ; retirer l’administrateur de bootstrap et préparer la récupération MFA. Tout administrateur/root/SSH de la VM peut accéder aux secrets du serveur : l’architecture actuelle ne prétend pas les lui cacher.
+2. **Exploitation avant activation.** Résoudre l’isolation de l’identité (la colocalisation actuelle est une exception de test), la sauvegarde chiffrée hors VM et la récupération de **Keycloak/Postgres**, ainsi que la garde séparée des clés. L’archive applicative actuelle n’inclut pas Keycloak, les secrets ni les certificats. Exécuter une restauration fictive avec clé détenue indépendamment. Ne pas présenter cette étape comme déjà vérifiée. Toute nouvelle dépense doit respecter le budget mensuel total de 100 € ; la VM actuelle est d’environ 54 € TTC/mois.
+3. **Clients Web propres.** Configurer les deux inscriptions décrites ci-dessous. Les secrets vont dans les fichiers 0400 prévus par Compose, hors dépôt et hors données, jamais dans le navigateur de Relay, le chat, les URL ou les logs. Aucun refresh token, `.env`, coffre, session WhatsApp ou base réelle du Mac n’est transféré. Les inscriptions et consentements réels seront confirmés au moment de leur création/autorisation.
+4. **Instance vide.** Nouvelle génération `/srv/relay-desk-personal/data/initial`, nouvelle clé de coffre, nouvelle clé de sauvegarde distincte, secret OIDC neuf. `DEMO_DATA=0`, `MAIL_OAUTH_MODE=web`, IA désactivée. Renseigner le `sub` réellement créé, jamais l’email comme substitut. Le proxy devra exposer uniquement les routes OIDC de `/realms/relay/`, et garder master, administration et gestion privés : le Caddyfile de test expose actuellement seulement `relay-test`, il ne faut pas le réutiliser tel quel. Vérifier le préflight, Compose, MFA et les refus d’accès avec données fictives avant de basculer le domaine. Archiver à l’arrêt les données de test ; ne pas les mélanger aux vraies données. Un seul Relay public sur ce domaine.
+5. **Premières connexions mail.** Après validation du basculement et du transfert vers OVH, autoriser les seules boîtes attendues ; importer les 7 derniers jours. Commencer par `perms=read`, vérifier la réception et la sauvegarde. Ne pas promettre un mode « lecture seule » pour WhatsApp, qui est un appareil lié. Les étiquettes, brouillons et envois mail pourront être ajoutés par reconnexion explicite avec les portées correspondantes.
+6. **WhatsApp.** Faire confirmer le numéro international, l’ajouter à la liste, puis arrêter uniquement le connecteur WhatsApp du Mac et sa reprise automatique lors de la bascule autorisée. Créer une liaison neuve dans Personnel, scanner le QR avec le téléphone et vérifier le numéro. Import borné à 7 jours, textes individuels et groupes ; l’historique dépend de ce que le téléphone fournit et peut rester partiel. Retirer ensuite l’ancien appareil Relay du Mac depuis le téléphone une fois le serveur validé. Le connecteur Baileys est communautaire et non officiel, comme décrit dans `docs/whatsapp.md`.
+7. **Envoi de recette.** Premier message à soi-même uniquement, brouillon enregistré chez le fournisseur, aperçu exact affiché au propriétaire, envoi après son clic de validation. Vérifier réception et synchronisation. Les échanges réels, les brouillons et la mémoire de style déjà présents sur le Mac restent sur le Mac ; leur migration éventuelle est une opération séparée.
+
+## Google : fiche d’inscription préparée
+
+Client **Application Web**, nom proposé « Relay Desk — Hosted personal ». Retour unique : `https://relay.noegim.com/oauth/google/callback`. Aucun wildcard, aucun retour local. Garder les fichiers ID/secret Web séparés du client desktop (`GOOGLE_WEB_CLIENT_ID_FILE`, `GOOGLE_WEB_CLIENT_SECRET_FILE`). Vérifier Gmail API et les portées déclarées dans Data access :
+
+| Capacité Relay | Portée Gmail ajoutée à openid/email |
+| --- | --- |
+| Lire/importer | `https://www.googleapis.com/auth/gmail.readonly` |
+| Lu, drapeau, archive, dossiers | `https://www.googleapis.com/auth/gmail.modify` |
+| Brouillons | `https://www.googleapis.com/auth/gmail.compose` |
+| Envoi | `https://www.googleapis.com/auth/gmail.send` |
+
+Le statut de production est déjà observé ; il ne constitue pas une vérification des portées. Google documente une exception pour usage strictement personnel, avec écran d’application non vérifiée et plafond d’utilisateurs ; vérifier son applicabilité et la conformité de l’usage hébergé avant le consentement. Si une vérification est requise, préparer domaine autorisé, accueil et confidentialité publics décrivant OVH et les usages exacts, ainsi que les exigences pour données restreintes sur serveur tiers. Ne pas soumettre ni accepter de politique à cette étape. [Documentation Google](https://developers.google.com/identity/protocols/oauth2/production-readiness/restricted-scope-verification).
+
+## Microsoft : fiche d’inscription préparée
+
+Nouvelle inscription « Relay Desk — Hosted personal » dans Anove, comptes de ce seul annuaire pour cette première boîte ; plateforme **Web**, retour exact `https://relay.noegim.com/oauth/microsoft/callback`. Tenant fixé à l’identifiant Anove ci-dessus, pas `consumers`. Authentification confidentielle par secret serveur avec échéance connue et remplacement planifié (ne pas créer d’automatisation sans demande). Fichiers `MICROSOFT_WEB_CLIENT_ID_FILE` et `MICROSOFT_WEB_CLIENT_SECRET_FILE` distincts du desktop.
+
+Permissions Graph **déléguées** : `User.Read`, `Mail.Read`, puis `Mail.ReadWrite` pour classement/brouillons et `Mail.Send` pour envoi ; `openid email offline_access` pour la connexion et la reprise. Pas de permission applicative, ni de consentement au nom de toute l’organisation. `Mail.ReadWrite` permet techniquement aussi la suppression ; la validation de l’aperçu reste une protection Relay, pas une restriction technique du jeton Microsoft. [Plateformes et retours Microsoft](https://learn.microsoft.com/entra/identity-platform/how-to-add-redirect-uri), [permissions Graph](https://learn.microsoft.com/en-us/graph/permissions-reference).
+
+## Contrat d’envoi inchangé
+
+Chaque envoi Gmail, Outlook ou WhatsApp exige un aperçu exact et sa validation explicite. En hébergé, l’autorisation est liée à la session, au contenu, aux destinataires, à la version du brouillon et à l’identité du compte. Elle est à usage unique et consommée avant l’appel fournisseur. Une modification impose un nouvel aperçu ; une autre session, un rejeu ou une autorisation périmée ne peut envoyer. Un résultat incertain n’est jamais relancé automatiquement. La création et la sauvegarde d’un brouillon ne valent pas autorisation d’envoi. L’IA ne peut pas autoriser un envoi.
+
+## Retour arrière
+
+Avant comptes réels : garder le test intact et les connecteurs désactivés. Après bascule autorisée : arrêter l’instance personnelle, conserver les données chiffrées et décider explicitement de leur sort ; ne jamais les purger comme des données de test. Révoquer les seules autorisations Web et l’appareil WhatsApp du serveur si demandé ; les clients desktop distincts préservent la possibilité de reprise sur Mac. Ne pas réactiver le Mac WhatsApp en parallèle sans décider quel appareil Relay doit être actif.
