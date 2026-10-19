@@ -22,6 +22,13 @@ const state = {
   details: {},
   confirm: null, auth: null, authPanel: null,
   composeTo: {}, newMail: null, newMailOpen: false,
+  // Liste paginée côté serveur (paged=true) ; sinon instantané complet de l'ancien serveur.
+  paged: false, page: null, counts: null, selectedRow: null, historyLoading: {},
+  // Brouillons : version serveur, texte enregistré, état d'enregistrement et conflit, par message.
+  draftMeta: {},
+  // Mobile (<= 760 px) : un seul écran à la fois, tiroir pour la barre latérale.
+  mobile: !!globalThis.matchMedia?.('(max-width: 760px)').matches, pane: 'list', drawer: false,
+  offline: globalThis.navigator?.onLine === false,
 };
 
 const root = document.getElementById('root');
@@ -32,7 +39,7 @@ function set(next) {
 }
 function render() {
   if (!state.data) {
-    patch(root, `<div class="loading">${state.loadError ? 'Impossible de charger les données.' : 'Chargement…'}</div>`);
+    patch(root, `<div class="loading">${state.loadError === 'offline' ? 'Hors ligne : Relay Desk a besoin du réseau pour afficher tes messages.' : state.loadError ? 'Impossible de charger les données.' : 'Chargement…'}</div>`);
     return;
   }
   const v = derive(state);
@@ -41,9 +48,16 @@ function render() {
   const chatPosition = chatBefore && {
     id: chatBefore.dataset.chatId, ready: chatBefore.dataset.ready,
     nearBottom: chatBefore.scrollHeight - chatBefore.scrollTop - chatBefore.clientHeight < 64,
+    top: chatBefore.scrollTop, height: chatBefore.scrollHeight,
   };
   patch(root, renderApp(state, v));
   const chatAfter = root.querySelector?.('.wa-timeline');
+  // Messages plus anciens ajoutés en haut : le message lu reste au même endroit à l'écran.
+  if (chatAfter && chatPosition && prependAnchor !== null && String(prependAnchor) === chatAfter.dataset.chatId && chatPosition.id === chatAfter.dataset.chatId) {
+    chatAfter.scrollTop = chatPosition.top + (chatAfter.scrollHeight - chatPosition.height);
+    prependAnchor = null;
+    return;
+  }
   if (chatAfter?.dataset.ready === 'true' &&
       (!chatPosition || chatPosition.id !== chatAfter.dataset.chatId || chatPosition.ready !== 'true' || chatPosition.nearBottom)) {
     chatAfter.scrollTop = chatAfter.scrollHeight;
@@ -57,13 +71,30 @@ let selectionVersion = 0;
 function rememberComposition() {
   if (state.newMail?.messageId) compositionBuffers.set(state.newMail.messageId, state.newMail);
 }
+let prependAnchor = null;
+const known = id => state.data.messages.some(m => m.id === id) || (state.selectedRow?.id === id && state.selectedId === id);
+// Identité d'un élément du fil, pour fusionner des pages sans doublon.
+const trailKey = t => t.id != null ? `id:${t.id}` : `${t.at}|${t.fromMe}|${t.from}|${t.body}`;
+const oldestAt = full => Math.min(...(full.trail || []).map(t => Number.isFinite(t.at) ? t.at : Infinity), Number.isFinite(full.at) ? full.at : Infinity);
+// Une actualisation ne recharge que la page récente : l'historique plus ancien déjà affiché est conservé.
+function mergeHistory(prev, next) {
+  if (!prev || prev.failed || !prev.trail?.length) return next;
+  const seen = new Set((next.trail || []).map(trailKey)), limit = oldestAt(next);
+  const extra = prev.trail.filter(t => !seen.has(trailKey(t)) && Number.isFinite(t.at) && t.at <= limit);
+  return extra.length ? { ...next, trail: [...(next.trail || []), ...extra], history: prev.history ?? next.history } : next;
+}
 function loadDetails(id) {
   if ((state.details[id] && !state.details[id].refreshing) || loading.has(id)) return;
   loading.add(id);
   api.message(id)
-    .then(full => { if (state.data.messages.some(m => m.id === id)) set(s => ({ details: { ...s.details, [id]: full } })); })
+    .then(full => {
+      if (!known(id)) return;
+      const merged = mergeHistory(state.details[id], full);
+      syncDraftMeta(id, merged);
+      set(s => ({ details: { ...s.details, [id]: merged } }));
+    })
     .catch(err => {
-      if (!state.data.messages.some(m => m.id === id)) return;
+      if (!known(id)) return;
       set(s => ({ details: { ...s.details, [id]: s.details[id] && !s.details[id].failed
         ? { ...s.details[id], refreshing: false, stale: true } : { failed: true, trail: [] } } }));
       fail(err);
@@ -74,26 +105,205 @@ function loadDetails(id) {
 // Rafraîchit la liste quand un compte réel est synchronisé en arrière-plan.
 const REFRESH_MS = 30000;
 setInterval(async () => {
-  if (!state.data || state.c || !state.data.profiles.some(p => p.accounts.some(a => ['gmail', 'outlook', 'whatsapp'].includes(a.svc)))) return;
-  try { applyData(await api.state()); } catch { /* nouvel essai au prochain passage */ }
+  if (!state.data || state.c || state.offline || !state.data.profiles.some(p => p.accounts.some(a => ['gmail', 'outlook', 'whatsapp'].includes(a.svc)))) return;
+  try { await reload({ refresh: true }); } catch { /* nouvel essai au prochain passage */ }
 }, REFRESH_MS);
 setInterval(async () => {
-  if (!state.data || state.c || !state.data.profiles.some(p => p.accounts.some(a => a.svc === 'whatsapp' && a.sync?.status === 'syncing'))) return;
-  try { applyData(await api.state()); } catch { /* progression au prochain passage */ }
+  if (!state.data || state.c || state.offline || !state.data.profiles.some(p => p.accounts.some(a => a.svc === 'whatsapp' && a.sync?.status === 'syncing'))) return;
+  try { await reload({ refresh: true }); } catch { /* progression au prochain passage */ }
 }, 3000);
 
-function applyData(data) {
+// ---------- Liste paginée ----------
+
+const PAGE = 50;
+let listRequest = 0, searchTimer = null;
+const listKey = s => JSON.stringify([s.profileId, s.folder ? 'all' : s.nav, s.channel, s.folder || '', s.query.trim()]);
+const listParams = (s, extra) => ({ paged: 1, profile: s.profileId, nav: s.folder ? 'all' : s.nav, channel: s.channel, folder: s.folder || undefined, q: s.query.trim() || undefined, limit: PAGE, ...extra });
+
+// Charge la liste selon les filtres courants. Une réponse arrivée après un changement de filtre est ignorée.
+// append : page suivante. refresh : actualisation de ce qui est déjà affiché. Les erreurs remontent à l'appelant.
+async function reload({ append = false, refresh = false } = {}) {
+  const key = listKey(state), request = ++listRequest;
+  const items = state.paged ? state.data?.messages || [] : [];
+  const cursor = append ? state.page?.nextCursor : undefined;
+  if (append && (!state.paged || !cursor)) return false;
+  // Actualisation : autant d'éléments que ceux affichés, dans la limite du serveur (100 par page).
+  const limit = refresh && state.paged ? Math.min(100, Math.max(PAGE, Math.ceil(items.length / PAGE) * PAGE)) : PAGE;
+  if (state.paged) set({ page: { ...state.page, key, loading: append ? 'more' : true, error: null } });
+  let data;
+  try {
+    data = await api.state(listParams(state, { limit, cursor }));
+  } catch (e) {
+    if (request === listRequest && state.paged) set({ page: { ...state.page, loading: false, error: e.message } });
+    throw e;
+  }
+  if (request !== listRequest || key !== listKey(state)) return false;
+  if (!data.page) { applyData(data); return true; } // serveur sans pagination : filtres appliqués localement
+  const merged = append ? [...items, ...data.messages.filter(m => !items.some(x => x.id === m.id))] : data.messages;
+  applyData({ ...data, messages: merged }, { paged: true, counts: data.counts || null, page: { ...data.page, key, loading: false, error: null } });
+  if (!data.profiles.some(p => p.id === state.profileId) && data.profiles[0]) {
+    set({ profileId: data.profiles[0].id, selectedId: null, selectedRow: null });
+    return reload();
+  }
+  if (!append && !refresh && state.selectedId == null && !state.mobile && merged[0]) set({ selectedId: merged[0].id, selectedRow: merged[0] });
+  return true;
+}
+// Chargement déclenché par l'interface : erreur affichée, rien n'est retenté automatiquement.
+const loadList = opts => reload(opts).catch(fail);
+function filtersChanged(next) {
+  set(next);
+  clearTimeout(searchTimer);
+  if (state.paged) loadList();
+}
+
+function applyData(data, extra = {}) {
   const before = new Map((state.data?.messages || []).map(m => [m.id, m.sortAt + ':' + m.count]));
   const details = Object.fromEntries(Object.entries(state.details).flatMap(([id, full]) => {
-    const m = data.messages.find(x => x.id === Number(id));
+    const m = data.messages.find(x => x.id === Number(id)) || (Number(id) === state.selectedId && state.selectedRow?.id === state.selectedId ? state.selectedRow : null);
     if (!m) return [];
     if (!full.stale && before.get(m.id) === m.sortAt + ':' + m.count) return [[id, full]];
     // Garder les bulles pendant le rechargement préserve l'ancrage de lecture.
     return m.channel === 'whatsapp' && !full.failed ? [[id, { ...full, refreshing: true }]] : [];
   }));
-  const a = state.ai, updated = a && data.messages.find(m => m.id === a.forId);
-  const ai = a && (!updated || before.get(updated.id) !== updated.sortAt + ':' + updated.count) ? null : a;
-  set({ data, details, ai });
+  const a = state.ai, updated = a && (data.messages.find(m => m.id === a.forId) || (state.selectedRow?.id === a.forId ? state.selectedRow : null));
+  const ai = a && (!updated || (before.has(updated.id) && before.get(updated.id) !== updated.sortAt + ':' + updated.count)) ? null : a;
+  // La ligne sélectionnée reste connue même hors de la page affichée (même profil).
+  const row = data.messages.find(m => m.id === state.selectedId);
+  set({ data, details, ai, ...(row ? { selectedRow: row } : {}), ...extra });
+}
+
+// ---------- Historique d'un fil ----------
+
+async function loadOlder(id) {
+  const cur = state.details[id], cursor = cur?.history?.nextCursor;
+  if (!cursor || state.historyLoading[id]) return;
+  set(s => ({ historyLoading: { ...s.historyLoading, [id]: true } }));
+  try {
+    const older = await api.message(id, { limit: PAGE, before: cursor });
+    const now = state.details[id];
+    if (!now || now.history?.nextCursor !== cursor) return; // fil rechargé entre-temps
+    const seen = new Set(now.trail.map(trailKey));
+    const extra = (older.trail || []).filter(t => !seen.has(trailKey(t)));
+    if (state.selectedId === id && state.data.messages.concat(state.selectedRow || []).some(m => m.id === id && m.channel === 'whatsapp')) prependAnchor = id;
+    set(s => ({ details: { ...s.details, [id]: { ...now, trail: [...now.trail, ...extra], history: older.history || { hasMore: false, nextCursor: null } } } }));
+  } catch (e) {
+    // Fil modifié depuis le chargement : on le recharge (l'historique déjà affiché est conservé) au lieu d'insister.
+    if (e.status === 409 && e.code === 'history_changed' && state.details[id]) {
+      set(s => ({ details: { ...s.details, [id]: { ...s.details[id], refreshing: true } } }));
+      loadDetails(id);
+    } else fail(e);
+  }
+  finally { set(s => ({ historyLoading: { ...s.historyLoading, [id]: false } })); }
+}
+
+// ---------- Brouillons enregistrés sur le serveur ----------
+
+const AUTOSAVE_MS = 1500;
+const draftTimers = new Map();
+// Version fournie par le serveur (monotone, jamais supposée) ; null pour un ancien serveur sans versions.
+const versionOf = full => Number.isInteger(full?.draftVersion) ? full.draftVersion : Number.isInteger(full?.draft?.version) ? full.draft.version : null;
+const withBase = (input, version) => (version === null || version === undefined ? input : { ...input, baseVersion: version });
+const serverText = id => state.details[id]?.draft?.text ?? '';
+const draftText = id => state.drafts[id] ?? serverText(id);
+const setMeta = (id, patch) => set(s => ({ draftMeta: { ...s.draftMeta, [id]: { ...s.draftMeta[id], ...patch } } }));
+const dirty = id => { const m = state.draftMeta[id]; return !!m && (m.saving || m.conflict || draftText(id) !== (m.savedText ?? serverText(id))); };
+
+// Version reçue du serveur. Si elle change alors que le texte local n'est pas enregistré : conflit, jamais d'écrasement.
+function syncDraftMeta(id, full) {
+  if (full.failed) return;
+  const meta = state.draftMeta[id], version = versionOf(full), text = full.draft?.text ?? '';
+  if (!meta || meta.version === undefined) { state.draftMeta = { ...state.draftMeta, [id]: { ...meta, version, savedText: text, savedAt: full.draft?.savedAt } }; return; }
+  if (meta.saving || version === meta.version) return;
+  if (state.drafts[id] !== undefined && state.drafts[id] !== meta.savedText) {
+    state.draftMeta = { ...state.draftMeta, [id]: { ...meta, conflict: true } };
+    return;
+  }
+  const drafts = { ...state.drafts };
+  delete drafts[id];
+  state.drafts = drafts;
+  state.draftMeta = { ...state.draftMeta, [id]: { ...meta, version, savedText: text, savedAt: full.draft?.savedAt, conflict: false, error: null } };
+}
+
+function scheduleAutosave(id) {
+  clearTimeout(draftTimers.get(id));
+  draftTimers.set(id, setTimeout(() => { draftTimers.delete(id); saveDraftNow(id); }, AUTOSAVE_MS));
+}
+
+// Un seul enregistrement en vol par message ; le texte modifié pendant la requête reste « non enregistré »
+// puis part au passage suivant.
+async function saveDraftNow(id, { overwrite = false } = {}) {
+  const full = state.details[id], meta = state.draftMeta[id] || {};
+  if (!full || full.failed || meta.version === undefined) return;
+  if (meta.saving) { setMeta(id, { again: true }); return; }
+  if (meta.conflict && !overwrite) return;
+  const text = draftText(id);
+  if (!overwrite && text === (meta.savedText ?? serverText(id)) && !meta.error) return;
+  const mode = (state.selectedId === id && state.composing) || full.draft?.mode || 'reply';
+  const to = mode === 'forward' ? (state.composeTo[id] ?? full.draft?.to ?? '') : null;
+  setMeta(id, { saving: true, again: false, error: null });
+  try {
+    const draft = await api.saveDraft(id, withBase({ text, mode, to }, meta.version));
+    if (draft.previousDraftKept) notify('Un ancien brouillon est conservé chez le fournisseur.');
+    const cur = state.details[id];
+    if (cur) cur.draft = draft;
+    const row = state.data.messages.find(m => m.id === id) || (state.selectedRow?.id === id ? state.selectedRow : null);
+    if (row) row.draft = { savedAt: draft.savedAt, gmail: draft.gmail, synced: draft.synced ?? draft.gmail };
+    const again = state.draftMeta[id]?.again;
+    setMeta(id, { saving: false, again: false, version: Number.isInteger(draft.version) ? draft.version : meta.version, savedText: text, savedAt: draft.savedAt, conflict: false, error: null });
+    if (again || draftText(id) !== text) scheduleAutosave(id);
+  } catch (e) {
+    if (e.status === 409 && e.code === 'draft_conflict') setMeta(id, { saving: false, again: false, conflict: true });
+    else setMeta(id, { saving: false, again: false, error: e.message });
+  }
+}
+
+// Conflit : recharger explicitement la version du serveur (le texte local est abandonné) ou la remplacer par le texte local.
+async function resolveConflict(id, keepMine) {
+  let full;
+  try { full = await api.message(id); } catch (e) { return fail(e); }
+  if (!known(id)) return;
+  const merged = mergeHistory(state.details[id], full);
+  state.details = { ...state.details, [id]: merged };
+  const version = versionOf(full), text = full.draft?.text ?? '';
+  if (keepMine) {
+    setMeta(id, { version, savedText: text, conflict: false, error: null });
+    return saveDraftNow(id, { overwrite: true });
+  }
+  set(s => {
+    const drafts = { ...s.drafts };
+    delete drafts[id];
+    return { drafts, draftMeta: { ...s.draftMeta, [id]: { version, savedText: text, savedAt: full.draft?.savedAt, conflict: false, error: null } } };
+  });
+}
+
+// ---------- Mobile : couches empilées dans l'historique du navigateur ----------
+
+const layers = [];
+function pushLayer(name) {
+  if (!state.mobile || layers.at(-1) === name) return;
+  layers.push(name);
+  try { history.pushState?.({ relay: name, depth: layers.length }, ''); } catch { /* historique indisponible */ }
+}
+function closeLayer(name) {
+  if (name === 'reader') set({ pane: 'list', moveOpen: false });
+  else if (name === 'compose') set({ composing: null });
+  else if (name === 'ai') { aiRequest++; set({ ai: null }); }
+  else if (name === 'drawer') set({ drawer: false, menu: false });
+  else if (name === 'confirm') { if (state.confirm && !state.confirm.busy) set({ newMailOpen: !!state.confirm.newMail, confirm: null }); }
+}
+// Bouton de l'interface : passe par l'historique du navigateur s'il porte cette couche, pour rester cohérent.
+function backFrom(name) {
+  if (layers.at(-1) === name && typeof history.back === 'function') { history.back(); return; }
+  const i = layers.lastIndexOf(name);
+  if (i >= 0) layers.splice(i, 1);
+  closeLayer(name);
+}
+function onPopState() {
+  const name = layers.pop();
+  if (!name) return;
+  // Un envoi en cours n'est jamais annulé par le bouton retour.
+  if (name === 'confirm' && state.confirm?.busy) { pushLayer('confirm'); return; }
+  closeLayer(name);
 }
 
 let toastTimer;
@@ -135,14 +345,20 @@ function flatFolders(s) {
 
 function derive(s) {
   const d = s.data;
-  const profile = d.profiles.find(p => p.id === s.profileId);
-  const inProfile = d.messages.filter(m => m.p === s.profileId && !m.archived);
-  const byNav = s.folder
+  const profile = d.profiles.find(p => p.id === s.profileId) || d.profiles[0];
+  // Mode paginé : le serveur a déjà filtré (profil, vue, canal, dossier, recherche) ; les compteurs viennent du serveur.
+  const inProfile = s.paged ? d.messages : d.messages.filter(m => m.p === s.profileId && !m.archived);
+  const byNav = s.paged ? inProfile : s.folder
     ? inProfile.filter(m => folderSet(s.folder).has(m.folderId))
     : inProfile.filter(m => s.nav === 'all' || (s.nav === 'unread' && m.unread) || (s.nav === 'todo' && m.flagged) || (s.nav === 'drafts' && m.draft));
   const q = s.query.trim().toLowerCase();
-  const list = byNav.filter(m => (s.channel === 'all' || m.channel === s.channel) && (!q || (m.from + m.subject + m.preview).toLowerCase().includes(q)));
-  const sel = inProfile.find(m => m.id === s.selectedId) || null;
+  const list = s.paged ? byNav : byNav.filter(m => (s.channel === 'all' || m.channel === s.channel) && (!q || (m.from + m.subject + m.preview).toLowerCase().includes(q)));
+  const sel = inProfile.find(m => m.id === s.selectedId)
+    || (s.paged && s.selectedRow?.id === s.selectedId && s.selectedRow.p === s.profileId && !s.selectedRow.archived ? s.selectedRow : null);
+  const counts = s.paged && s.counts ? s.counts : {
+    all: inProfile.length, unread: inProfile.filter(m => m.unread).length, todo: inProfile.filter(m => m.flagged).length,
+    drafts: inProfile.filter(m => m.draft).length, folders: null,
+  };
 
   const contactsMine = d.contacts.filter(c => c.p === s.profileId);
   const cq = s.contactQuery.trim().toLowerCase();
@@ -151,10 +367,15 @@ function derive(s) {
     .sort(s.sort === 'name' ? (a, b) => a.name.localeCompare(b.name) : (a, b) => a.order - b.order);
 
   return {
-    profile, inProfile, byNav, list, sel, contactsMine, contacts,
+    profile, inProfile, byNav, list, sel, contactsMine, contacts, counts,
+    // Canaux proposés : en mode paginé, ceux des comptes du profil (la page ne les contient pas tous).
+    channels: s.paged ? [...new Set(profile.accounts.map(a => a.channel))] : [...new Set(byNav.map(m => m.channel))],
     picked: contacts.filter(c => s.picked[c.id]),
     folders: flatFolders(s),
-    folderCount: id => { const set = folderSet(id); return inProfile.filter(m => set.has(m.folderId)).length; },
+    folderCount: id => {
+      if (counts.folders) return counts.folders[id] || 0;
+      const set = folderSet(id); return inProfile.filter(m => set.has(m.folderId)).length;
+    },
     viewTitle: s.folder ? (d.folders.find(f => f.id === s.folder)?.name || '') : NAV.find(n => n[0] === s.nav)[1],
     groupTitle: GROUPS.find(g => g[0] === s.group)[1],
     compact: SETTINGS.density === 'compacte',
@@ -227,7 +448,9 @@ function aiOpen(mode) {
   if (!sel) return;
   aiRequest++;
   const result = state.details[sel.id]?.aiResults?.[mode] || null;
+  const wasOpen = !!state.ai;
   set({ ai: { mode, result, folderId: result?.folderId ?? null, error: null, loading: false, forId: sel.id }, moveOpen: false });
+  if (!wasOpen) pushLayer('ai');
 }
 
 // ---------- Assistant de connexion ----------
@@ -274,7 +497,7 @@ async function startWhatsAppLink() {
         if (state.c?.linkId !== linkId) return;
         setC({ link, error: link.status === 'error' ? link.error || 'Liaison interrompue. Réessaie avec un nouveau QR code.' : null });
         if (link.status === 'connected') {
-          applyData(await api.state());
+          await reload({ refresh: true });
           if (current() && state.c?.linkId === linkId) {
             clearInterval(syncTimer);
             setC({ step: 'done', accountId: link.accountId, progress: 100, real: { messages: link.messages || 0, threads: link.threads || 0, todo: 0 } });
@@ -312,7 +535,7 @@ function trackImport(accountId) {
     setC({ progress, real: p });
     if (p.status === 'ok') {
       clearInterval(syncTimer);
-      applyData(await api.state());
+      await reload({ refresh: true });
       if (state.c) setC({ step: 'done' });
     }
   };
@@ -363,17 +586,20 @@ async function saveNewMail() {
   try {
     if (!c.messageId) {
       const m = await api.createComposition(c.accountId);
-      c = { ...c, messageId: m.id };
+      c = { ...c, messageId: m.id, version: versionOf(m) };
       set({ newMail: { ...c, busy: true } });
     }
     const input = { mode: 'new', to: c.to, cc: c.cc, subject: c.subject, text: c.text };
-    const draft = await api.saveDraft(c.messageId, input);
+    const draft = await api.saveDraft(c.messageId, withBase(input, c.version));
     if (draft.previousDraftKept) notify('Un ancien brouillon est conservé chez le fournisseur.');
-    set({ newMail: { ...c, busy: false, savedAt: draft.savedAt, synced: draft.synced ?? draft.gmail, error: null } });
-    try { applyData(await api.state()); } catch { /* l'enregistrement est déjà confirmé */ }
-    return { c, input };
+    c = { ...c, version: Number.isInteger(draft.version) ? draft.version : c.version };
+    set({ newMail: { ...state.newMail, messageId: c.messageId, version: c.version, busy: false, savedAt: draft.savedAt, synced: draft.synced ?? draft.gmail, error: null, conflict: false } });
+    try { await reload({ refresh: true }); } catch { /* l'enregistrement est déjà confirmé */ }
+    return { c, input: withBase(input, c.version) };
   } catch (e) {
-    set({ newMail: { ...state.newMail, busy: false, error: e.message } });
+    // Conflit : le texte saisi reste affiché ; rien n'est écrasé sans action explicite.
+    const conflict = e.status === 409 && e.code === 'draft_conflict';
+    set({ newMail: { ...state.newMail, busy: false, conflict, error: conflict ? 'Ce brouillon a été modifié sur un autre appareil. Ton texte est conservé ici : copie-le si besoin, puis rouvre le brouillon pour charger la version enregistrée.' : e.message } });
     return null;
   }
 }
@@ -408,6 +634,7 @@ const actions = {
     try {
       const preview = await api.previewSend(c.messageId, input);
       set({ newMailOpen: false, newMail: { ...state.newMail, busy: false }, confirm: { kind: 'send', newMail: true, messageId: c.messageId, input, preview, busy: false, error: null } });
+      pushLayer('confirm');
     } catch (e) { set({ newMail: { ...state.newMail, busy: false, error: e.message } }); }
   },
   aiNewMail: async () => {
@@ -420,16 +647,28 @@ const actions = {
     } catch (e) { set({ newMail: { ...state.newMail, busy: false, error: e.message } }); }
   },
   toggleProfileMenu: () => set({ menu: !state.menu, accountMenu: null }),
-  selectProfile: ({ id }) => { selectionVersion++; rememberComposition(); set({ newMailOpen: false, profileId: id, menu: false, accountMenu: null, picked: {}, group: 'all', channel: 'all', query: '', selectedId: firstOf(id), folder: null, ai: null, moveOpen: false, creating: false, composing: null }); },
-  selectApp: ({ app }) => set({ app, ai: null, moveOpen: false }),
-  selectNav: ({ id }) => set({ nav: id, channel: 'all', folder: null }),
-  selectGroup: ({ id }) => set({ group: id, app: 'contacts' }),
+  selectProfile: ({ id }) => {
+    selectionVersion++; rememberComposition();
+    if (state.drawer) backFrom('drawer');
+    filtersChanged({ newMailOpen: false, profileId: id, menu: false, accountMenu: null, picked: {}, group: 'all', channel: 'all', query: '', selectedId: state.paged ? null : firstOf(id), selectedRow: null, folder: null, ai: null, moveOpen: false, creating: false, composing: null, pane: 'list' });
+  },
+  selectApp: ({ app }) => { if (state.drawer) backFrom('drawer'); set({ app, ai: null, moveOpen: false }); },
+  selectNav: ({ id }) => { if (state.drawer) backFrom('drawer'); filtersChanged({ nav: id, channel: 'all', folder: null }); },
+  openDrawer: () => { set({ drawer: true }); pushLayer('drawer'); },
+  closeDrawer: () => backFrom('drawer'),
+  mobileBack: () => backFrom('reader'),
+  loadMore: () => loadList({ append: true }),
+  retryList: () => loadList(),
+  loadOlder: ({ id }) => loadOlder(Number(id)),
+  draftReload: ({ id }) => resolveConflict(Number(id), false),
+  draftKeepMine: ({ id }) => resolveConflict(Number(id), true),
+  selectGroup: ({ id }) => { if (state.drawer) backFrom('drawer'); set({ group: id, app: 'contacts' }); },
 
   // Dossiers
   newRootFolder: () => set({ creating: 'root', folderDraft: '' }),
   addSubfolder: ({ id }, e) => { e.stopPropagation(); set(s => ({ creating: id, folderDraft: '', collapsed: { ...s.collapsed, [id]: false } })); },
   toggleFolder: ({ id }, e) => { e.stopPropagation(); set(s => ({ collapsed: { ...s.collapsed, [id]: !s.collapsed[id] } })); },
-  selectFolder: ({ id }) => set({ folder: id, channel: 'all' }),
+  selectFolder: ({ id }) => { if (state.drawer) backFrom('drawer'); filtersChanged({ folder: id, channel: 'all' }); },
   folderDraft: (_, e) => set({ folderDraft: e.target.value }),
   folderKey: (_, e) => {
     if (e.key === 'Enter') commitFolder();
@@ -468,28 +707,35 @@ const actions = {
     set({ accountMenu: null });
     try {
       await api.syncNow(Number(id));
-      applyData(await api.state());
+      await reload({ refresh: true });
       set({ toast: 'Synchronisation demandée.' });
     } catch (e) { fail(e); }
   },
   openConnect: () => openWizard(),
 
   // Liste
-  search: (_, e) => set({ query: e.target.value }),
-  selectChannel: ({ id }) => set({ channel: id }),
+  // Recherche côté serveur, après une courte pause de frappe.
+  search: (_, e) => {
+    set({ query: e.target.value });
+    if (!state.paged) return;
+    clearTimeout(searchTimer);
+    searchTimer = setTimeout(() => loadList(), 250);
+  },
+  selectChannel: ({ id }) => filtersChanged({ channel: id }),
   selectThread: async ({ id }) => {
     const version = ++selectionVersion, profileId = state.profileId;
     rememberComposition();
     const m = state.data.messages.find(x => x.id === num(id));
     aiRequest++;
-    set({ selectedId: m.id, moveOpen: false, composing: null, ai: null });
+    set({ selectedId: m.id, selectedRow: m, moveOpen: false, composing: null, ai: null, pane: 'reader' });
+    pushLayer('reader');
     if (m.kind === 'new') {
       try {
         const cached = compositionBuffers.get(m.id);
         if (cached) { set({ newMailOpen: true, newMail: cached }); return; }
         const full = await api.message(m.id);
         if (selectionVersion !== version || state.profileId !== profileId || state.selectedId !== m.id) return;
-        set({ newMailOpen: true, newMail: { messageId: full.id, accountId: full.accountId, to: full.draft?.to || '', cc: full.draft?.cc || '', subject: full.subject, text: full.draft?.text || '', savedAt: full.draft?.savedAt, synced: full.draft?.synced, busy: false } });
+        set({ newMailOpen: true, newMail: { messageId: full.id, version: versionOf(full), accountId: full.accountId, to: full.draft?.to || '', cc: full.draft?.cc || '', subject: full.subject, text: full.draft?.text || '', savedAt: full.draft?.savedAt, synced: full.draft?.synced, busy: false } });
       } catch (e) { fail(e); }
       return;
     }
@@ -516,22 +762,19 @@ const actions = {
   resetWidth: () => { storage.set(LIST_W_KEY, 380); set({ listW: 380 }); },
 
   // Lecture
-  compose: ({ mode }) => { if (derive(state).sel?.channel === 'whatsapp' && mode !== 'reply') return; set({ composing: mode }); },
-  closeComposer: () => set({ composing: null }),
-  composeTo: (_, e) => { const id = state.selectedId, v = e.target.value; set(s => ({ composeTo: { ...s.composeTo, [id]: v } })); },
-  draft: (_, e) => { const id = state.selectedId, v = e.target.value; set(s => ({ drafts: { ...s.drafts, [id]: v } })); },
+  compose: ({ mode }) => {
+    if (derive(state).sel?.channel === 'whatsapp' && mode !== 'reply') return;
+    set({ composing: mode });
+    if (derive(state).sel?.channel !== 'whatsapp') pushLayer('compose');
+  },
+  closeComposer: () => { if (layers.includes('compose')) backFrom('compose'); else set({ composing: null }); },
+  composeTo: (_, e) => { const id = state.selectedId, v = e.target.value; set(s => ({ composeTo: { ...s.composeTo, [id]: v } })); scheduleAutosave(id); },
+  draft: (_, e) => { const id = state.selectedId, v = e.target.value; set(s => ({ drafts: { ...s.drafts, [id]: v } })); scheduleAutosave(id); },
   saveDraft: () => {
-    const sel = derive(state).sel;
-    if (!sel) return;
-    const text = state.drafts[sel.id] ?? state.details[sel.id]?.draft?.text ?? '';
-    const mode = state.composing || 'reply';
-    const to = mode === 'forward' ? (state.composeTo[sel.id] ?? state.details[sel.id]?.draft?.to ?? '') : null;
-    api.saveDraft(sel.id, { text, mode, to }).then(draft => {
-      if (draft.previousDraftKept) notify('Un ancien brouillon est conservé chez le fournisseur.');
-      sel.draft = { savedAt: draft.savedAt, gmail: draft.gmail, synced: draft.synced ?? draft.gmail };
-      if (state.details[sel.id]) state.details[sel.id].draft = draft;
-      set({});
-    }).catch(fail);
+    const id = derive(state).sel?.id;
+    if (id == null) return;
+    clearTimeout(draftTimers.get(id));
+    saveDraftNow(id);
   },
   toggleFlag: () => { const sel = derive(state).sel; if (sel) patchMessage(sel.id, { flagged: !sel.flagged }); },
   toggleRead: () => { const sel = derive(state).sel; if (sel) patchMessage(sel.id, { unread: !sel.unread }); },
@@ -540,7 +783,8 @@ const actions = {
     if (!v.sel) return;
     const next = v.list.find(m => m.id !== v.sel.id);
     patchMessage(v.sel.id, { archived: true });
-    set({ selectedId: next?.id ?? null, composing: null });
+    if (state.mobile) { set({ composing: null }); backFrom('reader'); return; }
+    set({ selectedId: next?.id ?? null, selectedRow: next || null, composing: null });
   },
   toggleTrail: ({ trail }) => set(s => ({ expandedTrail: { ...s.expandedTrail, [trail]: !s.expandedTrail[trail] } })),
 
@@ -553,7 +797,7 @@ const actions = {
   aiMemoryConfirm: () => changeReplyMemory({reset:true}),
   aiClassify: () => aiOpen('classify'),
   aiTab: ({ mode }) => { if (state.ai?.mode !== mode) aiOpen(mode); },
-  aiClose: () => { aiRequest++; set({ ai: null }); },
+  aiClose: () => { if (layers.includes('ai')) backFrom('ai'); else { aiRequest++; set({ ai: null }); } },
   aiTone: ({ tone }) => { aiRequest++; set({ aiTone: tone, ai: state.ai ? { ...state.ai, loading: false, result: null } : null }); },
   aiIntent: (_, e) => { aiRequest++; set({ aiIntent: e.target.value, ai: state.ai ? { ...state.ai, loading: false, result: null } : null }); },
   aiRun: () => aiRun(),
@@ -566,7 +810,7 @@ const actions = {
     try {
       const applied = await api.applyClassification(sel.id, a.result.proposalId, a.folderId);
       if (state.details[sel.id]) delete state.details[sel.id];
-      applyData(await api.state());
+      await reload({ refresh: true });
       if (state.ai === a || state.ai?.forId === sel.id) set({ ai: null });
       notify(applied.synced ? 'Classement synchronisé avec le compte de messagerie.' : 'Classement enregistré dans Relay Desk.');
     } catch (e) { if (state.ai?.forId === sel.id) set({ ai: { ...state.ai, loading: false, error: e.message } }); }
@@ -574,7 +818,9 @@ const actions = {
   aiInsert: () => {
     const id = state.ai?.forId, text = state.ai?.result?.text;
     if (id == null || !text || state.selectedId !== id || state.ai?.mode !== 'draft' || state.ai.loading) return;
+    if (layers.at(-1) === 'ai') { layers.pop(); try { history.back?.(); } catch { /* sans historique */ } layers.push('__skip'); }
     set(s => ({ drafts: { ...s.drafts, [id]: text }, ai: null, composing: 'reply' }));
+    scheduleAutosave(id);
   },
 
   // Contacts
@@ -601,25 +847,35 @@ const actions = {
     const acc = state.data.profiles.flatMap(p => p.accounts).find(a => a.id === Number(id));
     if (acc) set({ confirm: { kind: 'disconnect', accountId: acc.id, name: acc.name, busy: false, error: null }, menu: false, accountMenu: null });
   },
-  confirmCancel: () => { if (!state.confirm?.busy) set({ newMailOpen: !!state.confirm?.newMail, confirm: null }); },
+  confirmCancel: () => { if (state.confirm?.busy) return; if (layers.includes('confirm')) backFrom('confirm'); else set({ newMailOpen: !!state.confirm?.newMail, confirm: null }); },
 
   // Envoi : aperçu exact calculé par le serveur, puis envoi avec son empreinte.
+  // Aperçu exact : le brouillon est d'abord enregistré, puis l'aperçu porte la version à jour (baseVersion) ;
+  // un appareil dont le texte est dépassé ne peut ni fabriquer d'aperçu ni effacer un brouillon plus récent.
   sendPreview: async () => {
     const sel = derive(state).sel;
     if (!sel || state.confirm) return;
+    const id = sel.id;
+    clearTimeout(draftTimers.get(id));
+    set({ confirm: { kind: 'send', messageId: id, input: null, preview: null, busy: true, error: null } });
+    if (state.draftMeta[id]?.saving) await new Promise(r => { const t = setInterval(() => { if (!state.draftMeta[id]?.saving) { clearInterval(t); r(); } }, 50); });
+    if (state.draftMeta[id]?.version !== undefined && draftText(id) !== state.draftMeta[id].savedText) await saveDraftNow(id);
+    const meta = state.draftMeta[id] || {};
+    if (meta.conflict || meta.error) { set({ confirm: null }); if (meta.error) fail(new Error(meta.error)); return; }
     const mode = state.composing || 'reply';
-    const input = {
-      text: state.drafts[sel.id] ?? state.details[sel.id]?.draft?.text ?? '',
+    const input = withBase({
+      text: draftText(id),
       mode,
-      to: mode === 'forward' ? (state.composeTo[sel.id] ?? state.details[sel.id]?.draft?.to ?? '') : null,
-    };
-    set({ confirm: { kind: 'send', messageId: sel.id, input, preview: null, busy: true, error: null } });
+      to: mode === 'forward' ? (state.composeTo[id] ?? state.details[id]?.draft?.to ?? '') : null,
+    }, meta.version);
     try {
-      const preview = await api.previewSend(sel.id, input);
-      set({ confirm: { kind: 'send', messageId: sel.id, input, preview, busy: false, error: null } });
+      const preview = await api.previewSend(id, input);
+      set({ confirm: { kind: 'send', messageId: id, input, preview, busy: false, error: null } });
+      pushLayer('confirm');
     } catch (e) {
       set({ confirm: null });
-      fail(e);
+      if (e.status === 409 && e.code === 'draft_conflict') setMeta(id, { conflict: true });
+      else fail(e);
     }
   },
   confirmSend: async () => {
@@ -638,17 +894,21 @@ const actions = {
     // Envoi confirmé par le serveur : plus rien ici ne doit inviter à renvoyer.
     const id = c.messageId;
     compositionBuffers.delete(id);
+    clearTimeout(draftTimers.get(id));
+    if (layers.at(-1) === 'confirm') { layers.pop(); try { history.back?.(); } catch { /* sans historique */ } layers.push('__skip'); }
+    // L'entrée d'historique du compositeur devient neutre : le retour suivant ne rouvre ni ne ferme rien d'autre.
+    if (layers.includes('compose')) layers[layers.lastIndexOf('compose')] = '__skip';
     set(s => {
-      const drafts = { ...s.drafts }, composeTo = { ...s.composeTo }, details = { ...s.details };
-      delete drafts[id]; delete composeTo[id]; delete details[id];
-      return { confirm: null, composing: null, drafts, composeTo, details, ...(c.newMail ? { newMail: null, newMailOpen: false, selectedId: s.selectedId === id ? null : s.selectedId, data: { ...s.data, messages: s.data.messages.filter(m => m.id !== id) } } : {}) };
+      const drafts = { ...s.drafts }, composeTo = { ...s.composeTo }, details = { ...s.details }, draftMeta = { ...s.draftMeta };
+      delete drafts[id]; delete composeTo[id]; delete details[id]; delete draftMeta[id];
+      return { confirm: null, composing: null, drafts, composeTo, details, draftMeta, ...(c.newMail ? { newMail: null, newMailOpen: false, selectedId: s.selectedId === id ? null : s.selectedId, data: { ...s.data, messages: s.data.messages.filter(m => m.id !== id) } } : {}) };
     });
     const m = state.data.messages.find(x => x.id === id);
     if (m) m.draft = null;
     const sent = r.draftRemoved === false ? 'Message envoyé. Le brouillon local est effacé ; son brouillon chez le fournisseur est conservé, supprime-le si besoin.' : 'Message envoyé.';
     notify(sent);
     try {
-      applyData(await api.state());
+      await reload({ refresh: true });
     } catch {
       notify(`${sent} La liste sera actualisée au prochain passage.`);
     }
@@ -662,7 +922,7 @@ const actions = {
       selectionVersion++;
       for (const [id, draft] of compositionBuffers) if (draft.accountId === c.accountId) compositionBuffers.delete(id);
       if (state.newMail?.accountId === c.accountId) set({ newMail: null, newMailOpen: false });
-      applyData(await api.state());
+      await reload({ refresh: true });
       const v = derive(state);
       set({ confirm: null, selectedId: v.sel ? state.selectedId : firstOf(state.profileId), folder: null });
     } catch (e) {
@@ -717,11 +977,41 @@ document.addEventListener('keydown', e => {
   else if (state.menu || state.moveOpen || state.accountMenu) set({ menu: false, moveOpen: false, accountMenu: null });
 });
 
+// Navigateur seulement (absent des tests en machine virtuelle) : retour, format d'écran, clavier, réseau.
+globalThis.addEventListener?.('popstate', onPopState);
+const mobileQuery = globalThis.matchMedia?.('(max-width: 760px)');
+mobileQuery?.addEventListener?.('change', e => { layers.length = 0; set({ mobile: e.matches, drawer: false, pane: e.matches && state.selectedId != null ? 'reader' : 'list' }); });
+const viewport = globalThis.visualViewport;
+if (viewport && document.documentElement) {
+  // Hauteur visible réelle (clavier ouvert compris) pour garder le compositeur accessible.
+  const fit = () => document.documentElement.style.setProperty('--vvh', `${Math.round(viewport.height)}px`);
+  viewport.addEventListener('resize', fit);
+  fit();
+}
+globalThis.addEventListener?.('offline', () => set({ offline: true }));
+globalThis.addEventListener?.('online', () => { set({ offline: false }); if (state.data) reload({ refresh: true }).catch(() => {}); else if (state.loadError === 'offline') location.reload(); });
+// Texte pas encore enregistré : le navigateur demande confirmation avant de quitter la page.
+globalThis.addEventListener?.('beforeunload', e => {
+  if (Object.keys(state.draftMeta).some(id => dirty(Number(id))) || state.newMail && !state.newMail.savedAt && state.newMail.text) { e.preventDefault(); e.returnValue = ''; }
+});
+
 api.session()
-  .then(auth=>{state.auth=auth;return api.state();})
-  .then(data => {
-    set({ data, selectedId: data.messages.find(m => m.p === state.profileId && !m.archived)?.id ?? null });
+  .then(auth => { state.auth = auth; return api.state(listParams(state)); })
+  .then(async data => {
+    if (data.page) {
+      const profileId = data.profiles.some(p => p.id === state.profileId) ? state.profileId : data.profiles[0]?.id;
+      if (profileId !== state.profileId) { state.profileId = profileId; await reload(); }
+      else applyData(data, { paged: true, counts: data.counts || null, page: { ...data.page, key: listKey(state), loading: false, error: null } });
+      if (!state.mobile && state.selectedId == null) set({ selectedId: state.data.messages[0]?.id ?? null, selectedRow: state.data.messages[0] || null });
+    } else {
+      set({ data, selectedId: state.mobile ? null : data.messages.find(m => m.p === state.profileId && !m.archived)?.id ?? null });
+    }
     resumeFromRedirect();
   })
-  .catch(err => {if(!state.auth) location.replace('/login');else set({ loadError: err.message });});
+  // Réseau absent (TypeError de fetch) : message hors ligne, jamais de redirection vers la connexion.
+  .catch(err => {
+    if (state.offline || err instanceof TypeError) set({ loadError: 'offline' });
+    else if (!state.auth) location.replace('/login');
+    else set({ loadError: err.message });
+  });
 render();

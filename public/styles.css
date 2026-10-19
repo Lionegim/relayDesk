@@ -125,7 +125,7 @@ svg { display: block; }
 
 /* ---------- Mise en page ---------- */
 
-.app { display: grid; height: 100vh; min-width: 900px; background: var(--card); font-size: 13px; }
+.app { display: grid; height: 100vh; height: 100dvh; min-width: 900px; background: var(--card); font-size: 13px; }
 .loading { display: grid; place-items: center; height: 100vh; color: var(--muted-foreground); font-size: 14px; }
 
 /* Barre latérale */
@@ -424,3 +424,111 @@ svg { display: block; }
 .auth-dialog-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
 .auth-dialog-actions a { text-decoration: none; }
 @media(max-width: 560px) { .login-card { padding: 32px 24px; } }
+
+
+/* ---------- États partagés : historique, liste paginée, brouillons, hors ligne ---------- */
+.list-more { display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 12px 8px 16px; font-size: 12px; text-align: center; }
+.history-more { display: flex; justify-content: center; padding: 8px 0 12px; }
+.composer-status.is-warn, .wa-status.is-warn { color: var(--boost-700); }
+.composer-status.is-error { color: var(--destructive); }
+.draft-conflict { display: flex; flex-direction: column; gap: 8px; margin: 8px 12px 0; padding: 10px 12px; border: 1px solid color-mix(in oklab, var(--destructive) 35%, var(--border)); border-radius: 8px; background: color-mix(in oklab, var(--destructive) 6%, var(--card)); font-size: 13px; }
+.draft-conflict p { margin: 0; }
+.draft-conflict div { display: flex; flex-wrap: wrap; gap: 6px; }
+.offline-banner { position: fixed; top: 0; left: 0; right: 0; z-index: 70; padding: 6px 12px; padding-top: max(6px, env(safe-area-inset-top)); background: var(--foreground); color: var(--background); font-size: 12px; text-align: center; }
+.mobile-only { display: none; }
+.drawer-close { display: none; }
+
+/* ---------- Mobile (≤ 760 px) : un écran à la fois, cibles de 44 px, zones sûres ---------- */
+@media (max-width: 760px) {
+  html, body { height: 100%; overscroll-behavior: none; }
+  body { -webkit-text-size-adjust: 100%; }
+  .app.is-mobile {
+    display: block; position: relative; min-width: 0; width: 100%;
+    height: var(--vvh, 100dvh); overflow: hidden; font-size: 15px;
+  }
+  .mobile-only { display: grid; }
+  /* Écrans : liste ou lecture, plein cadre, avec marges de sécurité (encoche, barre d'accueil). */
+  .is-mobile > .list, .is-mobile > .reader, .is-mobile > .contacts {
+    position: absolute; inset: 0; border-right: 0;
+    padding-left: env(safe-area-inset-left); padding-right: env(safe-area-inset-right);
+  }
+  .is-mobile.pane-list > .reader { display: none; }
+  .is-mobile.pane-reader > .list { display: none; }
+  .is-mobile .resizer { display: none; }
+  .is-mobile .list-head { padding: max(10px, env(safe-area-inset-top)) 12px 10px; }
+  .is-mobile .threads { padding: 4px 6px calc(12px + env(safe-area-inset-bottom)); -webkit-overflow-scrolling: touch; }
+  .is-mobile .thread { min-height: 64px; padding: 12px 10px 12px 24px; }
+  .is-mobile .thread .avatar { width: 36px; height: 36px; font-size: 13px; }
+  .is-mobile .input { min-height: 44px; font-size: 16px !important; } /* 16 px : pas de zoom automatique iOS */
+  .is-mobile .chips { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
+  .is-mobile .chip { min-height: 36px; padding: 6px 14px; font-size: 14px; white-space: nowrap; }
+
+  /* Tiroir : barre latérale glissée depuis la gauche, au-dessus d'un voile. */
+  .is-mobile > .sidebar {
+    position: fixed; inset: 0 auto 0 0; z-index: 40; width: min(84vw, 320px);
+    padding: max(12px, env(safe-area-inset-top)) 10px calc(12px + env(safe-area-inset-bottom)) max(10px, env(safe-area-inset-left));
+    transform: translateX(-102%); transition: transform 180ms ease; box-shadow: var(--shadow-lg); visibility: hidden;
+  }
+  .is-mobile.drawer-open > .sidebar { transform: none; visibility: visible; }
+  .drawer-backdrop { position: fixed; inset: 0; z-index: 35; background: color-mix(in oklab, var(--foreground) 35%, transparent); }
+  .is-mobile .drawer-close { display: grid; place-items: center; align-self: flex-end; width: 44px; height: 44px; }
+  .is-mobile .side-item, .is-mobile .folder-name { min-height: 44px; font-size: 15px; }
+  .is-mobile .folder-caret, .is-mobile .folder-sub, .is-mobile .folder-new { min-width: 44px; min-height: 44px; }
+
+  /* Cibles tactiles d'au moins 44 px. */
+  .is-mobile .btn, .is-mobile ~ .overlay .btn, .overlay .btn { min-height: 44px; padding: 0 14px; font-size: 14px; }
+  .is-mobile .icon-btn { width: 44px; height: 44px; }
+  .is-mobile .link-btn, .is-mobile .close-btn, .overlay .close-btn, .is-mobile .composer-close { min-width: 44px; min-height: 44px; }
+  .is-mobile .pill, .overlay .pill { min-height: 44px; padding: 8px 14px; }
+
+  /* Lecture : barre d'outils défilable, retour à gauche. */
+  .is-mobile .toolbar { height: auto; min-height: 56px; padding: max(6px, env(safe-area-inset-top)) 8px 6px; gap: 4px; overflow-x: auto; scrollbar-width: none; }
+  .is-mobile .toolbar > .grow { display: none; }
+  .is-mobile .icon-group { flex: none; }
+  .is-mobile .mobile-back { flex: none; padding: 0 10px 0 6px; font-size: 15px; }
+  .is-mobile .reader-scroll { padding: 12px 16px calc(24px + env(safe-area-inset-bottom)); }
+  .is-mobile .msg-head { flex-wrap: wrap; }
+  .is-mobile .msg-side { flex-direction: row; gap: 8px; white-space: normal; }
+  .is-mobile .msg-body { font-size: 16px; }
+
+  /* Rédaction : plein écran au-dessus de la lecture, au-dessus du clavier. */
+  .is-mobile .composer {
+    position: fixed; inset: 0; z-index: 45; max-width: none; margin: 0; border: 0; border-radius: 0;
+    height: var(--vvh, 100dvh); background: var(--card);
+    padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+  }
+  .is-mobile .composer-head { min-height: 52px; font-size: 14px; }
+  .is-mobile .composer textarea { flex: 1; min-height: 0; resize: none; font-size: 16px; }
+  .is-mobile .composer-foot { gap: 8px; padding: 8px; }
+  .is-mobile .composer-status { flex-basis: 100%; order: -1; }
+
+  /* WhatsApp : en-tête et compositeur fixes, zone de messages défilante. */
+  .is-mobile .wa-head { padding: 8px 12px; }
+  .is-mobile .wa-composer { padding: 8px 10px calc(10px + env(safe-area-inset-bottom)); }
+  .is-mobile .wa-input textarea { font-size: 16px; }
+  .is-mobile .wa-status { flex-basis: 100%; order: -1; }
+  .is-mobile .wa-bubble { max-width: 86%; }
+
+  /* Assistant : feuille plein écran. */
+  .is-mobile .ai {
+    position: fixed; inset: 0; z-index: 46; width: auto; border: 0; border-radius: 0;
+    height: var(--vvh, 100dvh);
+    padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+  }
+  .is-mobile .ai-tab { min-height: 44px; font-size: 14px; }
+  .is-mobile .ai textarea, .is-mobile .ai select { font-size: 16px; }
+
+  /* Fenêtres (aperçu exact, déconnexion, appareils, nouveau message, connexion) : plein écran. */
+  .overlay { padding: 0; place-items: stretch; }
+  .dialog, .dialog-sm { max-width: none; max-height: none; height: var(--vvh, 100dvh); border-radius: 0; }
+  .dialog-body { padding: 18px 16px; }
+  .dialog-foot { padding: 10px 16px calc(10px + env(safe-area-inset-bottom)); flex-wrap: wrap; }
+  .dialog-steps { padding: max(12px, env(safe-area-inset-top)) 16px 12px; overflow-x: auto; }
+  .new-mail-dialog input, .new-mail-dialog select, .new-mail-dialog textarea { font-size: 16px; min-height: 44px; }
+  .send-body { font-size: 16px; }
+  .toast { left: 12px; right: 12px; bottom: calc(16px + env(safe-area-inset-bottom)); max-width: none; transform: none; }
+
+  /* Contacts : tableau défilant horizontalement. */
+  .is-mobile .contacts-scroll { padding: max(16px, env(safe-area-inset-top)) 16px 24px; }
+  .is-mobile .table { overflow-x: auto; }
+}
