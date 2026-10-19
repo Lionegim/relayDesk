@@ -591,7 +591,27 @@ const checkbox = (on, action, id, label) => html`
 
 // ---------- Assistant de connexion ----------
 
+function whatsappConnectDialog(s) {
+ const c=s.c,profile=s.data.profiles.find(p=>p.id===c.profile),done=c.step==='done';
+ return html`<div class="overlay" data-on-click="closeConnect"><section class="dialog wa-connect-dialog" role="dialog" aria-modal="true" aria-label="Connexion WhatsApp" data-on-click="noop">
+  <header class="wa-connect-heading"><img class="wa-brand-wordmark" src="/icons/whatsapp-wordmark-black.svg" width="156" height="36" alt="WhatsApp"><button class="close-btn" data-on-click="closeConnect" aria-label="Fermer">×</button></header>
+  <div class="dialog-body">
+   <p class="muted" style="margin:0">${done?'Connecté au profil':'Connexion au profil'} <strong>${profile?.name || ''}</strong></p>
+   ${done ? html`<div class="wa-connect-success" role="status"><strong>WhatsApp est connecté</strong><p>${c.real?.threads || 0} conversations reçues. La synchronisation continue en arrière-plan.</p></div>` : html`
+    <div class="wa-qr-layout">
+      <div class="whatsapp-link" role="status">${c.link?.qrDataUrl && !c.error ? html`<img class="whatsapp-qr" src="${c.link.qrDataUrl}" width="264" height="264" alt="QR code pour connecter WhatsApp à Relay Desk">` : html`${when(!c.error,()=>html`<span class="spinner"></span>`)}<span>${c.error?'Liaison indisponible':c.link?.status==='syncing'?'Téléphone connecté, synchronisation en cours…':'Préparation du QR code…'}</span>`}</div>
+      <div><h3>Scanne pour connecter ton compte</h3><ol class="wa-link-steps"><li>Ouvre WhatsApp sur ton téléphone.</li><li>Va dans <strong>Réglages → Appareils connectés</strong> (sur Android : menu ⋮).</li><li>Choisis <strong>Connecter un appareil</strong> et scanne ce QR code.</li></ol><p class="muted">Le compte est identifié automatiquement après le scan.</p></div>
+    </div>
+    <p class="muted wa-connect-note">Les textes individuels et de groupe disponibles sur les 7 derniers jours seront synchronisés. L’historique reçu peut rester partiel.</p>
+    <p class="wa-connect-note"><strong>Tu gardes le contrôle.</strong> Chaque envoi exige ton approbation de l’aperçu exact. Les groupes restent en lecture et analyse.</p>
+    <p class="muted wa-connect-note">Connecteur communautaire non officiel. Relie uniquement un compte que tu possèdes ou es autorisé à connecter.</p>`}
+   ${when(c.error,()=>html`<div class="alert" role="alert">${c.error}</div>`)}
+  </div><footer class="dialog-foot">${done?html`<button class="btn btn-primary" data-on-click="cNext">Ouvrir la boîte</button>`:html`${when(c.error,()=>html`<button class="btn btn-primary" data-on-click="refreshWhatsAppQR">Réessayer</button>`)}<button class="btn btn-ghost" data-on-click="closeConnect">Fermer</button>`}</footer>
+ </section></div>`;
+}
+
 function connectWizard(s) {
+  if(s.c.svc==='whatsapp') return whatsappConnectDialog(s);
   const c = s.c, d = c.svc ? s.data.services[c.svc] : null;
   const PERM = s.data.permissions;
   const si = c.step === 'done' ? 3 : STEPS.findIndex(x => x[0] === c.step);
@@ -600,7 +620,7 @@ function connectWizard(s) {
   const msgs = Math.round(c.win * 6.4);
   const profileName = id => s.data.profiles.find(p => p.id === id).name;
   const next = c.svc === 'whatsapp' && c.step === 'auth' && c.linkId ? null : { config: 'Continuer', auth: d?.btn, done: 'Ouvrir la boîte' }[c.step];
-  const nextDisabled = c.busy || (c.step === 'auth' ? missing : c.step === 'config' ? !c.name.trim() || (c.svc==='whatsapp' && !/^\+[1-9]\d{6,14}$/.test(c.expectedPhone || '')) : false);
+  const nextDisabled = c.busy || (c.step === 'auth' ? missing : c.step === 'config' ? !c.name.trim() : false);
   const importMeta = c.real ? `${c.real.done} / ${c.real.total} conversations` : `${Math.round(msgs * c.progress / 100)} / ${msgs}`;
   const checks = [['Autorisation reçue', 1, ''], ['Capacités vérifiées', c.real ? 2 : 20, `${permsOn.length} accès`], [`Import des ${c.win} derniers jours`, 100, importMeta], ['Triage local', 100, '']];
   const stats = c.real ? [[c.real.messages, 'messages importés'], [c.real.threads, 'conversations'], [c.real.todo, 'à traiter']]
@@ -655,8 +675,6 @@ function connectWizard(s) {
               <span class="field-label">Nom du compte</span>
               <input class="input" value="${c.name}" data-on-input="cName" maxlength="80" ${raw(c.accountId ? 'readonly' : '')}>
             </label>
-            ${when(c.svc === 'whatsapp', () => html`<div class="wa-connect-intro"><strong>Ton WhatsApp, dans Relay Desk</strong><p>Ajoute un compte que tu possèdes ou que tu es autorisé à connecter. Tu valideras la liaison depuis son téléphone.</p></div>
-              <label class="field" style="gap:8px"><span class="field-label">Numéro WhatsApp à connecter</span><input class="input" type="tel" inputmode="tel" autocomplete="off" maxlength="16" placeholder="+33612345678" value="${c.expectedPhone || ''}" data-on-input="cPhone" ${raw(c.phoneLocked ? 'readonly' : '')}><small class="muted">Format international. Un autre téléphone sera refusé.</small></label>`)}
             <div class="field" style="gap:8px">
               <span class="field-label">Permissions</span>
               <div class="perms">
@@ -685,7 +703,6 @@ function connectWizard(s) {
             <div class="recap">
               <span class="muted">Profil</span><span style="font-weight:600">${profileName(c.profile)}</span>
               <span class="muted">Compte</span><span style="font-weight:600">${c.name}</span>
-              ${when(c.svc==='whatsapp', () => html`<span class="muted">Téléphone confirmé</span><strong>${c.expectedPhone}</strong>`)}
               <span class="muted">Accès</span><span style="font-weight:600">${permsOn.map(k => PERM[k][0]).join(', ')}</span>
               <span class="muted">Historique</span><span style="font-weight:600">${c.win} derniers jours</span>
             </div>

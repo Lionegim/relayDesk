@@ -4,7 +4,7 @@ import vm from 'node:vm';
 import { readFileSync } from 'node:fs';
 import { html,raw,when,cls } from '../public/js/dom.js';
 const c=vm.createContext({html,raw,when,cls,ICON:{sparkle:'*',lines:'≡'},CH:{whatsapp:{label:'WhatsApp'}}});
-vm.runInContext(readFileSync(new URL('../public/js/views.js',import.meta.url),'utf8').replace(/^import .*;\n/gm,'').replace(/^export /gm,'')+'\nglobalThis.chat=(s,v,m)=>String(whatsappView(s,v,m));globalThis.list=(s,v)=>String(messageList(s,v));',c);
+vm.runInContext(readFileSync(new URL('../public/js/views.js',import.meta.url),'utf8').replace(/^import .*;\n/gm,'').replace(/^export /gm,'')+'\nglobalThis.connect=s=>String(whatsappConnectDialog(s));globalThis.chat=(s,v,m)=>String(whatsappView(s,v,m));globalThis.list=(s,v)=>String(messageList(s,v));',c);
 function render({send=true,text='Réponse locale',confirm=null,full=true,group=false}={}) {
  const m={id:9,accountId:3,channel:'whatsapp',from:'Moi (à Claire)',subject:'WhatsApp · Claire',initials:'C',account:'Téléphone',sortAt:Date.UTC(2026,9,18,13)};
  const details={...m,group,fromMe:true,at:m.sortAt,body:'DERNIER <script>danger()</script>',trail:[{from:'Alice',fromMe:false,at:m.sortAt-60000,body:'MILIEU'},{fromMe:true,at:m.sortAt-86400000,body:'PREMIER'}]};
@@ -46,4 +46,10 @@ test('suivi WhatsApp : affiche attente ou erreur avec compteurs reçus, sans ann
 test('vue groupe WhatsApp : auteur visible et aperçu d’envoi désactivé',()=>{
  const markup=render({group:true});assert.match(markup,/wa-author">Alice/);assert.match(markup,/Claire · Groupe/);
  assert.match(markup,/Groupe : lecture et IA/);assert.match(markup,/data-on-click="sendPreview"[^>]*disabled/);
+});
+
+test('connexion WhatsApp : écran QR sans formulaire ni étapes de configuration',()=>{
+ const markup=c.connect({c:{step:'auth',svc:'whatsapp',profile:'perso',linkId:'test',link:{status:'qr',qrDataUrl:'data:image/png;base64,dGVzdA=='}},data:{profiles:[{id:'perso',name:'Personnel'}]}});
+ assert.match(markup,/QR code pour connecter WhatsApp/);assert.match(markup,/identifié automatiquement/);assert.match(markup,/Personnel/);
+ assert.doesNotMatch(markup,/<input|Numéro WhatsApp|Permissions|dialog-steps/);assert.match(markup,/approbation de l’aperçu exact/);
 });

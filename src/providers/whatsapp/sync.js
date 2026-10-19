@@ -32,7 +32,7 @@ const FULL_RESPONSE = {
 };
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 
-export function createWhatsAppSync({ store, vault, lib, makeSocket, log = console, timing = {}, assertAccountAllowed=()=>{}, requirePhoneConfirmation=false }) {
+export function createWhatsAppSync({ store, vault, lib, makeSocket, log = console, timing = {}, assertAccountAllowed=()=>{}, requireLinkedIdentity=false }) {
   const T = {
     linkTtlMs: 5 * 60000,       // durée maximale d'une liaison avant validation sur le téléphone
     qrTtlMs: 60000,             // durée d'affichage d'un QR (Baileys le renouvelle avant)
@@ -142,7 +142,7 @@ export function createWhatsAppSync({ store, vault, lib, makeSocket, log = consol
   async function openSession(accountId, link = null) {
     const at = epoch(accountId);
     const account=store.getAccount(accountId);
-    if(requirePhoneConfirmation && !account.address) {
+    if(requireLinkedIdentity && !link && !account.address) {
       if(link) failLink(link,'Confirme le numéro WhatsApp avant de relier cet appareil.');
       else {store.setAccountStatus(accountId,'À reconnecter','warn');store.setSync(accountId,{status:'error',error:'Confirme le numéro WhatsApp avant de relier cet appareil.'});}
       return;
@@ -698,7 +698,7 @@ export function createWhatsAppSync({ store, vault, lib, makeSocket, log = consol
       const { accountId, profileId, name } = input;
       if (!isWhatsApp(accountId)) throw badRequest('Compte WhatsApp invalide.');
       const account = store.getAccount(accountId);
-      if ((requirePhoneConfirmation || input.expectedPhone !== undefined) && (typeof input.expectedPhone !== 'string' || !/^\+[1-9]\d{6,14}$/.test(input.expectedPhone) || (account.address && input.expectedPhone !== account.address))) throw badRequest('Confirme le numéro du compte WhatsApp à reconnecter.');
+      if ((input.expectedPhone !== undefined) && (typeof input.expectedPhone !== 'string' || !/^\+[1-9]\d{6,14}$/.test(input.expectedPhone) || (account.address && input.expectedPhone !== account.address))) throw badRequest('Confirme le numéro du compte WhatsApp à reconnecter.');
       if (account.profileId !== profileId || account.name !== name?.trim()) throw badRequest('Compte WhatsApp invalide.');
       const submittedAt = epoch(accountId);
       return serial(accountId, async () => {
@@ -724,7 +724,7 @@ export function createWhatsAppSync({ store, vault, lib, makeSocket, log = consol
     },
 
     async startLink({ profileId, name, windowDays = 7, accountId = null, expectedPhone } = {}) {
-      if ((requirePhoneConfirmation || expectedPhone !== undefined) && (typeof expectedPhone !== 'string' || !/^\+[1-9]\d{6,14}$/.test(expectedPhone))) throw badRequest('Confirme le numéro WhatsApp au format international, par exemple +33612345678.');
+      if ((expectedPhone !== undefined) && (typeof expectedPhone !== 'string' || !/^\+[1-9]\d{6,14}$/.test(expectedPhone))) throw badRequest('Confirme le numéro WhatsApp au format international, par exemple +33612345678.');
       if (typeof profileId !== 'string' || !store.hasProfile(profileId)) throw notFound('Profil introuvable');
       if (typeof name !== 'string' || !name.trim() || name.trim().length > 80) throw badRequest('Nom du compte invalide');
       if (!Number.isInteger(windowDays) || windowDays < 1 || windowDays > 30) throw badRequest('Période d’import invalide');

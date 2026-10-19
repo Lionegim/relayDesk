@@ -545,3 +545,12 @@ svg { display: block; }
 .acct-mark:has(.wa-brand-glyph), .ch-mark:has(.wa-brand-glyph) { width:28px; height:28px; flex-shrink:0; background:transparent !important; }
 .service-mark:has(.wa-brand-glyph) { background:transparent !important; }
 .wa-badge { display:inline-flex; align-items:center; gap:5px; vertical-align:middle; }
+
+.wa-connect-dialog { width:min(760px,calc(100vw - 32px)); max-width:760px; }
+.wa-connect-heading { display:flex; align-items:center; justify-content:space-between; padding:24px 28px 0; }
+.wa-qr-layout { display:grid; grid-template-columns:264px minmax(0,1fr); align-items:center; gap:28px; }
+.wa-qr-layout .whatsapp-link { min-height:264px; padding:0; }
+.wa-qr-layout h3 { margin:0; font-size:18px; }
+.wa-connect-note { font-size:13px; line-height:1.6; margin:0; }
+.wa-connect-success { padding:20px; border-radius:12px; background:#edf7f1; color:#174b35; }
+@media(max-width:640px) { .wa-qr-layout { grid-template-columns:minmax(0,1fr); gap:12px; } .wa-qr-layout .whatsapp-link { min-height:220px; } .wa-qr-layout .whatsapp-qr { width:220px; height:220px; } .wa-connect-heading { padding:18px 20px 0; } }

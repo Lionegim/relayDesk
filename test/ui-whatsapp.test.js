@@ -9,13 +9,13 @@ async function ui() {
  const root={querySelector:()=>timeline};
  const data={profiles:[{id:'anove',name:'Anove',accounts:[]},{id:'perso',name:'Personnel',accounts:[]}],messages:[],folders:[],contacts:[],services:{whatsapp:{name:'WhatsApp',auth:'qr',available:['read','drafts','send']}},integrations:{whatsapp:{configured:true}}};
  let snapshots=0,failSnapshot=false;
- const api={session:async()=>({enabled:false}),state:async()=>{snapshots++;if(failSnapshot){failSnapshot=false;throw new Error('Réseau temporaire');}return structuredClone(data)},startWhatsAppLink:()=>new Promise((resolve,reject)=>requests.push({resolve,reject})),cancelWhatsAppLink:async id=>{cancelled.push(id)},whatsAppLink:async()=>({status:'qr',qrDataUrl:'fake'})};
+ const api={session:async()=>({enabled:false}),state:async()=>{snapshots++;if(failSnapshot){failSnapshot=false;throw new Error('Réseau temporaire');}return structuredClone(data)},startWhatsAppLink:input=>new Promise((resolve,reject)=>requests.push({resolve,reject,input})),cancelWhatsAppLink:async id=>{cancelled.push(id)},whatsAppLink:async()=>({status:'qr',qrDataUrl:'fake'})};
  const c={api,patch:()=>{if(nextTimeline!==undefined){timeline=nextTimeline;nextTimeline=undefined}},delegate:()=>{},renderApp:()=>'',NAV:[['all','Boîte']],GROUPS:[['all','Tous']],SETTINGS:{},WINDOWS:[7,30,90],
   localStorage:{getItem:()=>null,setItem:()=>{}},document:{getElementById:()=>root,addEventListener:()=>{}},queueMicrotask,setTimeout:()=>1,clearTimeout:()=>{},setInterval:fn=>{intervals.push(fn);return intervals.length},clearInterval:()=>{},URLSearchParams,location:{search:''},history:{replaceState:()=>{}},console};
  vm.createContext(c);
  vm.runInContext(readFileSync(new URL('../public/js/app.js',import.meta.url),'utf8').replace(/^import .*;\n/gm,'')+'\nglobalThis.inspect=()=>state;globalThis.act=actions;globalThis.redraw=render;globalThis.refreshData=applyData;',c);
  await tick();
- const open=()=>{c.act.openConnect();c.act.pickService({svc:'whatsapp'});c.act.cPhone({}, {target:{value:'+33100000000'}});c.act.cNext();c.act.cNext()};
+ const open=()=>{c.act.openConnect();c.act.pickService({svc:'whatsapp'})};
  return {c,api,requests,cancelled,intervals,open,failNextSnapshot:()=>{failSnapshot=true},draw:(before,after)=>{timeline=before;nextTimeline=after;c.redraw()}};
 }
 test('conversation WhatsApp : ouverture en bas, nouveaux messages suivis sans déplacer la lecture des anciens',async()=>{
@@ -69,15 +69,17 @@ test('mémoire UI : pause invalide la proposition et une réponse tardive ne mod
  assert.equal(u.c.inspect().details[1].replyMemory.enabled,false);assert.equal(u.c.inspect().ai.result,null);
 });
 
-test('liaison UI : aucun QR sans confirmation du numéro international',async()=>{
- const u=await ui();u.c.act.openConnect();u.c.act.pickService({svc:'whatsapp'});u.c.act.cNext();
- assert.equal(u.c.inspect().c.step,'config');assert.equal(u.requests.length,0);
- u.c.act.cPhone({}, {target:{value:'0612345678'}});u.c.act.cNext();assert.equal(u.requests.length,0);
+test('liaison UI : QR direct, profil courant et aucun champ de numéro',async()=>{
+ const u=await ui();u.open();assert.equal(u.c.inspect().c.step,'auth');assert.equal(u.requests.length,1);
+ assert.equal(u.requests[0].input.profileId,'anove');assert.equal(u.requests[0].input.name,'WhatsApp');assert.equal('expectedPhone' in u.requests[0].input,false);
 });
 
-test('reconnexion UI : un ancien compte sans numéro reste modifiable',async()=>{
+test('reconnexion UI : QR direct pour le compte existant sans saisie du numéro',async()=>{
  const u=await ui();u.c.openWizard('whatsapp','Ancien',{id:7,address:null});
- assert.equal(u.c.inspect().c.phoneLocked,false);
- u.c.act.cPhone({}, {target:{value:'+33100000000'}});u.c.act.cNext();assert.equal(u.c.inspect().c.step,'auth');
- u.c.openWizard('whatsapp','Existant',{id:8,address:'+33100000000'});assert.equal(u.c.inspect().c.phoneLocked,true);
+ assert.equal(u.c.inspect().c.step,'auth');assert.equal(u.requests.length,1);assert.equal(u.requests[0].input.accountId,7);assert.equal(u.requests[0].input.reconnect,true);
+});
+
+test('liaison UI : nom automatique distinct pour ajouter un autre compte',async()=>{
+ const u=await ui();u.c.inspect().data.profiles[0].accounts.push({name:'WhatsApp'},{name:'WhatsApp 2'});
+ u.open();assert.equal(u.requests[0].input.name,'WhatsApp 3');
 });

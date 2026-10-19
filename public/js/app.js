@@ -482,16 +482,21 @@ function aiOpen(mode) {
 // ---------- Assistant de connexion ----------
 
 let syncTimer, wizardVersion = 0, linkRequest = 0;
+function whatsappAccountName() {
+  const used=new Set((state.data.profiles.find(p=>p.id===state.profileId)?.accounts || []).map(a=>a.name));
+  let name='WhatsApp',n=2;while(used.has(name)) name=`WhatsApp ${n++}`;return name;
+}
 function svcInit(key, name) {
   const def = state.data.services[key], fields = {};
   (def.fields || []).forEach(f => { fields[f[0]] = f[2]; });
-  return { step: 'config', svc: key, name: name || def.name, fields, perms: def.auth === 'qr' ? { read: true, drafts: true, send: true } : { read: true }, ...(def.auth === 'qr' ? { win: 7 } : {}) };
+  return { step: key==='whatsapp'?'auth':'config', svc: key, name: name || (key==='whatsapp'?whatsappAccountName():def.name), fields, perms: def.auth === 'qr' ? { read: true, drafts: true, send: true } : { read: true }, ...(def.auth === 'qr' ? { win: 7 } : {}) };
 }
 function openWizard(svc, name, account = null) {
   const c = { wizardId: ++wizardVersion, step: 'pick', svc: null, profile: state.profileId, name: '', perms: { read: true }, win: 30, fields: {}, progress: 0, fromAccount: !!name };
   if (svc) Object.assign(c, svcInit(svc, name));
-  if (account) Object.assign(c, { expectedPhone:account.address || '', phoneLocked:!!account.address, accountId: account.id, win: svc === 'whatsapp' ? 7 : account.windowDays || 30, perms: Object.fromEntries((svc === 'whatsapp' ? ['read','drafts','send'] : ['read', ...(account.perms || [])]).map(p => [p, true])) });
+  if (account) Object.assign(c, { accountId: account.id, win: svc === 'whatsapp' ? 7 : account.windowDays || 30, perms: Object.fromEntries((svc === 'whatsapp' ? ['read','drafts','send'] : ['read', ...(account.perms || [])]).map(p => [p, true])) });
   set({ c, menu: false, accountMenu: null });
+  if(svc==='whatsapp') startWhatsAppLink();
 }
 const setC = f => set(s => ({ c: { ...s.c, ...(typeof f === 'function' ? f(s.c) : f) } }));
 function closeWizard() {
@@ -505,12 +510,11 @@ function closeWizard() {
 async function startWhatsAppLink() {
   const c = state.c;
   if (!c || c.busy || c.linkId) return;
-  if (!/^\+[1-9]\d{6,14}$/.test(c.expectedPhone || '')) { setC({error:'Indique le numéro au format international, par exemple +33612345678.'}); return; }
   const request = ++linkRequest;
   const current = () => state.c?.wizardId === c.wizardId && state.c?.svc === 'whatsapp' && request === linkRequest;
   setC({ busy: true, error: null, link: null });
   try {
-    const { linkId } = await api.startWhatsAppLink({ profileId: c.profile, name: c.name.trim(), windowDays: 7, expectedPhone:c.expectedPhone, ...(c.accountId ? { accountId: c.accountId, reconnect: true } : {}) });
+    const { linkId } = await api.startWhatsAppLink({ profileId: c.profile, name: c.name.trim(), windowDays: 7,  ...(c.accountId ? { accountId: c.accountId, reconnect: true } : {}) });
     if (!current()) {
       await api.cancelWhatsAppLink(linkId); return;
     }
@@ -1074,10 +1078,9 @@ const actions = {
 
   // Assistant de connexion
   closeConnect: () => closeWizard(),
-  pickService: ({ svc }) => { if (!state.data.services[svc].disabled) setC(svcInit(svc)); },
+  pickService: ({ svc }) => { if (!state.data.services[svc].disabled) {setC(svcInit(svc));if(svc==='whatsapp')startWhatsAppLink();} },
   cProfile: ({ id }) => setC({ profile: id }),
   cName: (_, e) => setC({ name: e.target.value }),
-  cPhone: (_, e) => setC({ expectedPhone:e.target.value.trim() }),
   cPerm: ({ perm }) => {
     const def = state.data.services[state.c.svc];
     if (def.available && !def.available.includes(perm)) return;
@@ -1101,7 +1104,6 @@ const actions = {
   cNext: () => {
     const c = state.c;
     if (c.step === 'config') {
-      if(c.svc==='whatsapp' && !/^\+[1-9]\d{6,14}$/.test(c.expectedPhone || '')) {setC({error:'Confirme le numéro WhatsApp au format international.'});return;}
       setC({ step: 'auth', error: null });
     }
     else if (c.step === 'auth') c.svc === 'whatsapp' ? startWhatsAppLink() : state.data.services[c.svc].real ? startProviderAuth() : startSync();
