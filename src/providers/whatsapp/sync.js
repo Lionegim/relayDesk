@@ -32,7 +32,7 @@ const FULL_RESPONSE = {
 };
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 
-export function createWhatsAppSync({ store, vault, lib, makeSocket, log = console, timing = {}, assertAccountAllowed=()=>{} }) {
+export function createWhatsAppSync({ store, vault, lib, makeSocket, log = console, timing = {}, assertAccountAllowed=()=>{}, requirePhoneConfirmation=false }) {
   const T = {
     linkTtlMs: 5 * 60000,       // durée maximale d'une liaison avant validation sur le téléphone
     qrTtlMs: 60000,             // durée d'affichage d'un QR (Baileys le renouvelle avant)
@@ -142,6 +142,11 @@ export function createWhatsAppSync({ store, vault, lib, makeSocket, log = consol
   async function openSession(accountId, link = null) {
     const at = epoch(accountId);
     const account=store.getAccount(accountId);
+    if(requirePhoneConfirmation && !account.address) {
+      if(link) failLink(link,'Confirme le numéro WhatsApp avant de relier cet appareil.');
+      else {store.setAccountStatus(accountId,'À reconnecter','warn');store.setSync(accountId,{status:'error',error:'Confirme le numéro WhatsApp avant de relier cet appareil.'});}
+      return;
+    }
     if(account.address) {
       try {assertAccountAllowed('whatsapp',account.address);} catch {
         if(link) failLink(link,'Ce compte ne fait pas partie des comptes autorisés.');
@@ -277,7 +282,7 @@ export function createWhatsAppSync({ store, vault, lib, makeSocket, log = consol
     });
     let policyError;
     try {assertAccountAllowed('whatsapp',phone);} catch {policyError='Ce compte ne fait pas partie des comptes autorisés.';}
-    const reason = policyError || (!phone ? 'Identité WhatsApp illisible.'
+    const reason = policyError || (s.link?.expectedPhone && s.link.expectedPhone !== phone ? 'Ce téléphone ne correspond pas au numéro confirmé.' : null) || (!phone ? 'Identité WhatsApp illisible.'
       : acc.address && acc.address !== phone ? 'Ce téléphone ne correspond pas au compte WhatsApp enregistré.'
         : clash ? 'Ce numéro WhatsApp est déjà relié à un autre compte de ce profil.' : null);
     if (reason) {
@@ -693,6 +698,7 @@ export function createWhatsAppSync({ store, vault, lib, makeSocket, log = consol
       const { accountId, profileId, name } = input;
       if (!isWhatsApp(accountId)) throw badRequest('Compte WhatsApp invalide.');
       const account = store.getAccount(accountId);
+      if ((requirePhoneConfirmation || input.expectedPhone !== undefined) && (typeof input.expectedPhone !== 'string' || !/^\+[1-9]\d{6,14}$/.test(input.expectedPhone) || (account.address && input.expectedPhone !== account.address))) throw badRequest('Confirme le numéro du compte WhatsApp à reconnecter.');
       if (account.profileId !== profileId || account.name !== name?.trim()) throw badRequest('Compte WhatsApp invalide.');
       const submittedAt = epoch(accountId);
       return serial(accountId, async () => {
@@ -717,7 +723,8 @@ export function createWhatsAppSync({ store, vault, lib, makeSocket, log = consol
       });
     },
 
-    async startLink({ profileId, name, windowDays = 7, accountId = null } = {}) {
+    async startLink({ profileId, name, windowDays = 7, accountId = null, expectedPhone } = {}) {
+      if ((requirePhoneConfirmation || expectedPhone !== undefined) && (typeof expectedPhone !== 'string' || !/^\+[1-9]\d{6,14}$/.test(expectedPhone))) throw badRequest('Confirme le numéro WhatsApp au format international, par exemple +33612345678.');
       if (typeof profileId !== 'string' || !store.hasProfile(profileId)) throw notFound('Profil introuvable');
       if (typeof name !== 'string' || !name.trim() || name.trim().length > 80) throw badRequest('Nom du compte invalide');
       if (!Number.isInteger(windowDays) || windowDays < 1 || windowDays > 30) throw badRequest('Période d’import invalide');
@@ -727,6 +734,7 @@ export function createWhatsAppSync({ store, vault, lib, makeSocket, log = consol
         if (!Number.isInteger(accountId) || !store.hasAccount(accountId)) throw notFound('Compte introuvable');
         const acc = store.getAccount(accountId);
         if (acc.svc !== 'whatsapp' || acc.profileId !== profileId || acc.name !== label) throw badRequest('Ce compte ne correspond pas à la demande de reconnexion.');
+        if (expectedPhone && acc.address && expectedPhone !== acc.address) throw badRequest('Ce numéro ne correspond pas au compte à reconnecter.');
       } else {
         const same = store.accountsBySvc('whatsapp').map(id => store.getAccount(id)).find(a => a.profileId === profileId && a.name === label);
         if (same && (same.address || hasSession({ store, vault, accountId: same.id }))) {
@@ -734,11 +742,12 @@ export function createWhatsAppSync({ store, vault, lib, makeSocket, log = consol
         }
         if (same) accountId = same.id;
         else {
-          accountId = store.upsertAccount(profileId, { name: label, channel: 'whatsapp', svc: 'whatsapp' }).id;
+          accountId = store.upsertAccount(profileId, { name: label, channel: 'whatsapp', svc: 'whatsapp', ...(expectedPhone ? {address:expectedPhone} : {}) }).id;
           created = true;
         }
       }
       if (linkOf.has(accountId)) throw new HttpError(409, 'Une liaison est déjà en cours pour ce compte.', 'link_in_progress');
+      if(expectedPhone && !store.getAccount(accountId).address) store.upsertAccount(profileId,{name:label,channel:'whatsapp',svc:'whatsapp',address:expectedPhone});
       if (sessions.get(accountId)?.open) throw new HttpError(409, 'Ce compte WhatsApp est déjà connecté.', 'whatsapp_connected');
       advance(accountId);
       // Nouvel appareil lié : l'ancienne session (expirée ou retirée) est effacée avant le nouveau QR.
@@ -746,7 +755,7 @@ export function createWhatsAppSync({ store, vault, lib, makeSocket, log = consol
       store.waAuthClear(accountId);
       store.setAccountStatus(accountId, 'En attente du QR', 'info');
       store.setSync(accountId, { status: 'linking', window_days: windowDays, error: null, total: 0, done: 0 });
-      const link = { id: randomUUID(), accountId, at: epoch(accountId), created, status: 'starting', qrDataUrl: null, qrExpires: 0, error: null, paired: false, opened: false, done: false };
+      const link = { id: randomUUID(), accountId, at: epoch(accountId), created, expectedPhone, status: 'starting', qrDataUrl: null, qrExpires: 0, error: null, paired: false, opened: false, done: false };
       links.set(link.id, link);
       linkOf.set(accountId, link);
       link.timer = setTimeout(() => { if (!link.opened && !link.paired) failLink(link, 'Délai de liaison dépassé : relance-la.'); }, T.linkTtlMs);

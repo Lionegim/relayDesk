@@ -490,7 +490,7 @@ function svcInit(key, name) {
 function openWizard(svc, name, account = null) {
   const c = { wizardId: ++wizardVersion, step: 'pick', svc: null, profile: state.profileId, name: '', perms: { read: true }, win: 30, fields: {}, progress: 0, fromAccount: !!name };
   if (svc) Object.assign(c, svcInit(svc, name));
-  if (account) Object.assign(c, { accountId: account.id, win: svc === 'whatsapp' ? 7 : account.windowDays || 30, perms: Object.fromEntries((svc === 'whatsapp' ? ['read','drafts','send'] : ['read', ...(account.perms || [])]).map(p => [p, true])) });
+  if (account) Object.assign(c, { expectedPhone:account.address || '', phoneLocked:!!account.address, accountId: account.id, win: svc === 'whatsapp' ? 7 : account.windowDays || 30, perms: Object.fromEntries((svc === 'whatsapp' ? ['read','drafts','send'] : ['read', ...(account.perms || [])]).map(p => [p, true])) });
   set({ c, menu: false, accountMenu: null });
 }
 const setC = f => set(s => ({ c: { ...s.c, ...(typeof f === 'function' ? f(s.c) : f) } }));
@@ -505,11 +505,12 @@ function closeWizard() {
 async function startWhatsAppLink() {
   const c = state.c;
   if (!c || c.busy || c.linkId) return;
+  if (!/^\+[1-9]\d{6,14}$/.test(c.expectedPhone || '')) { setC({error:'Indique le numéro au format international, par exemple +33612345678.'}); return; }
   const request = ++linkRequest;
   const current = () => state.c?.wizardId === c.wizardId && state.c?.svc === 'whatsapp' && request === linkRequest;
   setC({ busy: true, error: null, link: null });
   try {
-    const { linkId } = await api.startWhatsAppLink({ profileId: c.profile, name: c.name.trim(), windowDays: 7, ...(c.accountId ? { accountId: c.accountId, reconnect: true } : {}) });
+    const { linkId } = await api.startWhatsAppLink({ profileId: c.profile, name: c.name.trim(), windowDays: 7, expectedPhone:c.expectedPhone, ...(c.accountId ? { accountId: c.accountId, reconnect: true } : {}) });
     if (!current()) {
       await api.cancelWhatsAppLink(linkId); return;
     }
@@ -1076,6 +1077,7 @@ const actions = {
   pickService: ({ svc }) => { if (!state.data.services[svc].disabled) setC(svcInit(svc)); },
   cProfile: ({ id }) => setC({ profile: id }),
   cName: (_, e) => setC({ name: e.target.value }),
+  cPhone: (_, e) => setC({ expectedPhone:e.target.value.trim() }),
   cPerm: ({ perm }) => {
     const def = state.data.services[state.c.svc];
     if (def.available && !def.available.includes(perm)) return;
@@ -1098,7 +1100,10 @@ const actions = {
   },
   cNext: () => {
     const c = state.c;
-    if (c.step === 'config') setC({ step: 'auth', error: null });
+    if (c.step === 'config') {
+      if(c.svc==='whatsapp' && !/^\+[1-9]\d{6,14}$/.test(c.expectedPhone || '')) {setC({error:'Confirme le numéro WhatsApp au format international.'});return;}
+      setC({ step: 'auth', error: null });
+    }
     else if (c.step === 'auth') c.svc === 'whatsapp' ? startWhatsAppLink() : state.data.services[c.svc].real ? startProviderAuth() : startSync();
     else if (c.step === 'done') { clearInterval(syncTimer); set({ c: null, app: 'mail', profileId: c.profile, selectedId: c.svc === 'whatsapp' ? state.data.messages.find(m => m.accountId === c.accountId && !m.archived)?.id ?? firstOf(c.profile) : c.profile === state.profileId ? state.selectedId : firstOf(c.profile), folder: null }); }
   },

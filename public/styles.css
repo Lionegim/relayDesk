@@ -532,3 +532,9 @@ svg { display: block; }
   .is-mobile .contacts-scroll { padding: max(16px, env(safe-area-inset-top)) 16px 24px; }
   .is-mobile .table { overflow-x: auto; }
 }
+
+/* WhatsApp account enrolment: calm green card and readable phone instructions. */
+.wa-connect-intro { padding:16px 18px; border:1px solid #b5d8c8; border-radius:12px; background:#edf7f1; color:#174b35; }
+.wa-connect-intro p { margin:6px 0 0; font-size:13px; line-height:1.55; }
+.wa-link-steps { max-width:360px; text-align:left; padding-left:22px; margin:12px 0; font-size:14px; line-height:1.6; }
+.wa-link-steps li + li { margin-top:8px; }

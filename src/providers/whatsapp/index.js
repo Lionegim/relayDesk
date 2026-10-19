@@ -4,9 +4,9 @@ import { createWhatsAppOutbox } from './outbox.js';
 import { loadBaileys, makeBaileysSocket } from './socket.js';
 
 // makeSocket et lib sont injectables pour les tests (faux socket, aucune connexion réelle).
-export async function createWhatsAppProvider({ store, vault, makeSocket = makeBaileysSocket, lib = loadBaileys, log = console, timing, assertAccountAllowed } = {}) {
+export async function createWhatsAppProvider({ store, vault, makeSocket = makeBaileysSocket, lib = loadBaileys, log = console, timing, assertAccountAllowed, requirePhoneConfirmation=false } = {}) {
   if (!store || !vault) throw new Error('createWhatsAppProvider : store et vault requis.');
-  const sync = createWhatsAppSync({ store, vault, lib, makeSocket, log, timing, assertAccountAllowed });
+  const sync = createWhatsAppSync({ store, vault, lib, makeSocket, log, timing, assertAccountAllowed, requirePhoneConfirmation });
   const outbox = createWhatsAppOutbox({ store, sync });
   return {
     configured: true,

@@ -20,6 +20,6 @@ export async function assembleProviders({config,store,vault,log,fetchImpl=global
   const microsoftOAuth=createMicrosoftOAuth({clientId:web?secret.MICROSOFT_WEB_CLIENT_ID:secret.MICROSOFT_CLIENT_ID,clientSecret:web?secret.MICROSOFT_WEB_CLIENT_SECRET:undefined,tenant:config.microsoftTenant,mode:config.mailOAuthMode,redirectUri:config.microsoftRedirectUri,fetchImpl});
   const outlookSync=createOutlookSync({store,vault,oauth:microsoftOAuth,log,fetchImpl,assertAccountAllowed});
   const outlook={oauth:microsoftOAuth,sync:outlookSync,outbox:createOutlookOutbox({store,sync:outlookSync,ownerName:config.ownerName}),disconnect:createOutlookDisconnect({store,vault,sync:outlookSync}),redirectUri:config.microsoftRedirectUri};
-  const whatsapp=await createWhatsAppProvider({store,vault,log,assertAccountAllowed});
+  const whatsapp=await createWhatsAppProvider({store,vault,log,requirePhoneConfirmation:config.mode==='hosted'});
   return {providers:{outlook,whatsapp},gmail,syncs:[sync,outlookSync,whatsapp.sync]};
 }

@@ -22,7 +22,7 @@ export const SERVICES = {
     fields: [['host', 'Hôte IMAP', '127.0.0.1'], ['port', 'Port', '1143'], ['address', 'Adresse', '', 'prenom@proton.me'], ['password', 'Mot de passe Bridge', '', '••••••••', 'password']] },
   whatsapp: { name: 'WhatsApp', provider: 'WhatsApp', ch: 'whatsapp', note: 'Lier ton téléphone par QR code', auth: 'qr', btn: 'Afficher le QR code',
     real: true, available: ['read', 'drafts', 'send'], perms: ['read', 'drafts', 'send'], scopes: {}, localLabels: true,
-    scopesNote: 'La liaison d’un appareil donne techniquement accès à la lecture et à l’envoi. Relay Desk exige un aperçu validé avant chaque envoi. Brouillons, dossiers et drapeaux restent sur ce Mac.' },
+    scopesNote: 'La liaison d’un appareil donne techniquement accès à la lecture et à l’envoi. Relay Desk exige un aperçu validé avant chaque envoi. Brouillons, dossiers et drapeaux restent dans cette instance Relay Desk.' },
   instagram: { name: 'Instagram professionnel', provider: 'Meta', ch: 'instagram', note: 'Compte pro lié à une Page Facebook', auth: 'oauth', btn: 'Continuer avec Meta', perms: ['read', 'send', 'mcp'],
     scopes: { read: ['Lire les messages directs', 'instagram_manage_messages'], send: ['Répondre aux messages', 'instagram_manage_messages'] } },
   linkedin: { name: 'LinkedIn', ch: 'linkedin', note: 'Messagerie non ouverte via API', disabled: true, state: 'Accès à vérifier' },

@@ -597,7 +597,7 @@ function connectWizard(s) {
   const msgs = Math.round(c.win * 6.4);
   const profileName = id => s.data.profiles.find(p => p.id === id).name;
   const next = c.svc === 'whatsapp' && c.step === 'auth' && c.linkId ? null : { config: 'Continuer', auth: d?.btn, done: 'Ouvrir la boîte' }[c.step];
-  const nextDisabled = c.busy || (c.step === 'auth' ? missing : c.step === 'config' ? !c.name.trim() : false);
+  const nextDisabled = c.busy || (c.step === 'auth' ? missing : c.step === 'config' ? !c.name.trim() || (c.svc==='whatsapp' && !/^\+[1-9]\d{6,14}$/.test(c.expectedPhone || '')) : false);
   const importMeta = c.real ? `${c.real.done} / ${c.real.total} conversations` : `${Math.round(msgs * c.progress / 100)} / ${msgs}`;
   const checks = [['Autorisation reçue', 1, ''], ['Capacités vérifiées', c.real ? 2 : 20, `${permsOn.length} accès`], [`Import des ${c.win} derniers jours`, 100, importMeta], ['Triage local', 100, '']];
   const stats = c.real ? [[c.real.messages, 'messages importés'], [c.real.threads, 'conversations'], [c.real.todo, 'à traiter']]
@@ -652,6 +652,8 @@ function connectWizard(s) {
               <span class="field-label">Nom du compte</span>
               <input class="input" value="${c.name}" data-on-input="cName" maxlength="80" ${raw(c.accountId ? 'readonly' : '')}>
             </label>
+            ${when(c.svc === 'whatsapp', () => html`<div class="wa-connect-intro"><strong>Ton WhatsApp, dans Relay Desk</strong><p>Ajoute un compte que tu possèdes ou que tu es autorisé à connecter. Tu valideras la liaison depuis son téléphone.</p></div>
+              <label class="field" style="gap:8px"><span class="field-label">Numéro WhatsApp à connecter</span><input class="input" type="tel" inputmode="tel" autocomplete="off" maxlength="16" placeholder="+33612345678" value="${c.expectedPhone || ''}" data-on-input="cPhone" ${raw(c.phoneLocked ? 'readonly' : '')}><small class="muted">Format international. Un autre téléphone sera refusé.</small></label>`)}
             <div class="field" style="gap:8px">
               <span class="field-label">Permissions</span>
               <div class="perms">
@@ -680,17 +682,18 @@ function connectWizard(s) {
             <div class="recap">
               <span class="muted">Profil</span><span style="font-weight:600">${profileName(c.profile)}</span>
               <span class="muted">Compte</span><span style="font-weight:600">${c.name}</span>
+              ${when(c.svc==='whatsapp', () => html`<span class="muted">Téléphone confirmé</span><strong>${c.expectedPhone}</strong>`)}
               <span class="muted">Accès</span><span style="font-weight:600">${permsOn.map(k => PERM[k][0]).join(', ')}</span>
               <span class="muted">Historique</span><span style="font-weight:600">${c.win} derniers jours</span>
             </div>
             ${when(d.auth === 'qr', () => html`
               ${when(!c.linkId, () => html`<p class="muted" style="margin:0">${d.scopesNote}</p>`)}
               ${when(!c.linkId, () => html`<p class="muted" style="margin:0">Discussions individuelles et groupes en texte, sur les 7 derniers jours disponibles. Groupes en lecture et analyse ; envoi réservé aux discussions individuelles. Médias, messages éphémères et vue unique exclus. L’historique disponible dépend de WhatsApp.</p>`)}
-              ${when(!c.linkId && c.accountId, () => html`<p class="muted" style="margin:0">La liaison de ce Mac sera renouvelée avec historique étendu. Tes messages, dossiers et drapeaux restent conservés. WhatsApp peut transmettre des lots plus anciens ; seuls les 7 derniers jours sont enregistrés dans Relay Desk.</p>`)}
+              ${when(!c.linkId && c.accountId, () => html`<p class="muted" style="margin:0">La liaison de cet appareil Relay Desk sera renouvelée avec historique étendu. Tes messages, dossiers et drapeaux restent conservés. WhatsApp peut transmettre des lots plus anciens ; seuls les 7 derniers jours sont enregistrés dans Relay Desk.</p>`)}
               <p class="muted" style="font-size:12px;margin:0">Connecteur communautaire non officiel : la liaison peut être interrompue ou limitée par WhatsApp.</p>
               <div class="whatsapp-link">
                 ${when(c.busy || (c.linkId && !c.link?.qrDataUrl && !c.error && c.link?.status !== 'connected'), () => html`<span class="spinner"></span><span>${c.link?.status === 'syncing' ? 'Liaison reçue, synchronisation en cours…' : 'Préparation de la liaison…'}</span>`)}
-                ${when(c.link?.qrDataUrl && !c.error, () => html`<img class="whatsapp-qr" src="${c.link.qrDataUrl}" alt="QR code pour lier WhatsApp à Relay Desk"><p>Dans WhatsApp sur ton téléphone : <strong>Réglages → Appareils connectés → Connecter un appareil</strong>, puis scanne ce QR code.</p><span class="muted" style="font-size:12px">Ce QR code donne à ce Mac accès à la lecture et à l’envoi. Relay Desk demande ta validation avant chaque envoi.</span>`)}
+                ${when(c.link?.qrDataUrl && !c.error, () => html`<img class="whatsapp-qr" src="${c.link.qrDataUrl}" alt="QR code pour lier WhatsApp à Relay Desk"><ol class="wa-link-steps"><li>Ouvre WhatsApp sur le téléphone de ce compte.</li><li>Va dans <strong>Réglages → Appareils connectés</strong> (sur Android : menu ⋮).</li><li>Choisis <strong>Connecter un appareil</strong> et scanne ce QR code.</li></ol><span class="muted" style="font-size:12px">Ce QR code donne à cet appareil Relay Desk accès à la lecture et à l’envoi. Relay Desk demande ta validation avant chaque envoi.</span>`)}
                 ${when(c.linkId && c.error, () => html`<button class="btn btn-ghost" data-on-click="refreshWhatsAppQR">Obtenir un nouveau QR code</button>`)}
               </div>`)}
             ${when(d.auth === 'oauth', () => html`

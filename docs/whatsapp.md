@@ -57,3 +57,11 @@ Les nouvelles liaisons utilisent un profil navigateur avec historique étendu, c
 ## Mémoire du style
 
 L’assistant peut maintenant utiliser une [mémoire locale propre à chaque conversation](reply-memory.md), construite uniquement à partir des textes réellement envoyés par le propriétaire. Elle se consulte, se met en pause et se réinitialise dans **Répondre → Ton style, ici**. Aucun apprentissage ne lance un appel IA ni un envoi automatique.
+
+## Connexion depuis les écrans de Relay Desk
+
+Parcours inspiré de l’écran WhatsApp Sync de Dex, inspecté le 19 octobre 2026 : Ajouter un canal → WhatsApp → profil et nom du compte → numéro international confirmé → récapitulatif → QR → validation depuis WhatsApp / Appareils connectés → synchronisation. Chaque compte autorisé peut être ajouté séparément ; aucune modification de numéro dans un fichier serveur n’est nécessaire. Le téléphone scanné doit correspondre au numéro saisi, sinon la liaison est refusée et ses clés locales sont purgées (déconnexion distante tentée).
+
+En hébergé, la création exige la session du propriétaire, son authentification récente et les protections CSRF existantes. Une reconnexion conserve le numéro d’origine et le refuse avant d’effacer les clés s’il diffère. Une base neuve doit toujours être préparée avant tout compte réel ; le site de test public garde ses connecteurs désactivés. Les groupes restent en lecture/analyse, les brouillons WhatsApp restent locaux, et chaque envoi individuel exige l’aperçu exact et sa validation à usage unique.
+
+La liaison QR prouve l’autorisation sur le téléphone, pas le droit d’accéder au compte de quelqu’un d’autre. Ne connecter que des comptes possédés ou expressément autorisés. L’historique reçu peut rester partiel ; aucune garantie d’import complet ne découle de l’écran Dex observé.

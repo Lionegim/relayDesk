@@ -160,7 +160,7 @@ export function createApp({ store, ai, ownerName, gmail = null, providers = {}, 
         const a = store.getAccount(accountId);
         if (a.svc !== 'whatsapp' || a.profileId !== profileId || a.name !== name.trim()) throw badRequest('Compte WhatsApp invalide');
       }
-      const input = { profileId, name: name.trim(), windowDays: 7, ...(accountId !== undefined ? { accountId } : {}) };
+      const input = { profileId, name: name.trim(), windowDays: 7, ...(body.expectedPhone !== undefined ? {expectedPhone:body.expectedPhone} : {}), ...(accountId !== undefined ? { accountId } : {}) };
       return body.reconnect === true ? wa.relink(input) : wa.startLink(input);
     }],
     ['GET', /^\/api\/whatsapp\/links\/([a-zA-Z0-9-]+)$/, ([id]) => {

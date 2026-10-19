@@ -15,7 +15,7 @@ async function ui() {
  vm.createContext(c);
  vm.runInContext(readFileSync(new URL('../public/js/app.js',import.meta.url),'utf8').replace(/^import .*;\n/gm,'')+'\nglobalThis.inspect=()=>state;globalThis.act=actions;globalThis.redraw=render;globalThis.refreshData=applyData;',c);
  await tick();
- const open=()=>{c.act.openConnect();c.act.pickService({svc:'whatsapp'});c.act.cNext();c.act.cNext()};
+ const open=()=>{c.act.openConnect();c.act.pickService({svc:'whatsapp'});c.act.cPhone({}, {target:{value:'+33100000000'}});c.act.cNext();c.act.cNext()};
  return {c,api,requests,cancelled,intervals,open,failNextSnapshot:()=>{failSnapshot=true},draw:(before,after)=>{timeline=before;nextTimeline=after;c.redraw()}};
 }
 test('conversation WhatsApp : ouverture en bas, nouveaux messages suivis sans déplacer la lecture des anciens',async()=>{
@@ -67,4 +67,17 @@ test('mémoire UI : pause invalide la proposition et une réponse tardive ne mod
  s.ai={forId:1,mode:'draft',result:{text:'Ancienne proposition'},loading:false};s.details[1].replyMemory.enabled=true;
  u.api.changeReplyMemory=async()=>({available:true,enabled:false,sampleCount:1});await u.c.act.aiMemoryToggle();
  assert.equal(u.c.inspect().details[1].replyMemory.enabled,false);assert.equal(u.c.inspect().ai.result,null);
+});
+
+test('liaison UI : aucun QR sans confirmation du numéro international',async()=>{
+ const u=await ui();u.c.act.openConnect();u.c.act.pickService({svc:'whatsapp'});u.c.act.cNext();
+ assert.equal(u.c.inspect().c.step,'config');assert.equal(u.requests.length,0);
+ u.c.act.cPhone({}, {target:{value:'0612345678'}});u.c.act.cNext();assert.equal(u.requests.length,0);
+});
+
+test('reconnexion UI : un ancien compte sans numéro reste modifiable',async()=>{
+ const u=await ui();u.c.openWizard('whatsapp','Ancien',{id:7,address:null});
+ assert.equal(u.c.inspect().c.phoneLocked,false);
+ u.c.act.cPhone({}, {target:{value:'+33100000000'}});u.c.act.cNext();assert.equal(u.c.inspect().c.step,'auth');
+ u.c.openWizard('whatsapp','Existant',{id:8,address:'+33100000000'});assert.equal(u.c.inspect().c.phoneLocked,true);
 });
