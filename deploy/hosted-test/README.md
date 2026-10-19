@@ -88,6 +88,7 @@ node deploy/hosted-test/prove-mfa.mjs \
 - mot de passe seul, sans code délivré ;
 - OTP réel (TOTP), échange du code avec PKCE ;
 - id_token RS256 vérifié sur le JWKS (iss, aud, nonce, exp), `acr=relay-mfa` et `sub` du propriétaire ;
+- session SSO réutilisée (mêmes cookies Keycloak), avec puis sans `acr_values` : le mot de passe est sauté mais un nouvel OTP est exigé, aucun code n'est délivré directement (le cookie ne couvre jamais le niveau 2, âge maximal 0) ;
 - refus : OTP sans `acr_values` (minimum du client), grant direct, retour non déclaré, requête sans PKCE, flux implicite ;
 - avec `--relay-url`, bout en bout : `/auth/login` de Relay, Keycloak, `/auth/callback` (jeton vérifié par Relay), puis `/api/state` à 200 avec la session et 401 sans.
 

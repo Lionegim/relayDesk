@@ -6,6 +6,7 @@
 //
 //   node deploy/hosted-test/prove-mfa.mjs --issuer https://auth.relay.migeoncorp.fr/realms/relay-test \
 //     --redirect-uri https://relay.migeoncorp.fr/auth/callback --out /root/relay-identity-test-out
+// La session SSO créée par le parcours nominal est ensuite réutilisée (mêmes cookies) : un nouvel OTP doit être exigé.
 //
 // --out : répertoire produit par configure-keycloak.mjs (relay/auth_client_*, relay/auth.env, owner/*).
 // Le retour vers Relay Desk n'est jamais suivi : le code est intercepté puis échangé ici, une seule fois.
@@ -142,6 +143,18 @@ export async function proveMfa({ issuer, redirectUri, clientId, clientSecret, us
       check('id_token : auth_time présent', Number.isInteger(claims.auth_time));
       summary = { alg: header.alg, kid: header.kid, iss: claims.iss, aud: claims.aud, sub: claims.sub, acr: claims.acr, auth_time: claims.auth_time };
     } catch (e) { check(`id_token vérifié (${e.message})`, false); }
+  }
+
+  // 1 bis. Session SSO existante (mêmes cookies Keycloak) : une nouvelle autorisation ne délivre jamais de code sans
+  // nouvel OTP, avec ou sans acr_values (le cookie peut couvrir le mot de passe, jamais le niveau 2 d'âge maximal 0).
+  check('session SSO Keycloak ouverte (cookie KEYCLOAK_IDENTITY présent)', b.jar.has('KEYCLOAK_IDENTITY'));
+  for (const [label, extra] of [['avec acr_values', acr ? { acr_values: acr } : {}], ['sans acr_values', {}]]) {
+    const again = startAuth(extra);
+    const r = await b.go(again.url);
+    const html = r.status === 200 ? await r.text() : '';
+    const direct = (r.headers.get('location') || '').startsWith(redirectUri);
+    // Formulaire OTP directement (mot de passe couvert par la session) : prouve la réutilisation ET l'exigence d'OTP.
+    check(`session SSO réutilisée (${label}) : mot de passe sauté, aucun code sans nouvel OTP`, !direct && !!formAction(html, 'kc-otp-login-form') && !formAction(html, 'kc-form-login'));
   }
 
   if (negatives) {
