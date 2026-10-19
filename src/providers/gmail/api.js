@@ -37,6 +37,7 @@ export function createGmailClient({ refreshToken, oauth, fetchImpl = globalThis.
       throw new HttpError(502, 'Gmail est injoignable.', 'retryable');
     }
     if (res.status === 401 && !retried) return request(method, path, params, body, true);
+    if(res.status===400 && path==='threads' && params.pageToken)throw new HttpError(410,'Curseur d’archive Gmail expiré.','archive_cursor_expired');
     if (res.status === 404) throw new HttpError(404, 'Introuvable dans Gmail.', 'not_found');
     if (res.status === 409) throw new HttpError(409, 'Ce libellé existe déjà dans Gmail.', 'conflict');
     if (res.status === 429 || res.status >= 500) throw new HttpError(503, `Gmail indisponible (${res.status}).`, 'retryable');

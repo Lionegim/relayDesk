@@ -853,6 +853,10 @@ const actions = {
     const acc = derive(state).profile.accounts.find(a => a.id === Number(id));
     if (acc) openWizard(acc.svc, acc.name, acc);
   },
+  accountHistory: async ({id,action}) => {
+    set({accountMenu:null});
+    try {await api.importHistory(Number(id),action || 'start');await reload({refresh:true});set({toast:action==='pause'?'Import en pause.':'Import de tout l’historique en arrière-plan.'});}catch(e){fail(e);}
+  },
   accountSync: async ({ id }) => {
     set({ accountMenu: null });
     try {

@@ -93,3 +93,7 @@ test/                  tests node:test (API et client Mistral)
 | POST | `/api/ai/summary` | `{ messageId }` |
 | POST | `/api/ai/draft` | `{ messageId, tone, intent }` |
 | GET | `/api/health` | |
+
+### Historique complet des emails
+
+Le menu de chaque compte Gmail/Outlook permet d’importer toutes les dates en arrière-plan, avec progression persistante, pause/reprise et déduplication. Les mises à jour en direct et la validation de l’aperçu exact avant envoi sont conservées. Voir [le périmètre et la reprise](docs/import-historique-mail.md).

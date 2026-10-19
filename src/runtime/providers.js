@@ -1,3 +1,4 @@
+import {createHistoryWorker} from '../mail/history/worker.js';
 import {accountPolicy} from '../providers/account-policy.js';
 import { createGoogleOAuth } from '../providers/gmail/oauth.js';
 import { createGmailSync } from '../providers/gmail/sync.js';
@@ -24,5 +25,6 @@ export async function assembleProviders({config,store,vault,log,fetchImpl=global
   const outlook={oauth:microsoftOAuth,sync:outlookSync,outbox:createOutlookOutbox({store,sync:outlookSync,ownerName:config.ownerName}),disconnect:createOutlookDisconnect({store,vault,sync:outlookSync}),redirectUri:config.microsoftRedirectUri};
   const whatsapp=await createWhatsAppProvider({store,vault,log,requireLinkedIdentity:config.mode==='hosted'});
   push=createMailPush({config,store,vault,providers:{gmail,outlook},log});
-  return {providers:{outlook,whatsapp},gmail,push,syncs:[push,sync,outlookSync,whatsapp.sync]};
+  const history=createHistoryWorker({store,providers:{gmail,outlook}});
+  return {providers:{outlook,whatsapp},gmail,push,syncs:[push,sync,outlookSync,whatsapp.sync,history]};
 }

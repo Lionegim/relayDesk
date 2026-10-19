@@ -42,7 +42,7 @@ Mise à jour : 19 octobre 2026. Ce suivi réconcilie le plan d’implémentation
 
 ## Prochains lots proposés
 
-1. **Historique progressif et qualité des personnes.** Choix de période par compte, import ancien reprenable avec progression, limites fournisseur visibles et déduplication. Distinguer l’étendue récupérable des emails de celle de WhatsApp. Utiliser ensuite cet historique dans les timelines et la mémoire, sans analyser automatiquement tout le passé avec Mistral.
+1. **Historique progressif et qualité des personnes.** Import complet Gmail/Outlook implémenté : tâche persistante par compte, progression, pause/reprise, déduplication et reprise après erreur ; voir `docs/import-historique-mail.md`. Démarrage réel et comptages à vérifier lors du déploiement. Le périmètre WhatsApp reste celui disponible auprès du téléphone. Utiliser ensuite cet historique dans les timelines et la mémoire, sans analyser automatiquement tout le passé avec Mistral.
 2. **Sauvegarde hors serveur automatique et recette de récupération.** Mettre en place une destination indépendante, vérifier la livraison quotidienne et tester la restauration du schéma courant avec liens, audit, brouillons et mémoire. L’envoi et les connecteurs restent arrêtés pendant la recette.
 3. **Pièces jointes et médias utiles**, puis **Instagram Business** lorsque ses accès sont prêts. Définir d’abord les capacités réelles et conserver la validation exacte de chaque envoi.
 4. **MCP par compte / Proton / LinkedIn**, selon leur utilité et les accès disponibles. Aucun de ces services ne doit être annoncé comme connecté avant une recette réelle.

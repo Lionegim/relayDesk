@@ -133,6 +133,7 @@ function sidebar(s, v) {
           ${when(s.data.services[a.svc]?.real && s.accountMenu === a.id, () => html`
             <div class="menu" role="menu" aria-label="Compte de messagerie" style="left:0;right:0;top:100%">
               <button class="side-item hov" role="menuitem" data-on-click="accountSync" data-id="${a.id}">Synchroniser maintenant</button>
+              ${when(['gmail','outlook'].includes(a.svc),()=>html`<button class="side-item hov" role="menuitem" data-on-click="accountHistory" data-id="${a.id}" data-action="${['running','retrying'].includes(a.history?.status)?'pause':'start'}">${['running','retrying'].includes(a.history?.status)?'Mettre l’import en pause':a.history?.status==='paused'?'Reprendre l’import complet':a.history?.status==='complete'?'Historique complet importé':'Importer tout l’historique'}</button>`)}
               <button class="side-item hov" role="menuitem" data-on-click="accountPermissions" data-id="${a.id}">${a.svc === 'whatsapp' ? 'Relier l’appareil' : 'Modifier les permissions'}</button>
               <button class="side-item hov" role="menuitem" data-on-click="disconnectAccount" data-id="${a.id}" style="color:var(--destructive)">Déconnecter</button>
             </div>`)}
@@ -186,6 +187,14 @@ function messageList(s, v) {
         <div class="chips">
           ${chans.map(c => html`<button class="${cls('chip', s.channel === c && 'is-on')}" data-on-click="selectChannel" data-id="${c}">${c === 'all' ? 'Tous' : CH[c].label}</button>`)}
         </div>
+        ${when(['all','email'].includes(s.channel),()=>html`<div class="mail-history-list">${v.profile.accounts.filter(a=>a.history).map(a=>html`
+          <section class="mail-history" aria-label="Import historique ${a.name}" data-key="history-${a.id}">
+            <div><strong>${providerMark(a.svc,a.channel)} ${a.name}</strong><span>${a.history.status==='complete'?'Historique importé':a.history.status==='paused'?'Import en pause':a.history.status==='retrying'?'Reprise automatique prévue':'Import en arrière-plan'}</span></div>
+            <p>${plural(a.history.done,'conversation')} traitées${a.history.enumerated?` sur ${a.history.discovered}`:' · recherche de l’historique…'}</p>
+            ${when(a.history.enumerated,()=>html`<progress max="${Math.max(1,a.history.discovered)}" value="${a.history.status==='complete' && !a.history.discovered?1:a.history.done}" aria-label="Progression ${a.name}"></progress>`)}
+            ${when(a.history.error,()=>html`<p class="muted">${a.history.error}</p>`)}
+            ${when(a.history.status!=='complete',()=>html`<button class="link-btn" data-on-click="accountHistory" data-id="${a.id}" data-action="${a.history.status==='paused'?'start':'pause'}" ${raw(s.offline?'disabled':'')}>${a.history.status==='paused'?'Reprendre':'Mettre en pause'}</button>`)}
+          </section>`)}</div>`)}
         ${when(s.channel === 'whatsapp', () => html`<div class="wa-sync" role="status">
           ${v.profile.accounts.filter(a => a.svc === 'whatsapp').map(a => html`<div>
             <strong>${a.name} · 7 derniers jours</strong>

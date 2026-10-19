@@ -11,7 +11,7 @@ const MAX_THREADS = 1000;
 const CONCURRENCY = 4;
 const BASE_BACKOFF_MS = 60000;
 const MAX_BACKOFF_MS = 30 * 60000;
-const MAX_FOLDER_DEPTH = 4;
+const MAX_FOLDER_DEPTH = Infinity;
 // Dossiers système : inbox et archive comptent pour l'archivage ; les autres ne sont jamais des dossiers Relay.
 const WELL_KNOWN = ['inbox', 'archive', 'sentitems', 'deleteditems', 'junkemail', 'drafts', 'outbox'];
 const SKIPPED = ['deleteditems', 'junkemail', 'drafts', 'outbox'];
@@ -33,6 +33,7 @@ const writeCursor = (links, ids) => JSON.stringify({ v: 1, links, ids: Object.fr
 
 export function createOutlookSync({ store, vault, oauth, fetchImpl = globalThis.fetch, log = console, assertAccountAllowed=()=>{}, shouldPoll=()=>true }) {
   const clients = new Map();
+  const archiveMetadata = new Map();
   const running = new Map();
   const connecting = new Map();
   const failures = new Map();
@@ -80,7 +81,8 @@ export function createOutlookSync({ store, vault, oauth, fetchImpl = globalThis.
   }
 
   // Dossiers du compte : identifiants système et dossiers personnels (chemins « Parent/Enfant »).
-  async function folderMap(graph) {
+  async function folderMap(graph,depthLimit=MAX_FOLDER_DEPTH) {
+    const visited=new Set();
     const known = {};
     for (const name of WELL_KNOWN) {
       try { known[name] = (await graph.wellKnown(name)).id; } catch (e) { if (e.code !== 'not_found') throw e; }
@@ -92,10 +94,12 @@ export function createOutlookSync({ store, vault, oauth, fetchImpl = globalThis.
     const skippedIds = new Set(SKIPPED.map(n => known[n]).filter(Boolean));
     const walk = async (list, prefix, depth) => {
       for (const f of list) {
+        if(visited.has(f.id))continue;visited.add(f.id);
+        if(visited.size>10000)throw new HttpError(409,'Trop de dossiers Outlook pour cet import.','folder_limit');
         if (skippedIds.has(f.id)) continue;
         const path = prefix ? `${prefix}/${f.displayName}` : f.displayName;
         if (!systemIds.has(f.id)) user[f.id] = path;
-        if (depth < MAX_FOLDER_DEPTH && f.childFolderCount) await walk((await graph.childFolders(f.id)).value || [], path, depth + 1);
+        if (depth < depthLimit && f.childFolderCount) await walk((await graph.childFolders(f.id)).value || [], path, depth + 1);
       }
     };
     await walk((await graph.folders()).value || [], '', 1);
@@ -137,6 +141,9 @@ export function createOutlookSync({ store, vault, oauth, fetchImpl = globalThis.
   }
 
   async function initialSync(accountId) {
+    // An expired live cursor must also reconcile the archive already authorized.
+    // Recent arrivals resume first; the durable worker repairs older state.
+    if(store.history?.get(accountId))store.history.restart(store.history.get(accountId));
     const c = client(accountId);
     const days = store.getSync(accountId)?.window_days || 30;
     store.setSync(accountId, { status: 'syncing', total: 0, done: 0, error: null });
@@ -196,7 +203,7 @@ export function createOutlookSync({ store, vault, oauth, fetchImpl = globalThis.
       const count = (failures.get(accountId)?.count || 0) + 1;
       failures.set(accountId, { count, retryAt: Date.now() + Math.min(MAX_BACKOFF_MS, BASE_BACKOFF_MS * 2 ** (count - 1)) });
       if (e.code === 'invalid_grant' || e.code==='oauth_client_changed') {
-        clients.delete(accountId);
+        clients.delete(accountId);archiveMetadata.delete(accountId);
         store.setAccountStatus(accountId, 'À reconnecter', 'warn');
         store.setSync(accountId, { status: 'error', error: 'Accès révoqué ou expiré : reconnecte le compte.' });
       } else {
@@ -259,6 +266,37 @@ export function createOutlookSync({ store, vault, oauth, fetchImpl = globalThis.
       if (!s) return null;
       return { status: s.status, total: s.total, done: s.done, error: s.error, ...store.countThreads(accountId) };
     },
+    historyPage: (accountId,cursor,guard=()=>true) => serial(accountId,async()=>{
+      const c=client(accountId);if(!guard())throw gone();
+      const state=cursor || {folders:(await folderMap(c.graph,Infinity)).tracked,index:0,link:null,links:{}};
+      if(!c.live() || !guard())throw gone();
+      if(state.index>=state.folders.length)return {ids:[],next:null};
+      const folder=state.folders[state.index];let page;
+      try{page=await c.graph.delta(folder,state.link);}catch(error){if(error.code==='not_found')throw new HttpError(410,'Dossier d’archive supprimé.','archive_cursor_expired');throw error;}
+      if(!c.live() || !guard())throw gone();
+      if(!Array.isArray(page.value) || (!page['@odata.nextLink'] && !page['@odata.deltaLink']) || page['@odata.nextLink'] && page['@odata.nextLink']===state.link)throw new HttpError(502,'Pagination Outlook invalide.','retryable');
+      // Preserve message→conversation mappings for removals, including old mail.
+      const live=readCursor(store.getSync(accountId)?.history_id) || {links:{},ids:{}};
+      const ids=new Map(Object.entries(live.ids || {})),changed=new Set();
+      for(const m of page.value){const conv=m.conversationId || ids.get(m.id);if(conv)changed.add(conv);if(m.id && m.conversationId)ids.set(m.id,m.conversationId);}
+      if(page['@odata.nextLink'])state.link=page['@odata.nextLink'];
+      else {state.links[folder]=page['@odata.deltaLink'];state.index++;state.link=null;}
+      const finished=state.index>=state.folders.length;
+      // Full delta baselines replace only the matching folder links once every
+      // page is read. Replaying concurrent live events after adoption is safe.
+      store.setSync(accountId,{history_id:writeCursor(finished?{...live.links,...state.links}:live.links,ids)});
+      return {ids:[...changed],next:finished?null:state};
+    }),
+    historyApply: (accountId,ids,guard=()=>true) => serial(accountId,async()=>{
+      const c=client(accountId);if(!guard())throw gone();
+      let cached=archiveMetadata.get(accountId);
+      if(!cached || cached.client!==c || cached.expires<Date.now()){cached={client:c,expires:Date.now()+300000,value:await folderMap(c.graph,Infinity)};archiveMetadata.set(accountId,cached);}
+      const folders=cached.value,live=readCursor(store.getSync(accountId)?.history_id) || {links:{},ids:{}};
+      const mapping=new Map(Object.entries(live.ids || {})),scoped={...c,live:()=>c.live() && guard()};
+      for(const id of ids){if(!scoped.live())throw gone();await applyConversation(accountId,scoped,folders,id,mapping);}
+      if(!scoped.live())throw gone();
+      store.setSync(accountId,{history_id:writeCursor(live.links,mapping)});
+    }),
     syncNow: accountId => run(accountId, incrementalSync),
     notify: accountId => run(accountId, incrementalSync, {force:true}),
     permissions,
@@ -269,7 +307,7 @@ export function createOutlookSync({ store, vault, oauth, fetchImpl = globalThis.
     generation: accountId => epoch(accountId),
     forget(accountId, fn) {
       epochs.set(accountId, epoch(accountId) + 1);
-      clients.delete(accountId);
+      clients.delete(accountId);archiveMetadata.delete(accountId);
       failures.delete(accountId);
       connecting.delete(accountId);
       return serial(accountId, fn);

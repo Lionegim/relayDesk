@@ -147,6 +147,7 @@ export function createApp({ store, ai, ownerName, gmail = null, providers = {}, 
       const snapshot=store.snapshot(paged?{profile:params.profile || store.firstProfileId(),nav:params.nav,channel:params.channel,folder:params.folder || null,q:params.q,limit:params.limit,cursor:params.cursor}:null);
       for (const profile of snapshot.profiles) for (const account of profile.accounts) {
         account.perms = mail.permissions(account);
+        if(['gmail','outlook'].includes(account.svc))account.history=store.history.status(account.id);
         if(push && ['gmail','outlook'].includes(account.svc)) account.notifications=push.status(account.id);
         if (providers[account.svc]) account.windowDays = account.svc === 'whatsapp' ? 7 : store.getSync(account.id)?.window_days || 30;
         if (account.svc === 'whatsapp' && providers.whatsapp) account.sync = providers.whatsapp.sync.progress?.(account.id) || null;
@@ -175,6 +176,14 @@ export function createApp({ store, ai, ownerName, gmail = null, providers = {}, 
       if (!providers.whatsapp) throw notFound();
       await providers.whatsapp.cancelLink(id);
       return { cancelled: true };
+    }],
+    ['POST', /^\/api\/accounts\/([^/]+)\/history$/, ([id],body) => {
+      const aid=accountId(id),provider=mail.providerFor(aid);
+      if(!provider.sync.historyPage)throw badRequest('Import complet indisponible pour ce compte.');
+      if(body.action==='pause')return store.history.pause(aid);
+      if(body.action!=='start')throw badRequest('Action d’import invalide.');
+      if(!provider.sync.permissions(aid).includes('read'))throw badRequest('Reconnecte ce compte avant l’import.');
+      return store.history.start(aid);
     }],
     ['GET', /^\/api\/accounts\/([^/]+)\/sync$/, ([id]) => mail.providerFor(accountId(id)).sync.progress(accountId(id)) || (() => { throw notFound('Aucune synchronisation pour ce compte'); })()],
     ['POST', /^\/api\/accounts\/([^/]+)\/sync$/, async ([id]) => {

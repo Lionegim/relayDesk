@@ -22,6 +22,7 @@ async function pool(items, size, fn) {
 
 export function createGmailSync({ store, vault, oauth, fetchImpl = globalThis.fetch, log = console, assertAccountAllowed=()=>{}, shouldPoll=()=>true }) {
   const clients = new Map();
+  const archiveMetadata = new Map();
   const running = new Map();
   const connecting = new Map();
   const failures = new Map(); // accountId -> { count, retryAt }
@@ -92,6 +93,9 @@ export function createGmailSync({ store, vault, oauth, fetchImpl = globalThis.fe
   }
 
   async function initialSync(accountId) {
+    // An expired live cursor must also reconcile the archive already authorized.
+    // Recent arrivals resume first; the durable worker repairs older state.
+    if(store.history?.get(accountId))store.history.restart(store.history.get(accountId));
     const c = client(accountId), { gmail } = c;
     const days = store.getSync(accountId)?.window_days || 30;
     store.setSync(accountId, { status: 'syncing', total: 0, done: 0, error: null });
@@ -161,7 +165,7 @@ export function createGmailSync({ store, vault, oauth, fetchImpl = globalThis.fe
       const count = (failures.get(accountId)?.count || 0) + 1;
       failures.set(accountId, { count, retryAt: Date.now() + Math.min(MAX_BACKOFF_MS, BASE_BACKOFF_MS * 2 ** (count - 1)) });
       if (e.code === 'invalid_grant' || e.code==='oauth_client_changed') {
-        clients.delete(accountId);
+        clients.delete(accountId);archiveMetadata.delete(accountId);
         store.setAccountStatus(accountId, 'À reconnecter', 'warn');
         store.setSync(accountId, { status: 'error', error: 'Accès révoqué ou expiré : reconnecte le compte.' });
       } else {
@@ -218,6 +222,21 @@ export function createGmailSync({ store, vault, oauth, fetchImpl = globalThis.fe
       if (!s) return null;
       return { status: s.status, total: s.total, done: s.done, error: s.error, ...store.countThreads(accountId) };
     },
+    historyPage: (accountId,cursor,guard=()=>true) => serial(accountId,async()=>{
+      const c=client(accountId);if(!guard())throw gone();
+      const page=await c.gmail.listThreads(undefined,cursor || undefined);
+      if(!c.live() || !guard())throw gone();
+      if(!Array.isArray(page.threads || []) || page.nextPageToken && page.nextPageToken===cursor)throw new HttpError(502,'Pagination Gmail invalide.','retryable');
+      return {ids:(page.threads || []).map(t=>t.id),next:page.nextPageToken || null};
+    }),
+    historyApply: (accountId,ids,guard=()=>true) => serial(accountId,async()=>{
+      const c=client(accountId);if(!guard())throw gone();
+      let cached=archiveMetadata.get(accountId);
+      if(!cached || cached.client!==c || cached.expires<Date.now()){cached={client:c,expires:Date.now()+300000,value:await labelNames(c.gmail)};archiveMetadata.set(accountId,cached);}
+      const names=cached.value;
+      const scoped={...c,live:()=>c.live() && guard()};
+      for(const id of ids){if(!scoped.live())throw gone();await applyThread(accountId,scoped,names,id);}
+    }),
     syncNow: accountId => run(accountId, incrementalSync),
     notify: accountId => run(accountId, id => store.getSync(id)?.history_id ? incrementalSync(id) : initialSync(id), {force:true}),
     permissions,
@@ -231,7 +250,7 @@ export function createGmailSync({ store, vault, oauth, fetchImpl = globalThis.fe
     // dans la file du compte, après la fin de la tâche en cours.
     forget(accountId, fn) {
       epochs.set(accountId, epoch(accountId) + 1);
-      clients.delete(accountId);
+      clients.delete(accountId);archiveMetadata.delete(accountId);
       failures.delete(accountId);
       connecting.delete(accountId);
       return serial(accountId, fn);

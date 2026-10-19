@@ -66,6 +66,7 @@ export function createGraphClient({ refreshToken, oauth, fetchImpl = globalThis.
       page = await request('GET', page['@odata.nextLink']);
       out.push(...(page.value || []));
     }
+    if(page['@odata.nextLink'])throw new HttpError(409,'Trop de dossiers Outlook pour cet import.','folder_limit');
     return { value: out };
   }
   const MSG_FIELDS = 'id,conversationId,parentFolderId,subject,bodyPreview,body,from,sender,toRecipients,ccRecipients,replyTo,receivedDateTime,sentDateTime,isRead,isDraft,flag,importance,inferenceClassification,internetMessageId';
@@ -108,7 +109,7 @@ export function createGraphClient({ refreshToken, oauth, fetchImpl = globalThis.
     // Tous les messages d'une conversation, en-têtes de fil compris.
     conversation: async conversationId => {
       const out = [];
-      let next = null;
+      let next = null;const seen=new Set();
       do {
         const page = next ? await request('GET', next, { prefer: TEXT_BODY })
           : await request('GET', 'me/messages', { prefer: TEXT_BODY, params: {
@@ -116,7 +117,9 @@ export function createGraphClient({ refreshToken, oauth, fetchImpl = globalThis.
           } });
         out.push(...(page.value || []));
         next = page['@odata.nextLink'] || null;
-      } while (next && out.length < 500);
+        if(next && seen.has(next))throw new HttpError(502,'Pagination de conversation répétée.','retryable');
+        if(next)seen.add(next);
+      } while (next);
       return out;
     },
     // Suivi incrémental par dossier ; `link` est le deltaLink ou nextLink précédent.

@@ -1,3 +1,4 @@
+import {createHistoryRepository} from './mail/history/repository.js';
 import {createUnifiedPeople} from './contacts/unified.js';
 import {createDuplicateRepository} from './contacts/duplicates.js';
 // Dépôt SQLite. Les routes ne voient que ces fonctions ; les secrets n'en sortent jamais par snapshot().
@@ -71,6 +72,7 @@ export function createStore(db) {
 
   return {
     db,
+    history:createHistoryRepository(db,changed),
     contactsBackfill:()=>people.backfill(),
     contactDuplicateProfiles:()=>[...q('SELECT id FROM profiles').all(),{id:'all'}],
     scanContactDuplicates:p=>duplicates.scan(p),

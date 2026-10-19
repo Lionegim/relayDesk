@@ -44,6 +44,7 @@ export const api = {
   changeReplyMemory: (id,input) => call('PATCH', `/api/messages/${id}/memory`, input),
   // { limit, before } : page plus ancienne du fil.
   message: (id, params) => call('GET', `/api/messages/${id}${query(params)}`),
+  importHistory: (id,action) => call('POST', `/api/accounts/${id}/history`, {action}),
   syncProgress: accountId => call('GET', `/api/accounts/${accountId}/sync`),
   syncNow: accountId => call('POST', `/api/accounts/${accountId}/sync`, {}),
   disconnectAccount: accountId => call('POST', `/api/accounts/${accountId}/disconnect`, {}),

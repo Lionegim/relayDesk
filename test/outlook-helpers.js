@@ -92,7 +92,7 @@ export function fakeMicrosoft({ scope = `openid email offline_access ${G}User.Re
         const f = { id: `F${++m.ids}`, displayName: body.displayName, parentFolderId: parent.id };
         m.folders.push(f); return json(f, 201);
       }
-      return json({ value: m.folders.filter(f => f.parentFolderId === parent.id).map(f => ({ ...f, childFolderCount: 0 })) });
+      return json({ value: m.folders.filter(f => f.parentFolderId === parent.id).map(f => ({ ...f, childFolderCount: m.folders.filter(c => c.parentFolderId === f.id).length })) });
     }
     if (method === 'POST' && path === 'me/mailFolders') {
       if (m.folders.some(f => f.parentFolderId === 'root' && f.displayName === body.displayName)) return json({ error: {} }, 409);
