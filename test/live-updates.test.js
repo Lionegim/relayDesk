@@ -95,3 +95,9 @@ test('bulk refresh pacing stays below the shared session budget for six screens'
  for(let step=0;step<60000/ARCHIVE_REFRESH_MS;step++){for(const source of sources){source.emit('invalidate');source.emit('invalidate');}t.mock.timers.tick(ARCHIVE_REFRESH_MS);for(let n=0;n<5;n++)await Promise.resolve();}
  assert.equal(reads,216);assert.ok(reads<240,'even three reads per refresh leave room for user actions');for(const live of clients)live.stop();
 });
+test('server coalesces archive bursts for older open screens and restores ordinary live notices afterward',async t=>{
+ t.mock.timers.enable({apis:['setTimeout']});let listener,bulk=true;const store={history:{active:()=>bulk},subscribe(fn){listener=fn;return()=>{};}};
+ const live=serverLive({store}),res=Object.assign(new EventEmitter(),{frames:[],writeHead(){},flushHeaders(){},write(frame){this.frames.push(frame);return true;},end(){}});live.connect({headers:{host:'relay.example.test'}},res);const initial=res.frames.length;
+ for(let i=0;i<1000;i++)listener();t.mock.timers.tick(4999);assert.equal(res.frames.length,initial);t.mock.timers.tick(1);assert.equal(res.frames.length,initial+1);assert.equal(res.frames.at(-1),'event: invalidate\ndata: {}\n\n');
+ bulk=false;listener();t.mock.timers.tick(40);assert.equal(res.frames.length,initial+2);live.close();
+});

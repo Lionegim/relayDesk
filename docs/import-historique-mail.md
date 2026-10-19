@@ -17,7 +17,7 @@ Le worker lit une page ou traite cinq conversations par compte, puis rend la fil
 
 Gmail conserve son curseur temps réel indépendant. Outlook construit des curseurs delta complets, conserve les correspondances nécessaires aux suppressions et les adopte en fin de découverte. Les changements simultanés peuvent être rejoués sans doublon. Les dossiers profonds restent suivis. Un curseur expiré ou un dossier supprimé relance une lecture complète avec une nouvelle génération de tâche. Si le suivi en direct doit être réinitialisé, l’archive est réconciliée aussi ; une pause demandée reste respectée.
 
-Les états publics contiennent seulement la progression, jamais les curseurs, secrets ou identifiants de tâche. L’accès aux contrôles garde l’authentification propriétaire et la protection CSRF existantes. Les progrès passent par les notifications SSE existantes, sans rafraîchissement manuel. Pendant l’import, les écrans regroupent les invalidations pendant cinq secondes pour rester sous la limite de requêtes partagée entre appareils/onglets ; ils reprennent la cadence habituelle ensuite.
+Les états publics contiennent seulement la progression, jamais les curseurs, secrets ou identifiants de tâche. L’accès aux contrôles garde l’authentification propriétaire et la protection CSRF existantes. Les progrès passent par les notifications SSE existantes, sans rafraîchissement manuel. Pendant l’import, les écrans regroupent les invalidations pendant cinq secondes pour rester sous la limite de requêtes partagée entre appareils/onglets. Le serveur regroupe aussi les notifications pendant l’import pour protéger les écrans restés ouverts sur une ancienne version ; ils reprennent la cadence habituelle ensuite.
 
 ## Validation
 

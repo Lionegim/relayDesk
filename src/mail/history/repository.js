@@ -11,6 +11,7 @@ export function createHistoryRepository(db,changed=()=>{}) {
  const touch=id=>{q('UPDATE mail_history_imports SET updated_at=? WHERE account_id=?').run(now(),id);changed();};
  return {
   current,get,
+  active:()=>!!q("SELECT 1 FROM mail_history_imports WHERE status IN ('running','retrying') LIMIT 1").get(),
   status(id){const j=get(id);if(!j)return null;return {status:j.status,enumerated:!!j.enumerated,discovered:j.discovered,done:j.done,error:j.error,retryAt:j.retry_at,startedAt:j.started_at,updatedAt:j.updated_at};},
   start(id){const a=account(id);if(!a || !['gmail','outlook'].includes(a.svc))throw badRequest('Compte Gmail ou Outlook requis.');const j=get(id);
    if(j && j.identity===identity(a)){if(j.status!=='complete')q("UPDATE mail_history_imports SET status='running',error=NULL,retry_at=0 WHERE account_id=?").run(id);}

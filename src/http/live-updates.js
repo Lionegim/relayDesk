@@ -16,7 +16,9 @@ export function createLiveUpdates({ store, auth, heartbeatMs = 15000, maxClients
     pending = setTimeout(() => {
       pending = null;
       for (const client of clients) write(client, 'event: invalidate\ndata: {}\n\n');
-    }, 40);
+    // Older open clients also need protection from archive write bursts. This
+    // bounds notices across all six screens sharing the owner session quota.
+    }, store.history?.active()?5000:40);
     pending.unref?.();
   });
   const heartbeat = setInterval(() => {
