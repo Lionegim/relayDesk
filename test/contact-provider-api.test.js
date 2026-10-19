@@ -17,3 +17,9 @@ test('Outlook reads default and nested contact folders; never sends token to off
  assert.equal((await client.contacts()).length,2);assert.ok(paths.includes('/v1.0/me/contactFolders/f/childFolders'));
  let calls=0;const hostile=createGraphClient({refreshToken:'synthetic',oauth,fetchImpl:async()=>{calls++;return json({value:[], '@odata.nextLink':'https://other.example.test/token-theft'});}});await assert.rejects(hostile.contacts(),/inattendu/);assert.equal(calls,1);
 });
+
+test('Outlook refreshes a cached mail token before reading newly authorized contacts',async()=>{
+ let refreshes=0;const scopes=[];
+ const client=createGraphClient({refreshToken:'synthetic',oauth:{refresh:async()=>({access_token:++refreshes===1?'mail-only':'contacts-granted',expires_in:3600})},fetchImpl:async(url,opts)=>{const path=new URL(url).pathname;scopes.push(opts.headers.authorization);if(path.endsWith('/me'))return json({mail:'owner@example.test'});assert.equal(opts.headers.authorization,'Bearer contacts-granted');return json({value:[]});}});
+ await client.me();await client.contacts();assert.equal(refreshes,2);assert.equal(scopes[0],'Bearer mail-only');
+});

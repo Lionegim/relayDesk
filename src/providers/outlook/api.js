@@ -71,6 +71,9 @@ export function createGraphClient({ refreshToken, oauth, fetchImpl = globalThis.
   const MSG_FIELDS = 'id,conversationId,parentFolderId,subject,bodyPreview,body,from,sender,toRecipients,ccRecipients,replyTo,receivedDateTime,sentDateTime,isRead,isDraft,flag,importance,inferenceClassification,internetMessageId';
 
   async function contacts() {
+    // A newly consented Contacts.Read grant may not be reflected in a mail access token
+    // already cached by Graph. Refresh once before this explicit, read-only import.
+    await accessToken(true);
     const records=new Map(),folders=[],seen=new Set();let pages=0;
     async function collect(path,params,accept) {
       let next=path;
