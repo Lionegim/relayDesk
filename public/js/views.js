@@ -771,7 +771,7 @@ function connectWizard(s) {
           <div class="grow"></div>
           ${when(next, () => {
             const branded = c.step === 'auth' && d?.auth === 'oauth' && ['gmail', 'outlook'].includes(c.svc);
-            return branded ? html`<button class="provider-auth-button" data-on-click="cNext" aria-label="${next}" title="${next}" ${raw(nextDisabled ? 'disabled' : '')}><img src="${c.svc === 'gmail' ? '/icons/google-sign-in.svg' : '/icons/microsoft-sign-in.svg'}" alt="${c.svc === 'gmail' ? 'Sign in with Google' : 'Sign in with Microsoft'}" height="40"></button>`
+            return branded ? html`<button class="provider-auth-button" data-on-click="cNext" aria-label="${c.svc === 'gmail' ? 'Sign in with Google' : 'Sign in with Microsoft'} — ${next}" title="${next}" ${raw(nextDisabled ? 'disabled' : '')}><img src="${c.svc === 'gmail' ? '/icons/google-sign-in.svg' : '/icons/microsoft-sign-in.svg'}" alt="${c.svc === 'gmail' ? 'Sign in with Google' : 'Sign in with Microsoft'}" height="40"></button>`
               : html`<button class="btn btn-brand" data-on-click="cNext" ${raw(nextDisabled ? 'disabled' : '')}>${next}</button>`;
           })}
         </div>

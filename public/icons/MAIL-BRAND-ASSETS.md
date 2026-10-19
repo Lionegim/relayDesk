@@ -6,7 +6,7 @@ Retrieved from official vendor resources on 19 October 2026. Assets are stored l
 
 - [Google Brand Resource Center](https://about.google/brand-resource-center/products-and-services/)
 - [Google API integrations](https://about.google/brand-resource-center/guidance/apis/): product icons identify compatible services and functional connections, alongside their names.
-- [Google identity branding](https://developers.google.com/identity/branding-guidelines): the unmodified pre-approved light sign-in button is used only for the Google authorization action. Its supplied English artwork is retained; the accessible action label follows the application's French language.
+- [Google identity branding](https://developers.google.com/identity/branding-guidelines): the unmodified pre-approved light sign-in button is used only for the Google authorization action. Its supplied English artwork is retained; the accessible action label includes the visible English wording followed by French context for voice control.
 - [Microsoft identity branding](https://learn.microsoft.com/en-us/entra/identity-platform/howto-add-branding-in-apps): official sign-in button and Microsoft symbol.
 - [Outlook product page](https://www.microsoft.com/en-us/microsoft-365/outlook/email-and-calendar-software-microsoft-outlook): current FY26 Outlook app icon.
 - [Microsoft trademark guidance](https://www.microsoft.com/en-us/legal/intellectualproperty/trademarks) and [Microsoft 365 guidance](https://cdn-dynmedia-1.microsoft.com/is/content/microsoftcorp/microsoft/mscle/documents/presentations/FY26_Microsoft_365_trademark_guidelines.pdf).
