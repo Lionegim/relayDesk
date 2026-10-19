@@ -121,12 +121,12 @@ export async function createOwnerAuth({ config, db, clock = Date.now, oidc = nul
   }
   const live = (row, now) => row && !row.revoked_at && row.binding === binding && row.expires_at > now && now - row.last_seen_at < auth.idleTtlMs;
 
-  function requireSession(req) {
+  function requireSession(req, { touch = true } = {}) {
     const token = parseCookies(req.headers.cookie)[SESSION_COOKIE];
     const row = rowFor(token);
     const now = clock();
     if (!live(row, now)) throw unauthenticated();
-    if (now - row.last_seen_at >= TOUCH_MS) q('UPDATE auth_sessions SET last_seen_at = ? WHERE id = ?').run(now, row.id);
+    if (touch && now - row.last_seen_at >= TOUCH_MS) q('UPDATE auth_sessions SET last_seen_at = ? WHERE id = ?').run(now, row.id);
     return {
       id: row.id, csrfToken: csrfFor(token), authenticatedAt: row.authenticated_at, createdAt: row.created_at,
       expiresAt: row.expires_at, idleExpiresAt: Math.min(row.expires_at, now + auth.idleTtlMs), acr: row.acr, mfa: row.acr === auth.mfaAcr,
@@ -286,6 +286,7 @@ export async function createOwnerAuth({ config, db, clock = Date.now, oidc = nul
       }
       return true;
     },
+    origin,
     requireSession,
     assertMutation,
     assertRecent,

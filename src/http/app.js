@@ -9,6 +9,7 @@ import { emailFromIdToken } from '../providers/gmail/oauth.js';
 import { createMailService } from '../mail/service.js';
 import { createSessionAccess } from './session-access.js';
 import {mailboxAddress} from '../providers/mail-credentials.js';
+import {createLiveUpdates} from './live-updates.js';
 
 const PUBLIC_DIR = fileURLToPath(new URL('../../public/', import.meta.url));
 const MAX_BODY = 64 * 1024;
@@ -77,6 +78,7 @@ export function createApp({ store, ai, ownerName, gmail = null, providers = {}, 
   const access=createSessionAccess();
   const mail = createMailService({ store, providers });
   const assistant = createAssistantService({ store, ai, mail, ownerName });
+  const live = createLiveUpdates({ store, auth });
   // Autorisation Google : navigation pleine page, puis retour vers l'interface avec le résultat dans l'URL.
   async function oauthRoute(pathname, url, res, session=null, json=false,req=null) {
     if (!['/oauth/google/start', '/oauth/google/callback', '/oauth/microsoft/start', '/oauth/microsoft/callback'].includes(pathname)) throw notFound();
@@ -210,7 +212,7 @@ export function createApp({ store, ai, ownerName, gmail = null, providers = {}, 
     ['POST', /^\/api\/ai\/classify\/apply$/, (_, body) => assistant.apply(messageId(body.messageId), body)],
   ];
 
-  return http.createServer(async (req, res) => {
+  const server = http.createServer(async (req, res) => {
     try {
       for(const [name,value] of Object.entries(SECURITY_HEADERS)) res.setHeader(name,value);
       if (allowedHosts && !allowedHosts.includes(req.headers.host)) throw new HttpError(403, 'Hôte non autorisé', 'forbidden_host');
@@ -219,12 +221,12 @@ export function createApp({ store, ai, ownerName, gmail = null, providers = {}, 
       if(auth && await auth.handle(req,res,url)) return;
       if(!auth && pathname==='/auth/session' && req.method==='GET') return send(res,200,{enabled:false,authenticated:false});
       // Ressources publiques fixes : uniquement du code et des images génériques, jamais index.html ni contenu privé.
-      const publicLogin=['/login','/js/login.js','/js/app.js','/js/api.js','/js/views.js','/js/dom.js','/js/constants.js','/js/pwa.js','/styles.css','/sw.js','/manifest.webmanifest','/offline.html','/fonts/inter-latin-wght-normal.woff2','/fonts/jetbrains-mono-latin-wght-normal.woff2'].includes(pathname) || /^\/icons\/[a-zA-Z0-9_-]+\.(png|svg)$/.test(pathname);
+      const publicLogin=['/login','/js/login.js','/js/app.js','/js/api.js','/js/views.js','/js/dom.js','/js/constants.js','/js/pwa.js','/js/live.js','/styles.css','/sw.js','/manifest.webmanifest','/offline.html','/fonts/inter-latin-wght-normal.woff2','/fonts/jetbrains-mono-latin-wght-normal.woff2'].includes(pathname) || /^\/icons\/[a-zA-Z0-9_-]+\.(png|svg)$/.test(pathname);
       const publicHealth=['/api/health','/api/ready'].includes(pathname) && req.method==='GET';
       if(pathname==='/api/ready' && req.method==='GET') {const value=readiness?readiness():{ok:true};return send(res,value.ok?200:503,{ok:!!value.ok});}
       let session=null;
       if(auth && !publicLogin && !publicHealth) {
-        try {session=auth.requireSession(req);}catch(error) {
+        try {session=auth.requireSession(req,{touch:pathname!=='/api/events'});}catch(error) {
           if(pathname==='/' && ['GET','HEAD'].includes(req.method)) return redirect(res,'/login');
           throw error;
         }
@@ -235,6 +237,10 @@ export function createApp({ store, ai, ownerName, gmail = null, providers = {}, 
       if(publicLogin) {
         if(!['GET','HEAD'].includes(req.method)) throw new HttpError(405,'Méthode non autorisée','method_not_allowed');
         return await serveStatic(req,res,pathname==='/login'?'/login.html':pathname);
+      }
+      if (pathname === '/api/events') {
+        if (req.method !== 'GET') throw new HttpError(405, 'Méthode non autorisée', 'method_not_allowed');
+        return live.connect(req, res, session);
       }
       if(req.method==='POST' && /^\/api\/oauth\/(google|microsoft)\/start$/.test(pathname)) {
         const body=await readJson(req),start=new URL('/oauth/'+pathname.split('/')[3]+'/start','http://localhost');
@@ -263,4 +269,7 @@ export function createApp({ store, ai, ownerName, gmail = null, providers = {}, 
       send(res, known ? e.status : 500, { error: { code: known ? e.code : 'internal', message: known ? e.message : 'Erreur interne' } });
     }
   });
+  server.closeLiveUpdates = () => live.close();
+  server.once('close', () => live.close());
+  return server;
 }

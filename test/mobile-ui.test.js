@@ -5,6 +5,7 @@ import assert from 'node:assert/strict';
 import { readFileSync, existsSync } from 'node:fs';
 import vm from 'node:vm';
 import { html, raw, when, cls } from '../public/js/dom.js';
+import { createLiveUpdates } from '../public/js/live.js';
 
 const read = path => readFileSync(new URL(`../public/${path}`, import.meta.url), 'utf8');
 // Les objets créés dans la machine virtuelle n'ont pas les prototypes de ce contexte : comparaison en JSON.
@@ -17,14 +18,14 @@ const profiles = [{ id: 'perso', name: 'Personnel', initials: 'P', accounts: [{ 
 const row = (id, extra = {}) => ({ id, p: 'perso', accountId: 1, channel: 'email', from: `Exp ${id}`, subject: `Objet ${id}`, preview: '', sortAt: 1000 - id, count: 1, draftVersion: 3, ...extra });
 const page = (messages, extra = {}) => ({ profiles, folders: [], contacts: [], services: {}, messages, page: { limit: 50, total: messages.length, hasMore: false, nextCursor: null, ...extra }, counts: { all: 9, unread: 2, todo: 1, drafts: 0, folders: {} } });
 
-async function app({ mobile = false, state: first, onState } = {}) {
+async function app({ mobile = false, state: first, onState, onMessage, live = false } = {}) {
   const calls = { state: [], message: [], saveDraft: [], preview: [], send: [], create: [] }, timers = [], listeners = {}, pushed = [], replaced = [];
   const api = {
     session: async () => ({ enabled: false }),
     state: params => { calls.state.push(params); return api.onState(params); },
     onState: onState || (async () => first || page([row(1), row(2)])),
     message: (id, params) => { calls.message.push({ id, params }); return api.onMessage(id, params); },
-    onMessage: async id => ({ id, body: 'Corps', trail: [], draftVersion: 7, draft: null, history: { hasMore: false, nextCursor: null } }),
+    onMessage: onMessage || (async id => ({ id, body: 'Corps', trail: [], draftVersion: 7, draft: null, history: { hasMore: false, nextCursor: null } })),
     saveDraft: (id, input) => { calls.saveDraft.push({ id, input }); return api.onSave(id, input); },
     onSave: async (id, input) => ({ text: input.text, savedAt: '2026-10-19T08:00:00.000Z', version: input.baseVersion + 1 }),
     previewSend: (id, input) => { calls.preview.push({ id, input }); return api.onPreview(id, input); },
@@ -42,12 +43,55 @@ async function app({ mobile = false, state: first, onState } = {}) {
     setInterval: () => 1, clearInterval: () => {}, URLSearchParams, location: { search: '', replace: () => {} }, history, console,
     matchMedia: () => ({ matches: mobile, addEventListener: () => {} }), addEventListener: (type, fn) => { listeners[type] = fn; },
   };
+  if (live) {
+    c.EventSource = class {
+      constructor() { this.handlers={}; c.liveSource=this; }
+      addEventListener(name,fn) { this.handlers[name]=fn; }
+      emit(name) { this.handlers[name]?.(); }
+      close() { this.closed=true; }
+    };
+    c.createLiveUpdates = options => createLiveUpdates({...options,EventSourceImpl:c.EventSource,delayMs:0});
+  }
   vm.createContext(c);
   vm.runInContext(read('js/app.js').replace(/^import .*;\n/gm, '') + '\nglobalThis.inspect=()=>state;globalThis.act=actions;globalThis.view=()=>derive(state);', c);
   await tick(6);
   const runTimers = async () => { const due = timers.splice(0).filter(t => t.fn); for (const t of due) t.fn(); await tick(6); };
   return { c, api, calls, timers, runTimers, listeners, pushed, replaced, s: () => c.inspect() };
 }
+
+test('live arrival updates the open conversation and list without replacing typed text or approving a send',async()=>{
+ const u=await app({live:true,state:page([row(1,{channel:'whatsapp'})])});
+ const wait=async condition=>{for(let i=0;i<100&&!condition();i++)await new Promise(r=>setTimeout(r,5));assert.ok(condition());};
+ await wait(()=>!!u.s().details[1]);
+ const selected=u.s().selectedId;u.s().drafts[1]='Mon texte encore en cours';
+ u.api.onState=async()=>page([row(2),row(1,{channel:'whatsapp',sortAt:2000,count:2})]);
+ u.api.onMessage=async()=>({id:1,body:'Nouveau message fictif reçu',trail:[],draftVersion:7,draft:null});
+ u.c.liveSource.emit('connected');u.c.liveSource.emit('invalidate');
+ await wait(()=>u.s().details[1]?.body==='Nouveau message fictif reçu');
+ assert.equal(u.s().selectedId,selected);assert.equal(u.s().drafts[1],'Mon texte encore en cours');assert.equal(u.s().data.messages.length,2);
+ assert.equal(u.calls.send.length,0);assert.equal(u.calls.preview.length,0);u.listeners.pagehide();
+});
+
+test('live invalidation during a delayed detail read discards that old response and refetches',async t=>{
+ let resolveOld,reads=0;
+ const fresh={id:1,body:'Latest fictional arrival',trail:[],draftVersion:7,draft:null};
+ const u=await app({live:true,state:page([row(1,{channel:'whatsapp'})]),onMessage:()=>++reads===1?new Promise(r=>{resolveOld=r;}):Promise.resolve(fresh)});
+ t.after(()=>u.listeners.pagehide());
+ u.api.onState=async()=>page([row(1,{channel:'whatsapp',sortAt:2000,count:2})]);
+ u.c.liveSource.emit('connected');
+ for(let i=0;i<100&&u.s().data.messages[0].count!==2;i++)await new Promise(r=>setTimeout(r,5));
+ assert.equal(u.s().data.messages[0].count,2);resolveOld({...fresh,body:'Old response'});
+ for(let i=0;i<100&&u.s().details[1]?.body!==fresh.body;i++)await new Promise(r=>setTimeout(r,5));
+ assert.equal(u.s().details[1].body,fresh.body);assert.equal(reads,2);assert.equal(u.calls.send.length,0);
+});
+
+test('live detail read failure recovers without needing another incoming event',async t=>{
+ const u=await app({live:true,state:page([row(1,{channel:'whatsapp'})])});t.after(()=>u.listeners.pagehide());
+ let reads=0;u.api.onMessage=async()=>{if(++reads===1)throw new Error('Temporary detail failure');return{id:1,body:'Recovered arrival',trail:[],draftVersion:7,draft:null};};
+ u.api.onState=async()=>page([row(1,{channel:'whatsapp',sortAt:2000,count:2})]);u.c.liveSource.emit('connected');
+ for(let i=0;i<500&&u.s().details[1]?.body!=='Recovered arrival';i++)await new Promise(r=>setTimeout(r,5));
+ assert.equal(u.s().details[1].body,'Recovered arrival');assert.ok(reads>=2);assert.equal(u.calls.send.length,0);
+});
 
 test('démarrage : profil fourni par le serveur, sans profil Anove imposé', async () => {
   const u = await app({ onState: async params => {

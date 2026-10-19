@@ -64,6 +64,15 @@ async function setup({ env = {}, db = new DatabaseSync(':memory:'), clock = () =
 }
 const sessionOf = async b => (await b.call('GET', '/auth/session')).json();
 
+test('live stream checks do not keep an idle owner session alive', async () => {
+  let now=Date.now();const t=await setup({clock:()=>now,env:{AUTH_IDLE_TTL_HOURS:'1'}});
+  const b=t.browser();assert.equal((await t.login(b)).res.status,303);
+  const req={headers:{cookie:[...b.jar].map(([k,v])=>`${k}=${v}`).join('; ')}};
+  now+=40*60000;t.owner.requireSession(req,{touch:false});
+  now+=21*60000;assert.throws(()=>t.owner.requireSession(req,{touch:false}),e=>e.status===401);
+  t.close();
+});
+
 test('connexion complète : PKCE S256, state, nonce, acr demandé et vérifié, cookies sûrs', async () => {
   const t = await setup();
   const b = t.browser();

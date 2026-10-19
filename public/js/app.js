@@ -2,6 +2,7 @@ import { api } from './api.js';
 import { patch, delegate } from './dom.js';
 import { renderApp } from './views.js';
 import { NAV, GROUPS, SETTINGS, WINDOWS } from './constants.js';
+import { createLiveUpdates } from './live.js';
 
 const LIST_W_KEY = 'relay.listW';
 const storage = {
@@ -66,6 +67,7 @@ function render() {
 
 // Corps et fil sont chargés à la demande : l'état global ne contient que la liste.
 const loading = new Set();
+const detailJobs = new Map(), detailRevisions = new Map();
 const compositionBuffers = new Map();
 const compositionsByCid=new Map();
 let selectionVersion = 0, previewRequest = 0;
@@ -93,32 +95,40 @@ function mergeHistory(prev, next) {
   return extra.length ? { ...next, trail: [...(next.trail || []), ...extra], history: prev.history ?? next.history } : next;
 }
 function loadDetails(id) {
-  if ((state.details[id] && !state.details[id].refreshing) || loading.has(id)) return;
+  if (loading.has(id)) return detailJobs.get(id);
+  if (state.details[id] && !state.details[id].refreshing) return true;
   loading.add(id);
-  api.message(id)
+  const revision = detailRevisions.get(id) || 0;
+  const job = api.message(id)
     .then(full => {
-      if (!known(id)) return;
+      if (!known(id) || revision !== (detailRevisions.get(id) || 0)) return true;
       const merged = mergeHistory(state.details[id], full);
       syncDraftMeta(id, merged);
       set(s => ({ details: { ...s.details, [id]: merged } }));
+      return true;
     })
     .catch(err => {
-      if (!known(id)) return;
+      if (!known(id) || revision !== (detailRevisions.get(id) || 0)) return true;
       set(s => ({ details: { ...s.details, [id]: s.details[id] && !s.details[id].failed
         ? { ...s.details[id], refreshing: false, stale: true } : { failed: true, trail: [] } } }));
       fail(err);
+      return false;
     })
-    .finally(() => loading.delete(id));
+    .finally(() => { loading.delete(id); detailJobs.delete(id); })
+    .then(ok => revision !== (detailRevisions.get(id) || 0) && known(id) ? loadDetails(id) : ok);
+  detailJobs.set(id, job);
+  return job;
 }
 
 // Rafraîchit la liste quand un compte réel est synchronisé en arrière-plan.
 const REFRESH_MS = 30000;
+let liveUpdates = null;
 setInterval(async () => {
-  if (!state.data || state.c || state.offline || !state.data.profiles.some(p => p.accounts.some(a => ['gmail', 'outlook', 'whatsapp'].includes(a.svc)))) return;
+  if (liveUpdates?.connected || !state.data || state.c || state.confirm || state.offline || !state.data.profiles.some(p => p.accounts.some(a => ['gmail', 'outlook', 'whatsapp'].includes(a.svc)))) return;
   try { await reload({ refresh: true }); } catch { /* nouvel essai au prochain passage */ }
 }, REFRESH_MS);
 setInterval(async () => {
-  if (!state.data || state.c || state.offline || !state.data.profiles.some(p => p.accounts.some(a => a.svc === 'whatsapp' && a.sync?.status === 'syncing'))) return;
+  if (liveUpdates?.connected || !state.data || state.c || state.confirm || state.offline || !state.data.profiles.some(p => p.accounts.some(a => a.svc === 'whatsapp' && a.sync?.status === 'syncing'))) return;
   try { await reload({ refresh: true }); } catch { /* progression au prochain passage */ }
 }, 3000);
 
@@ -1156,6 +1166,24 @@ api.session()
       set({ data, selectedId: state.mobile ? null : data.messages.find(m => m.p === state.profileId && !m.archived)?.id ?? null });
     }
     resumeFromRedirect();
+    if (typeof globalThis.EventSource === 'function') {
+      liveUpdates = createLiveUpdates({
+        canRefresh: () => !!state.data && !state.c && !state.confirm && !state.offline,
+        refresh: async () => {
+          await reload({ refresh: true });
+          const id = state.selectedId;
+          if (id != null && known(id) && !state.confirm) {
+            detailRevisions.set(id, (detailRevisions.get(id) || 0) + 1);
+            if (state.details[id]) set(s => ({ details: { ...s.details, [id]: { ...s.details[id], refreshing: true } } }));
+            if (await loadDetails(id) === false) throw new Error('Actualisation du fil indisponible.');
+          }
+        },
+      });
+      liveUpdates.start();
+      globalThis.addEventListener?.('pagehide', () => liveUpdates.stop());
+      globalThis.addEventListener?.('pageshow', () => liveUpdates.start());
+      document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') liveUpdates.invalidate(); });
+    }
   })
   // Réseau absent (TypeError de fetch) : message hors ligne, jamais de redirection vers la connexion.
   .catch(err => {

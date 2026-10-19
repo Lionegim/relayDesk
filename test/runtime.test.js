@@ -19,6 +19,12 @@ const config=(dir,extra={})=>readConfig({DATA_DIR:dir,PORT:'0',RELAY_CONNECTORS_
 const defer=()=>{let resolve;const promise=new Promise(r=>resolve=r);return {promise,resolve};};
 const waitFor=async fn=>{for(let i=0;i<500;i++){if(fn())return;await new Promise(r=>setTimeout(r,5));}throw new Error('délai de test dépassé');};
 
+test('graceful shutdown closes persistent live streams before the HTTP drain',async t=>{
+ const r=createRuntime(config(temp(t)));await r.start();
+ const stream=await fetch(r.url+'/api/events');const reader=stream.body.getReader();await reader.read();
+ await r.stop();assert.equal((await reader.read()).done,true);assert.equal(r.state,'stopped');
+});
+
 test('runtime hors réseau : santé minimale, adaptateurs absents et appels IA/connexion refusés',async t=>{
  const r=createRuntime(config(temp(t)));await r.start();t.after(()=>r.stop());
  const health=await fetch(r.url+'/api/health');assert.equal(health.status,200);assert.deepEqual(await health.json(),{ok:true});

@@ -24,7 +24,25 @@ const toAccount = r => ({ id: r.id, name: r.name, channel: r.channel, svc: r.svc
 
 export function createStore(db) {
   db.function('relay_lower',{deterministic:true},value=>String(value ?? '').toLowerCase());
-  const q = sql => db.prepare(sql);
+  const listeners = new Set();
+  let noticePending = false;
+  // Coalesce synchronous writes/transactions. Notifications carry no account or message data.
+  const changed = () => {
+    if (noticePending || !listeners.size) return;
+    noticePending = true;
+    queueMicrotask(() => {
+      noticePending = false;
+      for (const listener of listeners) { try { listener(); } catch { /* observers cannot fail a write */ } }
+    });
+  };
+  const q = sql => {
+    const statement = db.prepare(sql);
+    if (/^\s*(INSERT|UPDATE|DELETE)\b/i.test(sql) && /\b(messages|accounts|folders|contacts|sync_state)\b/i.test(sql)) {
+      const run = statement.run.bind(statement);
+      statement.run = (...args) => { const result = run(...args); if (result.changes > 0) changed(); return result; };
+    }
+    return statement;
+  };
   let seq = 0;
   const memory = createReplyMemoryRepository(db);
 
@@ -47,6 +65,7 @@ export function createStore(db) {
 
   return {
     db,
+    subscribe(listener) { listeners.add(listener); return () => listeners.delete(listener); },
     pruneReplyMemory: () => memory.prune(),
     markAIReply(id,text) {memory.ignore(memoryScope(id),text);},
     learnAvailableReplies() {

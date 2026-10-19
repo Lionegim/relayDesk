@@ -92,6 +92,7 @@ export function createRuntime(config,{providerFactory=assembleProviders,appFacto
         state='running';return {url};
       } catch(error) {
         state='failed';
+        server?.closeLiveUpdates?.();
         clearInterval(maintenance);
         for(const sync of syncs()) await sync.stop?.();
         if(server?.listening) await new Promise(resolve=>server.close(resolve));
@@ -109,6 +110,7 @@ export function createRuntime(config,{providerFactory=assembleProviders,appFacto
       if(state==='starting') {try {await startPromise;}catch {return;}}
       if(state==='stopped') return;
       state='stopping';clearInterval(maintenance);
+      server?.closeLiveUpdates?.();
       // Fermer l'entrée d'abord ; les requêtes déjà acceptées gardent leur connexion et leur issue fournisseur.
       const httpDone=server?.listening?new Promise(resolve=>server.close(resolve)):Promise.resolve();
       for(const sync of syncs()) sync.pause?.();
