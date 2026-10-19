@@ -17,11 +17,14 @@ const timeLabel = m => m.time ?? whenLabel(m.sortAt ?? m.at);
 const icon = name => raw(ICON[name]);
 
 export function renderApp(s, v) {
-  const mail = s.app === 'mail';
+  const mail = s.app === 'mail', mobile = !!s.mobile;
   const cols = mail ? `220px min(${s.listW}px, max(280px, calc(100vw - 640px))) minmax(0,1fr)` : '220px minmax(0,1fr)';
+  // Mobile : un seul écran (liste ou lecture), barre latérale en tiroir ; la grille vient alors de la feuille de style.
   return html`
-    <div class="${cls('app', v.compact && 'compact')}" style="grid-template-columns:${cols}">
+    ${when(s.offline, () => html`<div class="offline-banner" role="status">Hors ligne : consultation seulement. Rien n’est mis en attente ni envoyé plus tard.</div>`)}
+    <div class="${cls('app', v.compact && 'compact', mobile && 'is-mobile', mobile && `pane-${mail ? s.pane || 'list' : 'list'}`, mobile && s.drawer && 'drawer-open')}" ${raw(mobile ? '' : `style="grid-template-columns:${cols}"`)}>
       ${sidebar(s, v)}
+      ${when(mobile && s.drawer, () => html`<div class="drawer-backdrop" data-on-click="closeDrawer" aria-hidden="true"></div>`)}
       ${mail ? [messageList(s, v), reader(s, v)] : contactsPage(s, v)}
     </div>
     ${when(s.newMailOpen, () => newMailDialog(s, v))}
@@ -35,11 +38,13 @@ export function renderApp(s, v) {
 // ---------- Barre latérale ----------
 
 function sidebar(s, v) {
-  const unread = v.inProfile.filter(m => m.unread).length;
-  const navCount = id => id === 'todo' ? v.inProfile.filter(m => m.flagged).length : id === 'drafts' ? v.inProfile.filter(m => m.draft).length : unread;
+  const counts = v.counts || { unread: v.inProfile.filter(m => m.unread).length, todo: v.inProfile.filter(m => m.flagged).length, drafts: v.inProfile.filter(m => m.draft).length };
+  const unread = counts.unread;
+  const navCount = id => id === 'todo' ? counts.todo : id === 'drafts' ? counts.drafts : id === 'all' ? counts.unread : counts.unread;
   const indent = d => `${6 + d * 14}px`;
   return html`
-    <aside class="sidebar">
+    <aside class="sidebar" ${raw(s.mobile ? `aria-hidden="${!s.drawer}"` : '')}>
+      ${when(s.mobile, () => html`<button class="close-btn drawer-close" data-on-click="closeDrawer" aria-label="Fermer le menu">×</button>`)}
       <div class="profile-switch">
         <button class="side-item hov" data-on-click="toggleProfileMenu" aria-haspopup="menu" aria-expanded="${s.menu}">
           <span class="avatar" style="width:22px;height:22px;background:var(--neutral-200);color:var(--neutral-700);font-size:10px">${v.profile.initials}</span>
@@ -138,19 +143,23 @@ function folderRow(s, v, r, indent) {
 // ---------- Liste des messages ----------
 
 function messageList(s, v) {
-  const chans = ['all', ...Object.keys(CH).filter(c => v.byNav.some(m => m.channel === c))];
+  const present = v.channels || [...new Set(v.byNav.map(m => m.channel))];
+  const chans = ['all', ...Object.keys(CH).filter(c => present.includes(c))];
+  const counts = v.counts || { all: v.inProfile.length, unread: v.inProfile.filter(m => m.unread).length };
+  const page = s.paged ? s.page : null;
   return html`
-    <section class="list">
+    <section class="list" aria-label="Messages">
       <div class="${cls('resizer', s.resizing && 'is-active')}" data-on-pointerdown="startResize" data-on-dblclick="resetWidth" title="Glisser pour redimensionner"></div>
       <header class="list-head">
         <div class="list-title">
+          ${when(s.mobile, () => html`<button class="icon-btn mobile-only" data-on-click="openDrawer" aria-label="Ouvrir le menu" aria-expanded="${!!s.drawer}">${icon('lines')}</button>`)}
           <div class="grow" style="display:flex;flex-direction:column;min-width:0">
             <strong class="ellipsis">${s.channel === 'whatsapp' ? 'WhatsApp' : v.viewTitle} — ${v.profile.name}</strong>
-            <small>${s.channel === 'whatsapp' ? plural(v.list.length, 'conversation') : `${v.inProfile.length} messages, ${v.inProfile.filter(m => m.unread).length} non lus`}</small>
+            <small>${s.channel === 'whatsapp' ? plural(page ? page.total ?? v.list.length : v.list.length, 'conversation') : `${counts.all} messages, ${counts.unread} non lus`}</small>
           </div>
-          <button class="icon-btn" title="Filtrer">${icon('lines')}</button>
+          ${s.mobile ? html`<button class="icon-btn mobile-only" data-on-click="newMessage" aria-label="Nouveau message">${icon('compose')}</button>` : html`<button class="icon-btn" title="Filtrer">${icon('lines')}</button>`}
         </div>
-        <input class="input" placeholder="Rechercher" value="${s.query}" data-on-input="search" style="font-size:14px">
+        <input class="input" type="search" placeholder="Rechercher" value="${s.query}" data-on-input="search" aria-label="Rechercher dans les messages" style="font-size:14px">
         <div class="chips">
           ${chans.map(c => html`<button class="${cls('chip', s.channel === c && 'is-on')}" data-on-click="selectChannel" data-id="${c}">${c === 'all' ? 'Tous' : CH[c].label}</button>`)}
         </div>
@@ -180,7 +189,10 @@ function messageList(s, v) {
               <span class="thread-preview">${m.preview}</span>
             </span>
           </button>`)}
-        ${when(!v.list.length, () => html`<div class="empty">Aucun message</div>`)}
+        ${when(!v.list.length && !page?.loading, () => html`<div class="empty">Aucun message</div>`)}
+        ${when(page?.error, () => html`<div class="list-more"><span class="muted">Liste non actualisée : ${page.error}</span><button class="btn btn-ghost" data-on-click="retryList">Réessayer</button></div>`)}
+        ${when(page?.hasMore && !page?.error, () => html`<div class="list-more"><button class="btn btn-ghost" data-on-click="loadMore" ${raw(page.loading ? 'disabled' : '')}>${when(page.loading === 'more', () => html`<span class="spinner"></span>`)}Afficher plus</button></div>`)}
+        ${when(page?.loading === true && !v.list.length, () => html`<div class="empty"><span class="spinner"></span> Chargement…</div>`)}
       </div>
     </section>`;
 }
@@ -193,7 +205,7 @@ function reader(s, v) {
   return html`
     <main class="reader">
       <div class="toolbar">
-        <button class="icon-btn" data-on-click="newMessage" title="Nouveau message">${icon('compose')}</button>
+        ${s.mobile ? html`<button class="btn btn-ghost mobile-back" data-on-click="mobileBack" aria-label="Retour à la liste">‹ Retour</button>` : html`<button class="icon-btn" data-on-click="newMessage" title="Nouveau message">${icon('compose')}</button>`}
         <div class="grow"></div>
         <div class="icon-group">
           <button class="icon-btn" data-on-click="compose" data-mode="reply" title="Répondre">${icon('reply')}</button>
@@ -219,6 +231,31 @@ function reader(s, v) {
       ${sel ? (sel.channel === 'whatsapp' ? whatsappView(s, v, sel) : messageView(s, v, sel)) : html`<div class="no-selection">Aucun message sélectionné</div>`}
       ${when(s.ai && sel && s.ai.forId === sel.id, () => aiPanel(s, sel))}
     </main>`;
+}
+
+// État du brouillon enregistré sur le serveur : jamais « enregistré » tant que le texte affiché ne l'est pas.
+function draftState(s, id, text) {
+  const meta = (s.draftMeta || {})[id];
+  if (!meta) return null;
+  if (meta.conflict) return { tone: 'error', label: 'Conflit : brouillon modifié sur un autre appareil' };
+  if (meta.saving) return { tone: 'muted', label: 'Enregistrement…' };
+  if (meta.error) return { tone: 'error', label: `Non enregistré : ${meta.error}` };
+  if (text !== (meta.savedText ?? '')) return { tone: 'warn', label: 'Modifications non enregistrées' };
+  if (meta.savedAt) return { tone: 'muted', label: `Brouillon enregistré à ${timeOf(meta.savedAt)}` };
+  return { tone: 'muted', label: 'Brouillon' };
+}
+function draftConflict(s, id) {
+  if (!(s.draftMeta || {})[id]?.conflict) return '';
+  return html`<div class="draft-conflict" role="alert">
+    <p>Ce brouillon a été modifié ailleurs. Ton texte est conservé ici et n’a pas été enregistré.</p>
+    <div><button class="btn btn-ghost" data-on-click="draftReload" data-id="${id}">Charger la version enregistrée</button>
+    <button class="btn btn-ghost" data-on-click="draftKeepMine" data-id="${id}">Remplacer par mon texte</button></div>
+  </div>`;
+}
+function olderButton(s, full, id) {
+  if (!full?.history?.hasMore) return '';
+  const busy = (s.historyLoading || {})[id];
+  return html`<div class="history-more"><button class="btn btn-ghost" data-on-click="loadOlder" data-id="${id}" ${raw(busy ? 'disabled' : '')}>${when(busy, () => html`<span class="spinner"></span>`)}Afficher les messages plus anciens</button></div>`;
 }
 
 function messageView(s, v, sel) {
@@ -251,6 +288,7 @@ function messageView(s, v, sel) {
         <div style="display:flex;flex-direction:column;gap:8px;max-width:720px;padding:18px 0 22px">
           <div class="skeleton" style="width:100%"></div><div class="skeleton" style="width:91.6%"></div><div class="skeleton" style="width:60%"></div>
         </div>`}
+      ${olderButton(s, full, sel.id)}
       ${when(trail.length, () => html`
         <div style="display:flex;flex-direction:column">
           ${[...trail].reverse().map((t, i) => {
@@ -276,16 +314,20 @@ function messageView(s, v, sel) {
               <span>À</span>
               <input data-key="to-${sel.id}" data-on-input="composeTo" value="${s.composeTo[sel.id] ?? (full?.draft?.mode === 'forward' ? full.draft.to : '') ?? ''}" placeholder="adresse@exemple.fr" autocomplete="off" maxlength="2000">
             </label>`)}
+          ${draftConflict(s, sel.id)}
           <textarea data-autofocus data-key="draft-${sel.id}" data-on-input="draft" placeholder="Répondre à ${sel.from.split(' ')[0]} depuis ${sel.account}…">${draft}</textarea>
           <div class="composer-foot">
             <button class="btn btn-ghost" data-on-click="aiDraft">✳ Aider à rédiger</button>
-            <span class="composer-status ellipsis">${sel.draft ? `${sel.draft.synced ? 'Brouillon synchronisé' : 'Brouillon'} enregistré à ${timeOf(sel.draft.savedAt)}` : 'Brouillon local'}</span>
+            ${(() => {
+              const st = draftState(s, sel.id, draft);
+              return html`<span class="${cls('composer-status ellipsis', st && `is-${st.tone}`)}" role="status">${st ? st.label : sel.draft ? `${sel.draft.synced ? 'Brouillon synchronisé' : 'Brouillon'} enregistré à ${timeOf(sel.draft.savedAt)}` : 'Brouillon'}</span>`;
+            })()}
             <button class="btn btn-ghost" data-on-click="saveDraft">Enregistrer</button>
             ${(() => {
               const acc = v.profile.accounts.find(a => a.id === sel.accountId);
               const allowed = !!acc?.perms?.includes('send');
               const title = allowed ? 'Vérifier puis envoyer' : 'L’envoi demande un compte de messagerie avec la permission Envoi';
-              return html`<button class="btn btn-brand" data-on-click="sendPreview" title="${title}" ${raw(allowed && draft.trim() && !s.confirm ? '' : 'disabled')}>Envoyer</button>`;
+              return html`<button class="btn btn-brand" data-on-click="sendPreview" title="${title}" ${raw(allowed && draft.trim() && !s.confirm && !(s.draftMeta || {})[sel.id]?.conflict && !s.offline ? '' : 'disabled')}>Vérifier avant l’envoi</button>`;
             })()}
           </div>
         </div>`)}
@@ -345,7 +387,9 @@ function whatsappView(s, v, sel) {
   const draft = s.drafts[sel.id] ?? full?.draft?.text ?? '';
   const tooLong = draft.length > WA_MAX;
   const folderName = s.data.folders.find(f => f.id === sel.folderId)?.name;
-  const status = sel.draft ? `Brouillon local enregistré à ${timeOf(sel.draft.savedAt)}` : 'Brouillon local, sur ce Mac';
+  const st = draftState(s, sel.id, draft);
+  const status = st ? st.label : sel.draft ? `Brouillon enregistré à ${timeOf(sel.draft.savedAt)}` : 'Brouillon';
+  const conflict = !!(s.draftMeta || {})[sel.id]?.conflict;
   const hint = full?.group ? 'Groupe : lecture et IA · envoi non activé' : !canSend ? 'Envoi non autorisé pour ce compte' : s.confirm ? 'Vérification en cours' : 'Envoi seulement après l’aperçu exact';
   return html`
     <section class="wa" aria-label="Discussion WhatsApp avec ${name}">
@@ -362,22 +406,24 @@ function whatsappView(s, v, sel) {
       </header>
       <div class="wa-timeline" data-key="wa-timeline-${sel.id}" data-chat-id="${sel.id}" data-ready="${String(!!full && !full.failed)}" role="log" aria-label="Messages, du plus ancien au plus récent">
         <div class="wa-thread">
+          ${olderButton(s, full, sel.id)}
           ${full?.failed ? html`<div class="wa-note"><p>Discussion indisponible. Aperçu du dernier message :</p><p class="wa-text">${sel.preview}</p></div>` : full ? waTimeline(waMessages(sel, full)) : html`
             <div class="wa-msg wa-in"><div class="wa-bubble wa-loading"><div class="skeleton" style="width:220px"></div><div class="skeleton" style="width:140px"></div></div></div>`}
           ${when(full?.failed, () => html`<p class="wa-note">Discussion incomplète : seul l’aperçu est disponible.</p>`)}
         </div>
       </div>
       <footer class="wa-composer">
+        ${draftConflict(s, sel.id)}
         <div class="wa-input">
           <textarea data-key="draft-${sel.id}" data-on-input="draft" rows="2" aria-label="Réponse à ${name}"
             placeholder="Écrire à ${name.split(' ')[0]} depuis ${sel.account}…">${draft}</textarea>
         </div>
         <div class="wa-actions">
           <button class="btn btn-ghost" data-on-click="aiDraft" title="Proposer une réponse avec l’assistant">✳ Aider à rédiger</button>
-          <span class="${cls('wa-status ellipsis', tooLong && 'is-error')}">${tooLong ? `${draft.length} / ${WA_MAX} caractères : trop long` : `${status} · ${hint}`}</span>
+          <span class="${cls('wa-status ellipsis', (tooLong || st?.tone === 'error') && 'is-error', st?.tone === 'warn' && 'is-warn')}" role="status">${tooLong ? `${draft.length} / ${WA_MAX} caractères : trop long` : `${status} · ${hint}`}</span>
           <button class="btn btn-ghost" data-on-click="saveDraft">Enregistrer</button>
           <button class="btn wa-send" data-on-click="sendPreview" title="${canSend ? 'Vérifier le message exact avant l’envoi' : 'L’envoi demande la permission Envoi pour ce compte'}"
-            ${raw(canSend && draft.trim() && !tooLong && !s.confirm ? '' : 'disabled')}>Aperçu</button>
+            ${raw(canSend && draft.trim() && !tooLong && !s.confirm && !conflict && !s.offline ? '' : 'disabled')}>Aperçu</button>
         </div>
       </footer>
     </section>`;
@@ -479,6 +525,7 @@ function contactsPage(s, v) {
     <main class="contacts">
       <div class="contacts-scroll">
         <div class="contacts-head">
+          ${when(s.mobile, () => html`<button class="icon-btn mobile-only" data-on-click="openDrawer" aria-label="Ouvrir le menu" aria-expanded="${!!s.drawer}">${icon('lines')}</button>`)}
           <div style="display:flex;flex-direction:column;gap:4px">
             <h1>${v.groupTitle}</h1>
             <span class="muted" style="font-size:13px">${plural(v.contacts.length, 'contact')}</span>
@@ -764,9 +811,9 @@ function newMailDialog(s, v) {
       <label>Message<textarea data-key="new-body" data-on-input="newMailField" data-field="text" maxlength="20000" placeholder="Rédige ton message…" ${disabled}>${c.text}</textarea></label>
       ${when(c.error, () => html`<p role="alert" class="error">${c.error}</p>`)}
       <div class="composer-foot"><button class="btn btn-ghost" data-on-click="aiNewMail" ${raw(c.busy || !s.data.ai?.configured ? 'disabled' : '')}>✳ Améliorer avec l’IA</button>
-        <span class="composer-status">${c.busy ? 'En cours…' : c.savedAt ? `${c.synced ? 'Brouillon synchronisé' : 'Brouillon local'} à ${timeOf(c.savedAt)}` : 'Non enregistré'}</span>
+        <span class="composer-status" role="status">${c.busy ? 'En cours…' : c.conflict ? 'Conflit : non enregistré' : c.savedAt ? `${c.synced ? 'Brouillon synchronisé' : 'Brouillon enregistré'} à ${timeOf(c.savedAt)}` : 'Non enregistré'}</span>
         <button class="btn btn-ghost" data-on-click="saveNewMail" ${disabled}>Enregistrer</button>
-        <button class="btn btn-brand" data-on-click="previewNewMail" ${raw(!c.busy && account?.perms?.includes('send') && c.text.trim() && c.to.trim() ? '' : 'disabled')}>Vérifier avant l’envoi</button>
+        <button class="btn btn-brand" data-on-click="previewNewMail" ${raw(!c.busy && !c.conflict && !s.offline && account?.perms?.includes('send') && c.text.trim() && c.to.trim() ? '' : 'disabled')}>Vérifier avant l’envoi</button>
       </div>
       ${when(!account?.perms?.includes('send'), () => html`<p class="muted">Active la permission Envoi pour envoyer depuis ce compte.</p>`)}
       ${when(!s.data.ai?.configured, () => html`<p class="muted">L’assistant sera disponible après configuration de l’IA.</p>`)}

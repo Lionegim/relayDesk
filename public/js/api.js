@@ -11,9 +11,22 @@ async function call(method, url, body) {
   // Cela ne désactive aucun contrôle serveur et ne s'applique jamais à une origine distante.
   if(res.status===404 && url==='/auth/session' && ['127.0.0.1','localhost','[::1]'].includes(location.hostname)) return {enabled:false,legacy:true};
   if(res.status===401 && url!=='/auth/session') {location.replace('/login');throw new Error('Session expirée : reconnecte-toi.');}
-  if (!res.ok) throw new Error(data?.error?.message || `Erreur ${res.status}`);
+  if (!res.ok) {
+    // Statut et code exposés à l'interface (ex. 409 draft_conflict) ; le message reste celui, assaini, du serveur.
+    const error = new Error(data?.error?.message || `Erreur ${res.status}`);
+    error.status = res.status;
+    error.code = data?.error?.code || null;
+    throw error;
+  }
   return data;
 }
+// Paramètres de requête sans valeurs vides.
+const query = params => {
+  const q = new URLSearchParams();
+  for (const [k, v] of Object.entries(params || {})) if (v !== undefined && v !== null && v !== '') q.set(k, String(v));
+  const text = q.toString();
+  return text ? `?${text}` : '';
+};
 
 export const api = {
   async session() {const info=await call('GET','/auth/session');csrfToken=info.csrfToken || null;return info;},
@@ -25,9 +38,12 @@ export const api = {
   whatsAppLink: id => call('GET', `/api/whatsapp/links/${encodeURIComponent(id)}`),
   cancelWhatsAppLink: id => call('DELETE', `/api/whatsapp/links/${encodeURIComponent(id)}`, {}),
   createComposition: accountId => call('POST', '/api/drafts', { accountId }),
-  state: () => call('GET', '/api/state'),
+  // Sans paramètre : instantané complet (ancien format). Avec { paged: 1, profile, nav, channel, folder, q, limit, cursor } :
+  // une page filtrée côté serveur, avec page et compteurs.
+  state: params => call('GET', `/api/state${query(params)}`),
   changeReplyMemory: (id,input) => call('PATCH', `/api/messages/${id}/memory`, input),
-  message: id => call('GET', `/api/messages/${id}`),
+  // { limit, before } : page plus ancienne du fil.
+  message: (id, params) => call('GET', `/api/messages/${id}${query(params)}`),
   syncProgress: accountId => call('GET', `/api/accounts/${accountId}/sync`),
   syncNow: accountId => call('POST', `/api/accounts/${accountId}/sync`, {}),
   disconnectAccount: accountId => call('POST', `/api/accounts/${accountId}/disconnect`, {}),
