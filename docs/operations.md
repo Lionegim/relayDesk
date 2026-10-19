@@ -10,6 +10,7 @@ Le présent document couvre l'hébergement, l'entrée HTTPS, les secrets, le pr�
 | --- | --- | --- |
 | Prestataire et région | VM Linux persistante dans l'UE, disque SSD local (pas de stockage réseau partagé pour SQLite) | Prestataire, région, budget |
 | Dimensionnement | Point de départ indicatif : 2 vCPU, 4 Go de RAM, 40 à 80 Go de disque ; à ajuster après mesure d'un import historique WhatsApp | Mesure de l'import sur données réelles (lot 7) |
+| Repère mesuré (synthétique) | Mac, Node 24.13 : 10 000 messages dans 100 conversations, dont 50 groupes. Base 5,3 Mo et archive chiffrée de même taille ; import 1,0 s, sauvegarde 0,1 s, restauration 0,06 s, pic mémoire 135 Mo. Texte seulement : pas de décodage d'historique depuis le téléphone, ni de réseau, ni d'IA. Ce repère ne fixe pas le dimensionnement final. | Mesure sur l'import réel avant de choisir la VM |
 | Système | Debian stable ou Ubuntu LTS, mises à jour de sécurité automatiques, Docker Engine et le plugin Compose des dépôts Docker | Distribution |
 | Domaine | Sous-domaine dédié (p. ex. `relay.<domaine>`), enregistrements A/AAAA vers la VM, CAA limité à Let's Encrypt | Nom exact, gestionnaire DNS |
 | Accès d'administration | SSH par clé uniquement, limité à l'adresse de l'administrateur au pare-feu du prestataire, ou derrière un VPN (WireGuard/Tailscale) sans SSH public | Méthode et adresses autorisées |
@@ -207,6 +208,7 @@ KEYS="--backup-key-file /run/secrets/backup_key --vault-key-file /run/secrets/re
 
 - **tmpfs** : `RELAY_BACKUP_TMPFS_SIZE` (défaut `1g`) doit contenir la base entière, WAL compris, avec 25 % et 64 Mio de marge.
 - **Mémoire** : un tmpfs compte dans la mémoire du conteneur. `RELAY_BACKUP_MEM_LIMIT` (défaut `1536m`) doit donc dépasser le tmpfs d'au moins 256 Mio, et la VM doit disposer de cette mémoire au moment de la sauvegarde.
+- **Repère** : la base synthétique de 10 000 messages pèse 5,3 Mo. Les valeurs par défaut laissent donc une large marge au démarrage ; elles restent à vérifier sur la base réelle.
 - **Contrôle** : le préflight refuse un tmpfs trop petit pour la base présente ou une limite mémoire insuffisante. Les deux valeurs sont à relever quand la base grossit, par exemple après l'import WhatsApp du lot 7.
 
 **Sauvegarde** : `relay-desk-backup.service` exécute cette commande chaque jour via son timer, avec rattrapage après arrêt de la VM.
