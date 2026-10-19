@@ -32,12 +32,13 @@ async function serve(t,{store,providers={},gmail=null}) {
  return{base,call,revoked};
 }
 
-test('accès HTTP : contenus, mémoire, QR, OAuth et ressources applicatives privés ; santé et connexion seules publiques',async t=>{
+test('accès HTTP : contenus, mémoire, QR, OAuth et HTML privés ; ressources statiques génériques publiques',async t=>{
  const db=openDatabase(':memory:');seedIfEmpty(db);t.after(()=>db.close());const store=createStore(db);
  const {call,base}=await serve(t,{store});
- for(const path of ['/api/state','/api/messages/1','/api/messages/1/memory','/api/whatsapp/links/fake','/oauth/google/callback?code=fake','/js/app.js','/index.html'])assert.equal((await call('GET',path,null,null)).status,401,path);
+ for(const path of ['/api/state','/api/messages/1','/api/messages/1/memory','/api/whatsapp/links/fake','/oauth/google/callback?code=fake','/index.html'])assert.equal((await call('GET',path,null,null)).status,401,path);
  assert.equal((await call('GET','/',null,null)).headers.get('location'),'/login');
  assert.equal((await call('GET','/login',null,null)).status,200);
+ assert.equal((await call('GET','/js/app.js',null,null)).status,200,'code statique sans données privées');
  assert.deepEqual(await(await call('GET','/api/health',null,null)).json(),{ok:true});
  const badHost=await new Promise((resolve,reject)=>{const req=request(base+'/api/state',{headers:{host:'attacker.example','x-test-device':'a','x-forwarded-host':'127.0.0.1'}},res=>{res.resume();resolve(res.statusCode);});req.on('error',reject);req.end();});assert.equal(badHost,403);
  for(const headers of [{'x-csrf-token':'bad'},{origin:'https://attacker.example'},{origin:''}])assert.equal((await call('PATCH','/api/messages/1',{unread:false},'a',headers)).status,403);

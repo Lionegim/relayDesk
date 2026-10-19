@@ -73,3 +73,8 @@ test('WhatsApp : une version ancienne ne valide ni n’efface le texte récent',
  const current=await outbox.saveDraft(id,{text:'Téléphone récent',mode:'reply',baseVersion:old});assert.ok(current.version>old);
  await assert.rejects(outbox.preview(id,input),e=>e.code==='draft_conflict');await assert.rejects(outbox.send(id,{...input,digest:preview.digest}),e=>e.code==='draft_conflict');assert.equal(store.getMessage(id).draft.text,'Téléphone récent');assert.equal(sent,0);
 });
+
+for(const service of ['gmail','outlook'])test(service+' : saisie incomplète du destinataire sauvegardée localement, envoi toujours refusé',async t=>{
+ const ctx=service==='gmail'?setup():setupOutlook();t.after(()=>{ctx.sync.stop();ctx.db.close();});const a=service==='gmail'?await connected(ctx,Object.values(GMAIL_SCOPES)):await connectedOutlook(ctx,[`${G}Mail.ReadWrite`,`${G}Mail.Send`]);const box=service==='gmail'?createGmailOutbox(ctx):createOutlookOutbox(ctx),m=ctx.store.createComposition(a.id);
+ const input={mode:'new',text:'Texte à conserver pendant la saisie',to:'camille@',cc:'',subject:'Fictif',baseVersion:m.draftVersion};const saved=await box.saveDraft(m.id,input);assert.equal(saved.synced,false);assert.equal(ctx.store.getMessage(m.id).draft.text,input.text);await assert.rejects(box.preview(m.id,{...input,baseVersion:saved.version}),e=>e.status===400);assert.equal((service==='gmail'?ctx.g.sent:ctx.ms.sent).length,0);
+});

@@ -4,7 +4,7 @@
 import { createHash, timingSafeEqual } from 'node:crypto';
 import { HttpError, badRequest } from '../../http/errors.js';
 import { buildMessage, envelope, forwardBody, formatAddress, MimeError } from '../../mail/mime.js';
-import { newEnvelope } from '../../mail/envelope.js';
+import {newEnvelope,draftRecipientsReady} from '../../mail/envelope.js';
 import { readComposeInput } from '../../mail/input.js';
 import { replyMeta } from './parse.js';
 
@@ -73,7 +73,6 @@ export function createOutlookOutbox({ store, sync, ownerName = '' }) {
     store.setReplyMeta(messageId, reply);
   }
 
-  const hasRecipient = ({ mode, to }) => (mode !== 'forward' && mode !== 'new') || String(to || '').includes('@');
 
   return {
     can,
@@ -83,7 +82,7 @@ export function createOutlookOutbox({ store, sync, ownerName = '' }) {
       const { text, mode, to, cc, subject, ctx } = input(messageId, raw);
       const local=()=>store.saveDraft(messageId,text,{mode,to,cc,subject,expectedVersion:raw?.baseVersion});
       if (!isOutlook(ctx.accountId)) return local();
-      if (!can(ctx.accountId, 'drafts') || !hasRecipient({ mode, to })) return sync.queue(ctx.accountId, local);
+      if (!can(ctx.accountId, 'drafts') || !draftRecipientsReady({mode,to,cc})) return sync.queue(ctx.accountId, local);
       return sync.exclusive(ctx.accountId, async ({ graph }) => {
         store.assertDraftVersion(messageId,raw?.baseVersion);
         await ensureReply(graph, messageId);

@@ -43,6 +43,7 @@ test('runtime réel + OIDC signé fictif : deux appareils, redémarrage, aperçu
  assert.equal((await phone.call('POST',path,{...input,digest:p.digest,approvalToken:p.approvalToken},{'x-csrf-token':b.csrfToken})).status,409);
  await runtime.stop();runtime=createRuntime(config,options);await runtime.start();
  assert.equal((await mac.call('GET','/api/state')).status,200,'cookie valide après redémarrage, session serveur persistante');
+ assert.equal((await(await mac.call('GET',`/api/messages/${draft.id}`)).json()).draftVersion,draft.draftVersion,'version persistante après reprise');
  assert.equal((await mac.call('POST',path,{...input,digest:p.digest,approvalToken:p.approvalToken},csrf)).status,409,'ancien aperçu invalidé après redémarrage');assert.equal(providerSends,0);
  const list=await(await mac.call('GET','/auth/sessions')).json();assert.equal(list.sessions.length,2);
  assert.equal((await mac.call('DELETE',`/auth/sessions/${b.sessionId}`,{},csrf)).status,200);

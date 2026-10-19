@@ -3,7 +3,7 @@
 import { createHash, timingSafeEqual } from 'node:crypto';
 import { HttpError, badRequest } from '../../http/errors.js';
 import { buildMessage, envelope, forwardBody, formatAddress, toRaw, MimeError } from '../../mail/mime.js';
-import { newEnvelope } from '../../mail/envelope.js';
+import {newEnvelope,draftRecipientsReady} from '../../mail/envelope.js';
 import { readComposeInput } from '../../mail/input.js';
 export { readComposeInput } from '../../mail/input.js';
 import { replyMeta } from './parse.js';
@@ -88,7 +88,7 @@ export function createGmailOutbox({ store, sync, ownerName = '' }) {
       // Toutes les sauvegardes d'un compte Gmail passent par sa file, y compris l'enregistrement local :
       // une écriture Gmail plus ancienne encore en cours ne peut pas écraser un brouillon plus récent.
       // Un transfert sans destinataire valide reste local jusqu'à ce qu'une adresse soit saisie.
-      if (!can(accountId, 'drafts') || (['forward', 'new'].includes(mode) && !String(to).includes('@'))) return sync.queue(accountId, local);
+      if (!can(accountId, 'drafts') || !draftRecipientsReady({mode,to,cc})) return sync.queue(accountId, local);
       return sync.exclusive(accountId, async ({ gmail }) => {
         store.assertDraftVersion(messageId,input?.baseVersion);
         await ensureReply(gmail, messageId);
