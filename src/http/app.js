@@ -281,6 +281,12 @@ export function createApp({ store, ai, ownerName, gmail = null, providers = {}, 
         if(!['GET','HEAD'].includes(req.method)) throw new HttpError(405,'Méthode non autorisée','method_not_allowed');
         return await serveStatic(req,res,pathname==='/login'?'/login.html':pathname);
       }
+      const avatarPath=/^\/api\/(messages|contacts)\/([^/]+)\/whatsapp-avatar$/.exec(pathname);
+      if(avatarPath && req.method==='GET') {
+        if(!providers.whatsapp?.avatars)throw notFound();
+        const photo=await providers.whatsapp.avatars.get(avatarPath[1],avatarPath[1]==='messages'?messageId(avatarPath[2]):avatarPath[2],url.searchParams.get('scope'),url.searchParams.get('participant'));
+        return send(res,200,photo.bytes,photo.mime);
+      }
       const mediaPath=/^\/api\/whatsapp\/media\/([0-9a-f-]{36})$/.exec(pathname);
       const uploadPath=/^\/api\/messages\/(\d+)\/whatsapp-media$/.exec(pathname);
       if(mediaPath && req.method==='GET') {

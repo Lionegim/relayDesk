@@ -87,3 +87,11 @@ test('volumes : grands tableaux et imbrication profonde conservent le texte exac
   for (let i = 0; i < 3000; i++) { deep = html`<i>${deep}${[i, null]}</i>`; refDeep = refHtml`<i>${refDeep}${[i, null]}</i>`; }
   assert.equal(String(deep), String(refDeep));
 });
+
+test('a failed avatar stays hidden on live rerenders but a new source can load',()=>{
+ const ctx=vm.createContext({document:{activeElement:null}});
+ vm.runInContext(readFileSync(new URL('../public/js/dom.js',import.meta.url),'utf8').replace(/^export /gm,'')+'\nglobalThis.morph=morphNode;',ctx);
+ function image(src,hidden=false){const a=new Map([['src',src],['class','wa-profile-photo']]);if(hidden)a.set('hidden','');return {nodeType:1,nodeName:'IMG',dataset:{},childNodes:[],get attributes(){return [...a].map(([name,value])=>({name,value}));},get hidden(){return a.has('hidden');},set hidden(v){if(v)a.set('hidden','');else a.delete('hidden');},matches:s=>s==='img.wa-profile-photo',getAttribute:k=>a.get(k)??null,hasAttribute:k=>a.has(k),setAttribute:(k,v)=>a.set(k,v),removeAttribute:k=>a.delete(k)};}
+ const failed=image('/private-photo?scope=1',true);ctx.morph(failed,image('/private-photo?scope=1'));assert.equal(failed.hidden,true);
+ ctx.morph(failed,image('/private-photo?scope=2'));assert.equal(failed.hidden,false);
+});

@@ -44,7 +44,7 @@ export function fakeSockets() {
   return { list, make, last: () => list.at(-1) };
 }
 
-export async function setupWhatsApp({ db, vault, timing, assertAccountAllowed, requireLinkedIdentity } = {}) {
+export async function setupWhatsApp({ db, vault, timing, assertAccountAllowed, requireLinkedIdentity, avatarOptions } = {}) {
   db ||= openDatabase(':memory:');
   seedIfEmpty(db);
   const store = createStore(db);
@@ -52,7 +52,7 @@ export async function setupWhatsApp({ db, vault, timing, assertAccountAllowed, r
   const sockets = fakeSockets();
   const logs = [];
   const log = { warn: (...a) => logs.push(a.join(' ')), info: (...a) => logs.push(a.join(' ')), error: (...a) => logs.push(a.join(' ')) };
-  const wa = await createWhatsAppProvider({ store, vault, makeSocket: sockets.make, log, assertAccountAllowed, requireLinkedIdentity, timing: { settleMs: 50, retryBaseMs: 20, ...timing } });
+  const wa = await createWhatsAppProvider({ store, vault, makeSocket: sockets.make, log, assertAccountAllowed, requireLinkedIdentity, avatarOptions, timing: { settleMs: 50, retryBaseMs: 20, ...timing } });
   return { db, store, vault, sockets, wa, logs };
 }
 

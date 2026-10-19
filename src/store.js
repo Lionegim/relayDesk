@@ -20,6 +20,7 @@ const FREQ_COUNT = 4;
 const bool = v => !!v;
 const toMessage = (r, full) => {
   const m = {
+    avatarUrl:r.channel==='whatsapp' && r.account_id && r.compose_kind!=='new'?`/api/messages/${r.id}/whatsapp-avatar?scope=${r.conversation_key}`:null,
     conversationIdentity:r.conversation_key,interactionVersion:r.interaction_version, requiresPreview:!!r.draft_ai_assisted, draftVersion:r.draft_version, id: r.id, kind: r.compose_kind, p: r.profile_id, accountId: r.account_id, from: r.from_name, initials: r.initials, handle: r.handle, channel: r.channel,
     account: r.account, time: r.time_label, sortAt: r.sort_at, unread: bool(r.unread), flagged: bool(r.flagged), archived: bool(r.archived),
     folderId: r.folder_id, label: r.label, subject: r.subject, preview: r.preview, triage: r.triage, count: r.message_count,
@@ -483,6 +484,13 @@ export function createStore(db) {
       q('DELETE FROM whatsapp_auth WHERE account_id = ?').run(accountId);
     },
     // Messages : { chatJid, msgId, fromMe, ts, text }. Renvoie les discussions qui ont reçu au moins un nouveau message.
+    waAvatarTarget(kind,id) {
+      const r=kind==='messages'?row(id):kind==='contacts'?q('SELECT * FROM contacts WHERE id=?').get(id):null;
+      if(!r?.account_id || !r.external_id)throw notFound();
+      const a=accountOf(r.account_id);
+      if(a.svc!=='whatsapp' || (kind==='messages' && (r.channel!=='whatsapp' || r.compose_kind==='new')) || (kind==='contacts' && !/^\d+@(s\.whatsapp\.net|lid)$/.test(r.external_id)))throw notFound();
+      return {account:a.id,jid:r.external_id,identity:a.identity,scope:kind==='messages'?r.conversation_key:fingerprint(['avatar',r.id,r.external_id,a.identity])};
+    },
     waConversationScope(id) {const r=row(id);return fingerprint([r.conversation_key,r.external_id,r.account_id,r.account_id?accountOf(r.account_id).identity:null]);},
     waInteractions(messageId,ids) {
       const r=row(messageId);

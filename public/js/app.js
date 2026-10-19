@@ -1358,7 +1358,7 @@ const actions = {
 };
 
 document.addEventListener('error',e=>{
-  const el=e.target;if(!el?.matches?.('.wa-media img,.wa-media video'))return;
+  const el=e.target;if(el?.matches?.('.wa-profile-photo')){el.hidden=true;return;}if(!el?.matches?.('.wa-media img,.wa-media video'))return;
   el.hidden=true;const fallback=el.closest('.wa-media')?.querySelector('.wa-media-error');if(fallback)fallback.hidden=false;
 },true);
 delegate(document, {

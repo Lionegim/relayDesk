@@ -1,3 +1,4 @@
+import {fingerprint} from '../messages/pagination.js';
 import {personTimeline} from './timeline.js';
 import {randomUUID,createHash} from 'node:crypto';
 import {transaction} from '../db/index.js';
@@ -21,7 +22,9 @@ export function createContactsRepository(db,changed=()=>{}) {
  function view(c) {
   const ids=members(c.id), records=ids.map(id=>q('SELECT * FROM contacts WHERE id=?').get(id));
   const unique=new Map();for(const x of identities(ids))unique.set(`${x.kind}:${x.normalized}`,{...x,needsCountryCode:x.normalized.startsWith('unresolved:'),sharedWith:owners(c.profile_id,x.kind,x.normalized)});
-  return {id:c.id,p:c.profile_id,name:c.name,title:c.title,freq:c.freq,ch:[...new Set(records.flatMap(r=>JSON.parse(r.channels)))],last:c.last,g:[...new Set(records.flatMap(r=>JSON.parse(r.groups)))],order:c.position,identities:[...unique.values()],members:records.map(r=>({id:r.id,name:r.name,accountId:r.account_id})),sourceAccountIds:[...new Set(records.map(r=>r.account_id).filter(Boolean))]};
+  const photo=records.map(r=>({r,a:r.account_id?q('SELECT svc,identity FROM accounts WHERE id=?').get(r.account_id):null})).find(({r,a})=>a?.svc==='whatsapp' && /^\d+@(s\.whatsapp\.net|lid)$/.test(r.external_id));
+  const avatarUrl=photo?`/api/contacts/${photo.r.id}/whatsapp-avatar?scope=${fingerprint(['avatar',photo.r.id,photo.r.external_id,photo.a.identity])}`:null;
+  return {avatarUrl,id:c.id,p:c.profile_id,name:c.name,title:c.title,freq:c.freq,ch:[...new Set(records.flatMap(r=>JSON.parse(r.channels)))],last:c.last,g:[...new Set(records.flatMap(r=>JSON.parse(r.groups)))],order:c.position,identities:[...unique.values()],members:records.map(r=>({id:r.id,name:r.name,accountId:r.account_id})),sourceAccountIds:[...new Set(records.map(r=>r.account_id).filter(Boolean))]};
  }
  function timeline(profile,id,{offset=0,limit=50}={}) {
   contact(profile,id);id=root(id);contact(profile,id);

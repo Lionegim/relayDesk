@@ -55,6 +55,8 @@ function morphNode(cur, next) {
     if (cur.nodeValue !== next.nodeValue) cur.nodeValue = next.nodeValue;
     return;
   }
+  // A failed private avatar must stay hidden through unrelated drafts/live updates.
+  if(cur.matches('img.wa-profile-photo') && cur.hidden && cur.getAttribute('src')===next.getAttribute('src'))next.hidden=true;
   for (const { name } of [...cur.attributes]) if (!next.hasAttribute(name)) cur.removeAttribute(name);
   for (const { name, value } of [...next.attributes]) if (cur.getAttribute(name) !== value) cur.setAttribute(name, value);
   const editing = cur === document.activeElement;
