@@ -11,7 +11,7 @@ const storage = {
 
 const state = {
   data: null, loadError: null, toast: null,
-  app: 'mail', profileId: 'anove', menu: false, accountMenu: null,
+  app: 'mail', profileId: null, menu: false, accountMenu: null,
   nav: 'all', folder: null, channel: 'all', query: '', selectedId: null,
   collapsed: {}, creating: false, folderDraft: '', dragOver: null, moveOpen: false,
   listW: Number(storage.get(LIST_W_KEY)) || 340, resizing: false,
@@ -1145,6 +1145,7 @@ api.session()
       else applyData(data, { paged: true, counts: data.counts || null, page: { ...data.page, key: listKey(state), loading: false, error: null } });
       if (!state.mobile && state.selectedId == null) set({ selectedId: state.data.messages[0]?.id ?? null, selectedRow: state.data.messages[0] || null });
     } else {
+      state.profileId = data.profiles.some(p => p.id === state.profileId) ? state.profileId : data.profiles[0]?.id;
       set({ data, selectedId: state.mobile ? null : data.messages.find(m => m.p === state.profileId && !m.archived)?.id ?? null });
     }
     resumeFromRedirect();

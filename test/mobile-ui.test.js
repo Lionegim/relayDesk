@@ -17,12 +17,12 @@ const profiles = [{ id: 'perso', name: 'Personnel', initials: 'P', accounts: [{ 
 const row = (id, extra = {}) => ({ id, p: 'perso', accountId: 1, channel: 'email', from: `Exp ${id}`, subject: `Objet ${id}`, preview: '', sortAt: 1000 - id, count: 1, draftVersion: 3, ...extra });
 const page = (messages, extra = {}) => ({ profiles, folders: [], contacts: [], services: {}, messages, page: { limit: 50, total: messages.length, hasMore: false, nextCursor: null, ...extra }, counts: { all: 9, unread: 2, todo: 1, drafts: 0, folders: {} } });
 
-async function app({ mobile = false, state: first } = {}) {
+async function app({ mobile = false, state: first, onState } = {}) {
   const calls = { state: [], message: [], saveDraft: [], preview: [], send: [], create: [] }, timers = [], listeners = {}, pushed = [], replaced = [];
   const api = {
     session: async () => ({ enabled: false }),
     state: params => { calls.state.push(params); return api.onState(params); },
-    onState: async () => first || page([row(1), row(2)]),
+    onState: onState || (async () => first || page([row(1), row(2)])),
     message: (id, params) => { calls.message.push({ id, params }); return api.onMessage(id, params); },
     onMessage: async id => ({ id, body: 'Corps', trail: [], draftVersion: 7, draft: null, history: { hasMore: false, nextCursor: null } }),
     saveDraft: (id, input) => { calls.saveDraft.push({ id, input }); return api.onSave(id, input); },
@@ -49,10 +49,22 @@ async function app({ mobile = false, state: first } = {}) {
   return { c, api, calls, timers, runTimers, listeners, pushed, replaced, s: () => c.inspect() };
 }
 
+test('démarrage : profil fourni par le serveur, sans profil Anove imposé', async () => {
+  const u = await app({ onState: async params => {
+    if (params.profile && params.profile !== 'perso') throw new Error('Profil invalide');
+    return page([row(1)]);
+  } });
+  assert.equal(u.s().loadError, null);
+  assert.equal(u.s().profileId, 'perso');
+  assert.equal(u.s().selectedId, 1);
+  assert.equal(u.calls.state[0].profile, null);
+  assert.equal(u.calls.state.at(-1).profile, 'perso');
+});
+
 test('liste paginée : filtres serveur, compteurs serveur, réponse obsolète ignorée', async () => {
   const u = await app();
   assert.equal(u.s().paged, true);
-  assert.deepEqual(plain(u.calls.state[0]), { paged: 1, profile: 'anove', nav: 'all', channel: 'all', limit: 50 });
+  assert.deepEqual(plain(u.calls.state[0]), { paged: 1, profile: null, nav: 'all', channel: 'all', limit: 50 });
   // Profil absent des profils fournis : premier profil, rechargé.
   assert.equal(u.s().profileId, 'perso');
   assert.equal(u.calls.state.at(-1).profile, 'perso');

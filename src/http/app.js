@@ -141,7 +141,7 @@ export function createApp({ store, ai, ownerName, gmail = null, providers = {}, 
     ['GET', /^\/api\/health$/, () => health ? health() : auth ? ({ok:true}) : ({ ok: true, ai: { provider: 'mistral', configured: ai.configured, model: ai.model } })],
     ['GET', /^\/api\/state$/, (_,body,session,url) => {
       const params=Object.fromEntries(url.searchParams),paged=params.paged==='1';
-      const snapshot=store.snapshot(paged?{profile:params.profile || 'anove',nav:params.nav,channel:params.channel,folder:params.folder || null,q:params.q,limit:params.limit,cursor:params.cursor}:null);
+      const snapshot=store.snapshot(paged?{profile:params.profile || store.firstProfileId(),nav:params.nav,channel:params.channel,folder:params.folder || null,q:params.q,limit:params.limit,cursor:params.cursor}:null);
       for (const profile of snapshot.profiles) for (const account of profile.accounts) {
         account.perms = mail.permissions(account);
         if (providers[account.svc]) account.windowDays = account.svc === 'whatsapp' ? 7 : store.getSync(account.id)?.window_days || 30;

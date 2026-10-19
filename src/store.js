@@ -101,6 +101,7 @@ export function createStore(db) {
     },
 
     hasProfile: id => !!q('SELECT 1 FROM profiles WHERE id = ?').get(id),
+    firstProfileId: () => q('SELECT id FROM profiles ORDER BY position, id LIMIT 1').get()?.id ?? null,
     getMessage(id,options=null) {
       const r=row(id),m=toMessage(r,true);
       const revision=fingerprint([id,r.account_id,r.external_id,r.sort_at,r.message_count,r.trail]);

@@ -14,6 +14,17 @@ import {createWhatsAppOutbox} from '../src/providers/whatsapp/outbox.js';
 import {GMAIL_SCOPES} from '../src/providers/gmail/oauth.js';
 
 function seeded(t){const db=openDatabase(':memory:');seedIfEmpty(db);t.after(()=>db.close());return createStore(db);}
+
+test('démarrage HTTP : premier profil réel sans Anove, profil explicite invalide toujours refusé', async t => {
+ const db=openDatabase(':memory:');t.after(()=>db.close());
+ seedIfEmpty(db,{demo:false,seed:{PROFILES:[{id:'perso',name:'Fictional test profile',kind:'Test',initials:'T',accounts:[]}],FOLDERS:[],MESSAGES:[],CONTACTS:[]}});
+ const store=createStore(db),server=createApp({store,ai:{configured:false},ownerName:'Test'});
+ await new Promise(r=>server.listen(0,'127.0.0.1',r));t.after(()=>new Promise(r=>server.close(r)));
+ const base='http://127.0.0.1:'+server.address().port;
+ const res=await fetch(base+'/api/state?paged=1&limit=50');assert.equal(res.status,200);
+ const data=await res.json();assert.equal(data.profiles[0].id,'perso');assert.equal(data.page.total,0);assert.deepEqual(data.messages,[]);
+ assert.equal((await fetch(base+'/api/state?paged=1&profile=anove')).status,400);
+});
 const fill=(store,account,n=125)=>Array.from({length:n},(_,i)=>store.upsertThread(account.id,{...store.getMessage(1),externalId:'page-'+i,sortAt:100000-Math.floor(i/3),subject:'Projet '+i,from:'Contact fictif',trail:[],body:'Texte privé fictif '+i,preview:'Aperçu '+i,unread:i%2===0,flagged:i%3===0,folderId:null,count:1}));
 
 test('pagination SQL : pages stables à date égale, compteurs complets, filtres de profil et recherche',t=>{
