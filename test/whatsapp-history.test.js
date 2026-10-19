@@ -105,7 +105,7 @@ test('syncNow : demande bornée à 7 jours, repli par discussion, aucun envoi', 
   // Le téléphone refuse l'historique complet : repli discussion par discussion depuis le plus ancien message connu.
   sock.emit('messages.upsert', fullResponse(sock, 4));
   await until(() => sock.fetches.length === 1);
-  assert.deepEqual(sock.fetches[0].key, { remoteJid: PEER, id: 'A0', fromMe: true });
+  assert.deepEqual(sock.fetches[0].key, { remoteJid: PEER, id: 'A1', fromMe: false });
   h = ctx.wa.sync.progress(accountId).history;
   assert.equal(h.mode, 'chats');
   assert.match(h.reason, /ne propose pas/);
@@ -244,4 +244,44 @@ test('lots avant identité : perte marquée avant un premier lot final et petits
  assert.doesNotThrow(()=>b.sock.emit('messaging-history.set',{chats:[],contacts:[],messages:[msg('fail','Erreur')],syncType:3}));
  bad.store.waAddMessages=add;b.sock.emit('messaging-history.set',{chats:[],contacts:[],messages:[],syncType:2,progress:100});
  assert.equal(bad.wa.sync.progress(b.accountId).history.state,'partial');bad.wa.sync.stop();
+});
+
+test('media recovery replays newest to oldest, imports gaps between retained text, and deduplicates replay',async t=>{
+ const c=await setupWhatsApp({timing:FAST});t.after(()=>{c.wa.sync.stop();c.db.close();});
+ const latest=msg('latest','Dernier texte',{ago:60}),oldest=msg('oldest','Premier texte',{ago:8000});
+ const {accountId,sock}=await linkedAccount(c,{messages:[oldest,latest]});spyRequests(sock);await endLinkHistory(sock);await c.wa.sync.syncNow(accountId);sock.emit('messages.upsert',fullResponse(sock,4));await until(()=>sock.fetches.length===1);
+ assert.equal(sock.fetches[0].key.id,'latest');
+ const photo={...msg('missingPhoto','',{ago:1000}),message:{imageMessage:{mimetype:'image/jpeg',fileLength:100,caption:'Photo retrouvée'}}};
+ const gif={...msg('missingGif','',{ago:1500}),message:{videoMessage:{mimetype:'video/mp4',fileLength:200,gifPlayback:true}}};
+ const page={syncType:6,chats:[],contacts:[],messages:[photo,gif,oldest]};sock.emit('messaging-history.set',page);await until(()=>sock.fetches.length===2);
+ assert.equal(sock.fetches[1].key.id,'oldest');assert.equal(c.db.prepare('SELECT count(*) n FROM whatsapp_media').get().n,2);
+ sock.emit('messaging-history.set',page);await tick();assert.equal(sock.fetches.length,2,'repeated cursor does not loop');assert.equal(c.db.prepare('SELECT count(*) n FROM whatsapp_messages WHERE account_id=?').get(accountId).n,4);assert.equal(c.db.prepare('SELECT count(*) n FROM whatsapp_media').get().n,2);assert.deepEqual(c.wa.sync.progress(accountId).media,{photos:1,gifs:1});assert.equal(sock.sent.length,0);
+});
+
+test('raw history pages advance across unsupported content but stop after the seven-day boundary',async t=>{
+ const c=await setupWhatsApp({timing:FAST});t.after(()=>{c.wa.sync.stop();c.db.close();});const {accountId,sock}=await linkedAccount(c);spyRequests(sock);await endLinkHistory(sock);await c.wa.sync.syncNow(accountId);sock.emit('messages.upsert',fullResponse(sock,4));await until(()=>sock.fetches.length===1);
+ const audio=(id,ago)=>({...msg(id,'',{ago}),message:{audioMessage:{mimetype:'audio/ogg',fileLength:500}}});
+ sock.emit('messaging-history.set',{syncType:6,chats:[],contacts:[],messages:[audio('a',4000),audio('b',5000),audio('c',6000)]});await until(()=>sock.fetches.length===2);assert.equal(sock.fetches[1].key.id,'c');
+ sock.emit('messaging-history.set',{syncType:6,chats:[],contacts:[],messages:[audio('d',7000),audio('e',8*86400),audio('f',9*86400)]});await tick();assert.equal(sock.fetches.length,2);assert.equal(c.db.prepare('SELECT count(*) n FROM whatsapp_messages WHERE account_id=?').get(accountId).n,1);assert.equal(sock.sent.length,0);
+});
+
+test('unrelated batches and accepted full requests without data cannot suppress chat replay',async t=>{
+ for(const accepted of [false,true]){
+ const c=await setupWhatsApp({timing:FAST});t.after(()=>{c.wa.sync.stop();c.db.close();});const {accountId,sock}=await linkedAccount(c);spyRequests(sock);await endLinkHistory(sock);await c.wa.sync.syncNow(accountId);
+ if(accepted)sock.emit('messages.upsert',fullResponse(sock,0));
+ sock.emit('messaging-history.set',{syncType:3,chats:[],contacts:[],messages:[msg('incidental','Texte')],progress:40});await until(()=>sock.fetches.length===1);assert.equal(c.wa.sync.progress(accountId).history.mode,'chats');assert.equal(sock.sent.length,0);
+ }
+});
+
+test('hanging chat requests time out, expose failures and continue to the next conversation',async t=>{
+ const c=await setupWhatsApp({timing:{...FAST,requestTimeoutMs:20}});t.after(()=>{c.wa.sync.stop();c.db.close();});const {accountId,sock}=await linkedAccount(c,{messages:[msg('one','A'),msg('two','B',{chat:peer(2)})]});spyRequests(sock);
+ let count=0;sock.fetchMessageHistory=()=>{count++;return count===1?new Promise(()=>{}):Promise.resolve('ok');};await endLinkHistory(sock);await c.wa.sync.syncNow(accountId);sock.emit('messages.upsert',fullResponse(sock,4));await until(()=>count===2);const h=c.wa.sync.progress(accountId).history;assert.equal(h.requests,2);assert.equal(h.requestFailures,1);assert.equal(sock.sent.length,0);
+});
+
+test('newer raw chat anchors recover the omitted tail and media-only conversations without storing excluded content',async t=>{
+ const c=await setupWhatsApp({timing:FAST});t.after(()=>{c.wa.sync.stop();c.db.close();});const {accountId,sock}=await linkedAccount(c,{messages:[msg('retained','Old text',{ago:9000})]});spyRequests(sock);
+ const newer={...msg('rawHead','',{ago:60}),message:{audioMessage:{mimetype:'audio/ogg'}}};const unknown={...msg('unknownHead','',{chat:peer(3),ago:60}),message:{audioMessage:{mimetype:'audio/ogg'}}};
+ const protectedHead={...msg('viewOnce','',{chat:peer(4),ago:60}),message:{viewOnceMessage:{message:{imageMessage:{mimetype:'image/jpeg'}}}}};
+ sock.emit('chats.update',[{id:PEER,messages:[{message:newer}]},{id:peer(3),messages:[{message:unknown}]},{id:peer(4),messages:[{message:protectedHead}]}]);await tick();await endLinkHistory(sock);await c.wa.sync.syncNow(accountId);sock.emit('messages.upsert',fullResponse(sock,4));await until(()=>sock.fetches.length===2);
+ assert.deepEqual(sock.fetches.map(x=>x.key.id),['rawHead','unknownHead']);assert.equal(c.db.prepare('SELECT count(*) n FROM whatsapp_messages WHERE account_id=?').get(accountId).n,1);assert.equal(sock.sent.length,0);
 });

@@ -487,6 +487,7 @@ export function createStore(db) {
     waMediaFor(accountId,chat,msgId) {const m=q('SELECT id,mime,kind,size FROM whatsapp_media WHERE account_id=? AND chat_jid=? AND msg_id=?').get(accountId,chat,msgId);return m?{...m,url:`/api/whatsapp/media/${m.id}`} : null;},
     waMediaCache(id,sealed) {q('UPDATE whatsapp_media SET iv=?,tag=?,ciphertext=? WHERE id=?').run(sealed.iv,sealed.tag,sealed.ciphertext,id);},
     waMediaSweep() {q('DELETE FROM whatsapp_media WHERE owner_message IS NOT NULL AND created_at<?').run(Date.now()-86400000);},
+    waMediaCounts(accountId) {const rows=q('SELECT kind,count(*) n FROM whatsapp_media WHERE account_id=? AND chat_jid IS NOT NULL GROUP BY kind').all(accountId);return {photos:rows.find(r=>r.kind==='image')?.n || 0,gifs:rows.find(r=>r.kind==='gif')?.n || 0};},
     waMediaBytes() {return q('SELECT COALESCE(SUM(size),0) n FROM whatsapp_media').get().n;},
     waAddMessages(accountId, list) {
       const ins = q('INSERT OR IGNORE INTO whatsapp_messages (account_id, chat_jid, msg_id, from_me, ts, text, author_jid, sender_name) VALUES (?, ?, ?, ?, ?, ?, ?, ?)');

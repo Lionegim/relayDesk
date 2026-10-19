@@ -205,7 +205,8 @@ function messageList(s, v) {
             <strong>${a.name} · 7 derniers jours</strong>
             <span>${a.sync?.status === 'syncing' ? a.sync?.history?.mode === 'chats' ? 'Complément des conversations connues depuis le téléphone…' : 'Récupération de l’historique depuis le téléphone…' : a.sync?.error || 'Historique reçu de WhatsApp'}</span>
             ${when(a.sync?.status === 'syncing' && a.sync?.history?.reason, () => html`<span>${a.sync.history.reason}</span>`)}
-            <span>${plural(a.sync?.threads ?? 0, 'conversation')} · ${plural(a.sync?.messages ?? 0, 'message')}</span>
+            <span>${plural(a.sync?.threads ?? 0, 'conversation')} · ${plural(a.sync?.messages ?? 0, 'message')}${a.sync?.media?` · ${plural(a.sync.media.photos,'photo')} · ${a.sync.media.gifs} GIF`:''}</span>
+            ${when(a.sync?.status==='syncing' && a.sync?.history?.requests,()=>html`<span>${a.sync.history.requests} pages demandées${a.sync.history.requestFailures?` · ${a.sync.history.requestFailures} sans confirmation`:''}</span>`)}
             <button class="link-btn" data-on-click="accountSync" data-id="${a.id}" ${raw(a.sync?.status === 'syncing' ? 'disabled' : '')}>Actualiser l’historique</button>
           </div>`)}
         </div>`)}

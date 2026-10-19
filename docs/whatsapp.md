@@ -81,3 +81,11 @@ Le compositeur individuel propose les emojis et une photo ou un GIF par envoi (1
 Les messages manuels partent seulement au clic explicite sur Envoyer. Un brouillon assisté par IA conserve son aperçu obligatoire, qui montre aussi la pièce jointe; le ticket lie la conversation, le compte, sa génération, le texte et l’empreinte du média. Aucun échec d’envoi incertain n’est retenté automatiquement.
 
 Le cache réserve au plus 512 Mo de tailles médias (avant surcoût du chiffrement et de SQLite). Les téléchargements sont bornés à 10 Mo, avec au plus trois chargements simultanés; une seule conversion GIF est exécutée à la fois. Les originaux expirés chez WhatsApp affichent une indisponibilité explicite. Les messages dont les métadonnées avaient été ignorées par l’ancienne version texte nécessitent une nouvelle réponse d’historique du téléphone pour récupérer leurs médias; aucune récupération complète du passé n’est promise.
+
+### Récupération d’un historique autrefois limité au texte
+
+Le repli par discussion repart désormais du message connu le plus récent, puis remonte jusqu’à la limite de sept jours. Partir du plus ancien texte excluait les médias entre les textes déjà présents. Les curseurs et la taille des pages sont calculés sur les métadonnées des messages bruts, indépendamment des types importables; les contenus exclus restent exclus. Une page répétée ne relance pas la même demande. Le budget est de 100 pages de 50 messages par discussion; une limite atteinte reste annoncée comme partielle.
+
+Les demandes de protocole au propre téléphone expirent après 15 secondes et ne contactent aucun correspondant. Les lots sans rapport ne suppriment plus le repli après une demande complète sans données. Le suivi expose le nombre de demandes, d’échecs et de pages répétées sans exposer les identifiants de messages.
+
+Les nouvelles liaisons utilisent `Browsers.macOS('Desktop')` avec `syncFullHistory`; les liaisons existantes conservent leur profil jusqu’à une reliaison explicite. La fenêtre stricte de sept jours est appliquée avant stockage, quel que soit l’historique proposé par le téléphone. Un téléphone qui ne fournit pas d’historique supplémentaire nécessite une nouvelle liaison; aucune fin complète n’est inventée à partir d’une simple absence de nouvelles données.

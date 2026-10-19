@@ -5,7 +5,7 @@ import { randomUUID } from 'node:crypto';
 import QRCode from 'qrcode';
 import { HttpError, badRequest, notFound } from '../../http/errors.js';
 import { createAuthState, hasSession } from './auth.js';
-import { chatJid, chatToRecord, contactId, contactName, dayLabel, directJid, groupJid, parseMessage, phoneOf } from './parse.js';
+import { chatJid, chatToRecord, contactId, contactName, dayLabel, directJid, groupJid, parseMessage, phoneOf, tsOf } from './parse.js';
 
 // Discussion importable : directe ou groupe (chatJid). directJid reste réservé à l'identité du téléphone et aux
 // personnes ; un groupe n'est jamais un contact.
@@ -43,7 +43,8 @@ export function createWhatsAppSync({ store, vault, lib, makeSocket, log = consol
     fullResponseMs: 20000,      // attente de la réponse du téléphone à la demande d'historique complet
     requestCooldownMs: 60000,   // une demande d'historique au plus par minute et par compte
     onDemandCount: 50,          // messages demandés par discussion et par tour
-    onDemandRounds: 10,         // tours au plus par discussion
+    onDemandRounds: 100,         // tours au plus par discussion
+    requestTimeoutMs: 15000,
     onDemandSpacingMs: 250,     // intervalle entre deux demandes adressées au téléphone
     ...timing,
   };
@@ -163,13 +164,13 @@ export function createWhatsAppSync({ store, vault, lib, makeSocket, log = consol
     openingAuth.add(auth);
     if (stopped || paused || epoch(accountId) !== at || !store.hasAccount(accountId) || (link && link.done)) { openingAuth.delete(auth); auth.close(); return; }
     // Ce choix est conservé avec les identifiants chiffrés : les reprises gardent le profil de l'appairage.
-    if (link) auth.state.creds.relayHistoryProfile = 'chrome-full';
+    if (link) auth.state.creds.relayHistoryProfile = 'desktop-full';
     const historyProfile = auth.state.creds.relayHistoryProfile || (auth.state.creds.relayDesktop ? 'desktop-full' : null);
     let sock;
     try {sock=await makeSocket({auth,historyProfile});}
     catch(error){openingAuth.delete(auth);auth.close();throw error;}
     openingAuth.delete(auth);
-    s = { sock, auth, at, link, open: false, verified: false, closed: false, pending: [], ephemeral: new Set(store.waEphemeralChats(accountId)), settle: null };
+    s = { sock, auth, at, link, open: false, verified: false, closed: false, pending: [], anchors:new Map(), ephemeral: new Set(store.waEphemeralChats(accountId)), settle: null };
     if (stopped || paused || epoch(accountId) !== at || !store.hasAccount(accountId) || (link && link.done)) { endSocket(s); return; }
     dropSession(accountId, { resetRetry: false });
     sessions.set(accountId, s);
@@ -389,6 +390,14 @@ export function createWhatsAppSync({ store, vault, lib, makeSocket, log = consol
     return touched;
   }
 
+  function rememberAnchor(accountId,s,raw,fallbackJid=null) {
+    const jid=chatJid(raw?.key?.remoteJid || fallbackJid),id=raw?.key?.id,ts=tsOf(raw?.messageTimestamp),content=raw?.message;
+    if(!jid || !ts || ts<windowStart(accountId) || typeof id!=='string' || !id || id.length>128 || raw.broadcast || !content || content.protocolMessage)return;
+    if(['ephemeralMessage','viewOnceMessage','viewOnceMessageV2','viewOnceMessageV2Extension'].some(k=>content[k]) || Object.values(content).some(v=>v?.viewOnce || Number(v?.contextInfo?.expiration)>0))return;
+    if(s.auth.jidAliases(jid).some(j=>s.ephemeral.has(j)))return;
+    const previous=s.anchors.get(jid);if(!previous || ts>previous.ts)s.anchors.set(jid,{chatJid:jid,msgId:id,fromMe:!!raw.key.fromMe,ts});
+  }
+
   function reconcilePolicies(accountId,s) {
     // Learning an authenticated alias must also purge text imported before that
     // mapping was known. Infer only the restrictive state; OFF needs a new policy event.
@@ -454,6 +463,7 @@ export function createWhatsAppSync({ store, vault, lib, makeSocket, log = consol
     if (!current(accountId, s)) return null;
     if (kind === 'chats' || kind === 'groups') {
       if (kind === 'chats') policies(accountId, s, data);
+      if(kind==='chats')for(const ch of Array.isArray(data)?data:[])for(const item of ch.messages || [])rememberAnchor(accountId,s,item.message,ch.id);
       const known = new Set(store.waChats(accountId));
       for (const jid of groupTitles(accountId, data)) if (known.has(jid)) rebuild(accountId, jid);
       return null;
@@ -470,6 +480,7 @@ export function createWhatsAppSync({ store, vault, lib, makeSocket, log = consol
       names(accountId, data?.contacts);
       groupTitles(accountId, data?.chats);
       for (const ch of Array.isArray(data?.chats) ? data.chats : []) {
+        for(const item of ch.messages || [])rememberAnchor(accountId,s,item.message,ch.id);
         const jid = chatJid(ch?.id);
         if (!jid) continue;
         if (!isGroup(jid) && typeof ch.name === 'string' && ch.name.trim()) store.waSetChatName(accountId, jid, ch.name.trim().slice(0, 80));
@@ -486,13 +497,19 @@ export function createWhatsAppSync({ store, vault, lib, makeSocket, log = consol
     const { accountId, s } = job;
     const list = job.raw.slice(job.i, job.i + CHUNK).map(m => parseMessage(m, { since: job.since })).filter(m => m && !s.auth.jidAliases(m.chatJid).some(jid=>s.ephemeral.has(jid)));
     job.i += CHUNK;
+    // Pagination is based on the raw page, including unsupported content and the cutoff.
+    // No content/keys from skipped view-once or expired messages are persisted here.
+    for(const raw of job.raw.slice(job.i-CHUNK,job.i)) {
+      rememberAnchor(accountId,s,raw);
+      const jid=chatJid(raw?.key?.remoteJid),ts=tsOf(raw?.messageTimestamp),msgId=raw?.key?.id;
+      if(!jid || !ts || typeof msgId!=='string' || !msgId || msgId.length>128 || s.auth.jidAliases(jid).some(j=>s.ephemeral.has(j)))continue;
+      const anchor={chatJid:jid,msgId,fromMe:!!raw.key.fromMe,ts};
+      const c=job.perChat.get(jid) || {n:0,oldest:anchor};c.n++;if(ts<c.oldest.ts)c.oldest=anchor;job.perChat.set(jid,c);
+    }
     for (const m of list) {
       // Nom public de l'expéditeur seulement pour une discussion directe sans nom connu ; jamais comme titre de groupe.
       if (m.pushName && !isGroup(m.chatJid) && !store.waChatName(accountId, m.chatJid)) store.waSetChatName(accountId, m.chatJid, m.pushName);
-      const c = job.perChat.get(m.chatJid) || { n: 0, oldest: m };
-      c.n++;
-      if (m.ts < c.oldest.ts) c.oldest = m;
-      job.perChat.set(m.chatJid, c);
+
     }
     const inserted = store.waAddMessages(accountId, list);
     if(media)for(const raw of job.raw.slice(job.i-CHUNK,job.i)) {
@@ -532,7 +549,7 @@ export function createWhatsAppSync({ store, vault, lib, makeSocket, log = consol
 
   function beginHistory(accountId, source, reason = null) {
     resetHistory(accountId);
-    const h = { state: 'waiting', source, requestedAt: Date.now(), lastBatchAt: null, batches: 0, messages: 0, chats: new Set(),
+    const h = { state: 'waiting', fullBatches:0, attempts:0, failures:0, repeated:0, cursors:new Map(), source, requestedAt: Date.now(), lastBatchAt: null, batches: 0, messages: 0, chats: new Set(),
       progress: null, reason, mode: source === 'link' ? 'initial' : null, idle: null, rounds: new Map(), outstanding: 0 };
     histories.set(accountId, h);
     store.setSync(accountId, { status: 'syncing', error: null });
@@ -577,6 +594,7 @@ export function createWhatsAppSync({ store, vault, lib, makeSocket, log = consol
     if (!h || terminal(h.state)) return;
     h.state = 'receiving';
     h.batches++;
+    if(Number(data?.syncType)===HISTORY_FULL)h.fullBatches++;
     h.lastBatchAt = Date.now();
     h.messages += added;
     for (const jid of chats) h.chats.add(jid);
@@ -611,7 +629,6 @@ export function createWhatsAppSync({ store, vault, lib, makeSocket, log = consol
       if (!res || Number(res.peerDataOperationRequestType) !== PDO_FULL_HISTORY_ON_DEMAND) continue;
       const result = (res.peerDataOperationResult || []).map(r => r?.fullHistorySyncOnDemandRequestResponse).find(Boolean);
       if (!result || result.requestMetadata?.requestId !== h.requestId) continue;
-      clearTimeout(s.fullTimer);
       const code = Number(result.responseCode ?? 0);
       if (code === 0) { h.fullAccepted = true; armIdle(accountId, h); continue; }
       h.reason = FULL_RESPONSE[code] || 'Le téléphone n’a pas accepté la demande d’historique complet.';
@@ -630,13 +647,13 @@ export function createWhatsAppSync({ store, vault, lib, makeSocket, log = consol
     h.mode = 'full';
     h.requestId = randomUUID();
     try {
-      await s.sock.sendPeerDataOperationMessage({
+      await requestWithDeadline(()=>s.sock.sendPeerDataOperationMessage({
         peerDataOperationRequestType: proto?.Message?.PeerDataOperationRequestType?.FULL_HISTORY_SYNC_ON_DEMAND ?? PDO_FULL_HISTORY_ON_DEMAND,
         fullHistorySyncOnDemandRequest: {
           requestMetadata: { requestId: h.requestId },
           historySyncConfig: { fullSyncDaysLimit: days, inlineInitialPayloadInE2EeMsg: true, supportGroupHistory: true, onDemandReady: true },
         },
-      });
+      }));
     } catch {
       if (current(accountId, s) && histories.get(accountId) === h) onDemandFallback(accountId, s, h);
       return;
@@ -644,8 +661,8 @@ export function createWhatsAppSync({ store, vault, lib, makeSocket, log = consol
     if (!current(accountId, s) || histories.get(accountId) !== h) return;
     clearTimeout(s.fullTimer);
     s.fullTimer = setTimeout(() => {
-      if (current(accountId, s) && histories.get(accountId) === h && !h.fullAccepted && !h.batches) {
-        h.reason = 'Pas de réponse du téléphone à la demande d’historique complet.';
+      if (current(accountId, s) && histories.get(accountId) === h && !h.fullBatches && !terminal(h.state)) {
+        h.reason = h.fullAccepted ? 'Demande acceptée, mais aucun lot complet reçu : récupération discussion par discussion.' : 'Pas de réponse du téléphone à la demande d’historique complet.';
         onDemandFallback(accountId, s, h);
       }
     }, T.fullResponseMs);
@@ -657,9 +674,10 @@ export function createWhatsAppSync({ store, vault, lib, makeSocket, log = consol
     h.mode = 'chats';
     const since = windowStart(accountId);
     const targets = [];
-    for (const jid of store.waChats(accountId)) {
-      const oldest = store.waChatMessages(accountId, jid)[0];
-      if (oldest && oldest.ts >= since && !s.ephemeral.has(jid)) targets.push({ jid, oldest });
+    for (const jid of new Set([...store.waChats(accountId),...s.anchors.keys()])) {
+      const retained = store.waChatMessages(accountId, jid).at(-1),raw=s.anchors.get(jid);
+      const newest=raw && (!retained || raw.ts>retained.ts)?raw:retained;
+      if (newest && newest.ts >= since && !s.auth.jidAliases(jid).some(j=>s.ephemeral.has(j))) targets.push({ jid, oldest:newest });
     }
     if (!targets.length) {
       return finishHistory(accountId, h, h.batches ? 'partial' : 'unavailable',
@@ -668,20 +686,32 @@ export function createWhatsAppSync({ store, vault, lib, makeSocket, log = consol
     track(askChats(accountId, s, h, targets)).catch(() => {});
   }
 
+  async function requestWithDeadline(fn) {
+    let timer;try {return await Promise.race([Promise.resolve().then(fn),new Promise((_,reject)=>{timer=setTimeout(()=>reject(new Error('history request timeout')),T.requestTimeoutMs);})]);}
+    finally {clearTimeout(timer);}
+  }
+
   async function askChats(accountId, s, h, targets) {
     if (typeof s.sock.fetchMessageHistory !== 'function') {
       return finishHistory(accountId, h, 'unavailable', 'Historique à la demande indisponible avec cette version du connecteur.');
     }
     for (const { jid, oldest } of targets) {
       if (paused || stopped || !current(accountId, s) || histories.get(accountId) !== h || terminal(h.state)) return;
+      if(s.auth.jidAliases(jid).some(j=>s.ephemeral.has(j)))continue;
+      const cursor=`${oldest.ts}:${oldest.msgId}`,previous=h.cursors.get(jid);
+      if(previous?.seen.has(cursor) || (previous && oldest.ts>previous.ts)){h.repeated++;continue;}
       const rounds = (h.rounds.get(jid) || 0) + 1;
-      if (rounds > T.onDemandRounds) continue;
-      h.rounds.set(jid, rounds);
+      if (rounds > T.onDemandRounds) {h.reason='Limite de récupération atteinte pour une discussion : historique encore partiel.';continue;}
+      const seen=previous?.seen || new Set();seen.add(cursor);h.cursors.set(jid,{ts:oldest.ts,seen});
+      h.rounds.set(jid, rounds);h.attempts++;
+      store.setSync(accountId,{status:'syncing'});
+      armIdle(accountId,h);
       try {
         // Demande adressée à son propre téléphone (message de protocole), jamais au correspondant.
-        await s.sock.fetchMessageHistory(T.onDemandCount, { remoteJid: jid, id: oldest.msgId, fromMe: oldest.fromMe }, oldest.ts);
+        await requestWithDeadline(()=>s.sock.fetchMessageHistory(T.onDemandCount, { remoteJid: jid, id: oldest.msgId, fromMe: oldest.fromMe }, oldest.ts));
+        if(!current(accountId,s) || histories.get(accountId)!==h || terminal(h.state))return;
         h.outstanding++;
-      } catch { /* discussion suivante */ }
+      } catch {if(!current(accountId,s) || histories.get(accountId)!==h || terminal(h.state))return;h.failures++;store.setSync(accountId,{status:'syncing'});}
       armIdle(accountId, h);
       await new Promise(r => setTimeout(r, T.onDemandSpacingMs));
     }
@@ -702,7 +732,7 @@ export function createWhatsAppSync({ store, vault, lib, makeSocket, log = consol
     return {
       state: h.state, source: h.source, mode: h.mode, windowDays: store.getSync(accountId)?.window_days || 7,
       requestedAt: new Date(h.requestedAt).toISOString(), lastBatchAt: h.lastBatchAt ? new Date(h.lastBatchAt).toISOString() : null,
-      batches: h.batches, messages: h.messages, conversations: h.chats.size, progress: h.progress, reason: h.reason || null,
+      requests:h.attempts,requestFailures:h.failures,repeatedPages:h.repeated, batches: h.batches, messages: h.messages, conversations: h.chats.size, progress: h.progress, reason: h.reason || null,
     };
   }
 
@@ -814,7 +844,7 @@ export function createWhatsAppSync({ store, vault, lib, makeSocket, log = consol
     progress(accountId) {
       const s = store.getSync(accountId);
       if (!s) return null;
-      return { status: s.status, total: s.total, done: s.done, error: s.error, ...store.countThreads(accountId), history: historyView(accountId) };
+      return { status: s.status, total: s.total, done: s.done, error: s.error, ...store.countThreads(accountId), media:store.waMediaCounts(accountId), history: historyView(accountId) };
     },
     // Demande réellement l'historique des 7 derniers jours au téléphone (session enregistrée, sans nouveau QR).
     async syncNow(accountId) {
