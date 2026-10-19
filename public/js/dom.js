@@ -55,6 +55,8 @@ function morphNode(cur, next) {
     if (cur.nodeValue !== next.nodeValue) cur.nodeValue = next.nodeValue;
     return;
   }
+  // Keep contextual help associated with the same trigger during live updates.
+  if(cur.matches('[data-tooltip]') && cur.getAttribute('data-tooltip')===next.getAttribute('data-tooltip') && cur.getAttribute('aria-expanded')==='true') {next.setAttribute('aria-expanded','true');const description=cur.getAttribute('aria-describedby');if(description)next.setAttribute('aria-describedby',description);}
   // A failed private avatar must stay hidden through unrelated drafts/live updates.
   if(cur.matches('img.wa-profile-photo') && cur.hidden && cur.getAttribute('src')===next.getAttribute('src'))next.hidden=true;
   for (const { name } of [...cur.attributes]) if (!next.hasAttribute(name)) cur.removeAttribute(name);

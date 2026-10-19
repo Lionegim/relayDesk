@@ -1,3 +1,4 @@
+import {createContactFields} from './fields.js';
 import {fingerprint} from '../messages/pagination.js';
 import {personTimeline} from './timeline.js';
 import {randomUUID,createHash} from 'node:crypto';
@@ -7,7 +8,7 @@ import {normalizeIdentity} from './identity.js';
 import {parseAddressList} from '../mail/mime.js';
 const clean=(v,max=200)=>typeof v==='string'?v.replace(/[\u0000-\u001f\u007f]/g,' ').trim().slice(0,max):'';
 export function createContactsRepository(db,changed=()=>{}) {
- const q=s=>db.prepare(s);
+ const q=s=>db.prepare(s);const fields=createContactFields(db,changed);
  const contact=(profile,id)=>q('SELECT * FROM contacts WHERE id=? AND profile_id=?').get(id,profile) || (()=>{throw notFound('Contact introuvable dans ce profil');})();
  const root=id=>q('SELECT person_id FROM contact_person_links WHERE contact_id=?').get(id)?.person_id || id;
  const members=id=>q('SELECT id FROM contacts WHERE id=? OR id IN (SELECT contact_id FROM contact_person_links WHERE person_id=?)').all(id,id).map(c=>c.id);
@@ -24,7 +25,9 @@ export function createContactsRepository(db,changed=()=>{}) {
   const unique=new Map();for(const x of identities(ids))unique.set(`${x.kind}:${x.normalized}`,{...x,needsCountryCode:x.normalized.startsWith('unresolved:'),sharedWith:owners(c.profile_id,x.kind,x.normalized)});
   const photo=records.map(r=>({r,a:r.account_id?q('SELECT svc,identity FROM accounts WHERE id=?').get(r.account_id):null})).find(({r,a})=>a?.svc==='whatsapp' && /^\d+@(s\.whatsapp\.net|lid)$/.test(r.external_id));
   const avatarUrl=photo?`/api/contacts/${photo.r.id}/whatsapp-avatar?scope=${fingerprint(['avatar',photo.r.id,photo.r.external_id,photo.a.identity])}`:null;
-  return {avatarUrl,id:c.id,p:c.profile_id,name:c.name,title:c.title,freq:c.freq,ch:[...new Set(records.flatMap(r=>JSON.parse(r.channels)))],last:c.last,g:[...new Set(records.flatMap(r=>JSON.parse(r.groups)))],order:c.position,identities:[...unique.values()],members:records.map(r=>({id:r.id,name:r.name,accountId:r.account_id})),sourceAccountIds:[...new Set(records.map(r=>r.account_id).filter(Boolean))]};
+  const allFields=fields.list(ids),displayName=allFields.filter(f=>f.kind==='displayName'&&f.source==='manual').at(-1)?.value || c.name;
+  const displayTitle=['jobTitle','organization'].map(kind=>allFields.filter(f=>f.kind===kind&&f.source==='manual').at(-1)?.value || allFields.find(f=>f.kind===kind)?.value).filter(Boolean).join(' · ') || c.title;
+  return {fields:allFields,fieldsRevision:fields.revision(ids),avatarUrl,id:c.id,p:c.profile_id,name:displayName,title:displayTitle,freq:c.freq,ch:[...new Set([...records.flatMap(r=>JSON.parse(r.channels)),...([...unique.values()].some(i=>i.kind==='email')?['email']:[])])],last:c.last,g:[...new Set(records.flatMap(r=>JSON.parse(r.groups)))],order:c.position,identities:[...unique.values()],members:records.map(r=>({id:r.id,name:r.name,accountId:r.account_id})),sourceAccountIds:[...new Set(records.map(r=>r.account_id).filter(Boolean))]};
  }
  function timeline(profile,id,{offset=0,limit=50}={}) {
   contact(profile,id);id=root(id);contact(profile,id);
@@ -36,6 +39,9 @@ export function createContactsRepository(db,changed=()=>{}) {
  }
  return {
   indexMessage,
+  addField(profile,id,input){const c=this.detail(profile,id),ids=c.members.map(m=>m.id);fields.assert(ids,input.revision);if(input.fieldId)fields.update(ids,input.fieldId,input.field);else fields.write(c.id,input.field);return this.detail(profile,c.id);},
+  removeField(profile,id,input){const c=this.detail(profile,id),ids=c.members.map(m=>m.id);fields.assert(ids,input.revision);fields.remove(ids,input.fieldId);return this.detail(profile,c.id);},
+
   backfill() {
    transaction(db,()=>{
     for(const m of q("SELECT m.id,m.channel,m.handle,m.reply_meta,m.external_id FROM messages m WHERE NOT EXISTS(SELECT 1 FROM message_identities x WHERE x.message_id=m.id)").all()) {
@@ -69,6 +75,7 @@ export function createContactsRepository(db,changed=()=>{}) {
     else q('UPDATE contacts SET name=?,title=? WHERE id=?').run(name,clean(r.title),c.id);
     q('DELETE FROM contact_identities WHERE contact_id=? AND source=?').run(c.id,a.svc);
     for(const x of values)q('INSERT OR IGNORE INTO contact_identities VALUES (?,?,?,?,?)').run(c.id,x.kind,x.normalized,clean(x.value,254),a.svc);
+    if(r.fields!==undefined)fields.replaceSource(c.id,r.fields,a.svc);
     imported++;
    }});changed();return {imported,profileId:a.profile_id,accountId};
   },

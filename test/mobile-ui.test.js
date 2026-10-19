@@ -810,3 +810,14 @@ test('email reply and new compose send on Enter without a confirmation layer',as
 test('an old group mention picker does not block Enter in another email or direct chat',async()=>{
  for(const channel of ['email','whatsapp']) {const u=await app({state:page([row(1,{channel})])});u.c.act.selectThread({id:1});await tick(6);u.s().waMention={id:999,from:0,to:1,query:'',active:0};u.c.act.draft({}, {target:{value:'Different conversation'}});await u.c.act.composeSendKeys({},sendKey());assert.equal(u.calls.send.length,1);assert.equal(u.s().confirm,null);}
 });
+
+test('file selection and import responses cannot overwrite a newer dialog visit',async()=>{
+ const u=await app();u.c.TextDecoder=TextDecoder;u.c.act.openContactImport();const a=deferred(),text='Name,Email\nAlice,a@example.test\n',bytes=new TextEncoder().encode(text).buffer;
+ u.api.previewContactFile=async(profile,f)=>({fingerprint:f.name,total:1,columns:[],mapping:[],sample:[]});
+ const old=u.c.act.contactFileChoose({}, {target:{files:[{name:'A.csv',size:100,arrayBuffer:()=>a.p}]}});
+ await u.c.act.contactFileChoose({}, {target:{files:[{name:'B.csv',size:100,arrayBuffer:async()=>bytes}]}});assert.equal(u.s().contactFile.name,'B.csv');a.resolve(bytes);await old;assert.equal(u.s().contactFile.name,'B.csv');
+ const importWait=deferred();u.api.importContactFile=()=>importWait.p;const pending=u.c.act.commitContactFile();u.c.act.closeContactImport();u.c.act.openContactImport();await u.c.act.contactFileChoose({}, {target:{files:[{name:'New.csv',size:100,arrayBuffer:async()=>bytes}]}});importWait.resolve({imported:1,skipped:0});await pending;assert.equal(u.s().contactFile.name,'New.csv');assert.equal(u.s().contactFilePreview.fingerprint,'New.csv');assert.equal(u.s().contactFileBusy,false);
+});
+test('a file chosen before changing destination cannot restore its preview',async()=>{
+ const u=await app();u.c.TextDecoder=TextDecoder;u.c.act.openContactImport();const wait=deferred();const pending=u.c.act.contactFileChoose({}, {target:{files:[{name:'Old.csv',size:100,arrayBuffer:()=>wait.p}]}});u.c.act.closeContactImport();u.c.act.openContactImport();wait.resolve(new TextEncoder().encode('Name\nAlice').buffer);await pending;assert.equal(u.s().contactFile,null);assert.equal(u.s().contactFilePreview,null);assert.equal(u.s().contactFileBusy,false);
+});

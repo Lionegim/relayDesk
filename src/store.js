@@ -1,3 +1,4 @@
+import {createContactFiles} from './contacts/file-import.js';
 import {createWhatsAppInteractions} from './providers/whatsapp/interactions.js';
 import {createHistoryWindows} from './mail/history/windows.js';
 import {createContactNetwork} from './contacts/network.js';
@@ -57,6 +58,7 @@ export function createStore(db) {
   const people = createContactsRepository(db,changed);
   const personHistory=createPersonHistory(db,{people});
   const unified=createUnifiedPeople(db,people,changed);
+  const contactFiles=createContactFiles(db,{people,unified,changed});
   const network=createContactNetwork(db,{people,unified,changed});
   const duplicates=createDuplicateRepository(db,{people,unified,changed});
 
@@ -92,6 +94,9 @@ export function createStore(db) {
     dismissContactDuplicate:(p,id,input)=>duplicates.dismiss(p,id,input),
     mergeContactDuplicate:(p,id,input)=>duplicates.merge(p,id,input),
     drainContactDuplicates:()=>duplicates.drain(),
+    contactFiles,
+    addContactField:(profile,id,input)=>profile==='all'?unified.addField(id,input):people.addField(profile,id,input),
+    removeContactField:(profile,id,input)=>profile==='all'?unified.removeField(id,input):people.removeField(profile,id,input),
     importContacts:(id,records)=>people.import(id,records),
     contactHistory:profile=>unified.history(profile),
     person:(profile,id,options)=>profile==='all'?unified.detail(id,options):people.detail(profile,id,options),

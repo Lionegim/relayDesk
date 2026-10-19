@@ -87,8 +87,8 @@ export function createGraphClient({ refreshToken, oauth, fetchImpl = globalThis.
         next=page['@odata.nextLink'];
       }
     }
-    const accept=c=>{if(c.id)records.set(c.id,{externalId:c.id,name:c.displayName,title:[c.jobTitle,c.companyName].filter(Boolean).join(' · '),identities:[...(c.emailAddresses || []).map(x=>({kind:'email',value:x.address})),...[...(c.businessPhones || []),...(c.homePhones || []),c.mobilePhone].filter(Boolean).map(value=>({kind:'phone',value}))]});};
-    const params={$top:100,$select:'id,displayName,emailAddresses,businessPhones,homePhones,mobilePhone,companyName,jobTitle'};
+    const accept=c=>{if(c.id)records.set(c.id,{externalId:c.id,name:c.displayName,fields:[...[['givenName',c.givenName],['familyName',c.surname],['additionalName',c.middleName],['department',c.department],['organization',c.companyName],['jobTitle',c.jobTitle],['notes',c.personalNotes?.slice(0,5000)],['website',/^https?:\/\//i.test(c.businessHomePage || '')?c.businessHomePage:null],['birthday',c.birthday?.slice(0,10)]].filter(x=>x[1]).map(([kind,value])=>({kind,value})),...['businessAddress','homeAddress','otherAddress'].filter(k=>c[k]&&Object.values(c[k]).some(Boolean)).map(k=>({kind:'address',label:k.replace('Address',''),value:['street','city','state','postalCode','countryOrRegion'].map(f=>c[k][f]).filter(Boolean).join('\n'),components:['','',c[k].street || '',c[k].city || '',c[k].state || '',c[k].postalCode || '',c[k].countryOrRegion || '']}))],title:[c.jobTitle,c.companyName].filter(Boolean).join(' · '),identities:[...(c.emailAddresses || []).map(x=>({kind:'email',value:x.address})),...[...(c.businessPhones || []),...(c.homePhones || []),c.mobilePhone].filter(Boolean).map(value=>({kind:'phone',value}))]});};
+    const params={$top:100,$select:'id,displayName,emailAddresses,businessPhones,homePhones,mobilePhone,companyName,jobTitle,givenName,surname,middleName,department,birthday,businessAddress,homeAddress,otherAddress,businessHomePage,personalNotes'};
     await collect('me/contacts',params,accept);
     await collect('me/contactFolders',{$top:100,$select:'id'},c=>{if(c.id)folders.push(c.id);});
     const visited=new Set();

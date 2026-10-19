@@ -1,3 +1,4 @@
+import {installTooltips} from './tooltips.js';
 import { api } from './api.js';
 import { patch, delegate } from './dom.js';
 import { renderApp } from './views.js';
@@ -22,6 +23,7 @@ const state = {
   group: 'all', picked: {}, focusId: null, contactQuery: '', contactSearch: false, sort: 'recent',
   contactHistory:null,contactHistoryError:null,historyBusy:false,
   duplicates:null,duplicatesBusy:false,duplicatesError:null,duplicatesReview:null,duplicatesKeep:null,duplicatesTab:'pending',duplicatesLimit:25,
+  contactFieldDraft:null,contactFile:null,contactFilePreview:null,contactFileBusy:false,contactFileError:null,contactFileProfile:null,newContactName:null,
   personOpen:null, person:null, personError:null, personBusy:false, personKind:'email', personValue:'',personAddOpen:false, personMerge:'', contactImport:false, contactImportBusy:null, fromPerson:false,
   mailSettings:{},mailSettingsDays:{},mailSettingsPreview:null,mailSettingsBusy:null,mailSettingsError:null,
   mailText:{},
@@ -39,6 +41,7 @@ const state = {
 };
 
 const root = document.getElementById('root');
+if(document.body)installTooltips();
 let scheduled = false;
 function set(next) {
   Object.assign(state, typeof next === 'function' ? next(state) : next);
@@ -338,6 +341,7 @@ function mentionOptions() {
  const cache=state.waParticipants[q.id];
  return (cache?.scope===state.details[q.id]?.participantScope?cache?.members || []:[]).filter(p=>mentionSearch(p.name+' '+(p.phone||'')+' '+p.token).includes(query)).slice(0,6);
 }
+let contactImportEpoch=0;
 let mentionLookupSeq=0;const mentionLookups=new Map();
 async function loadMentionParticipants(id,force=false) {
  if(state.offline || state.waParticipantsBusy===id || (!force && state.waParticipants[id]?.scope===state.details[id]?.participantScope && state.waParticipants[id]?.loadedAt>Date.now()-60000))return;
@@ -1163,10 +1167,41 @@ const actions = {
   focusContact: async ({ id }) => {
     const profile=state.profileId;
     if(!derive(state).contactsMine.some(c=>c.id===id))return;
-    set({focusId:id,personOpen:id,person:null,personError:null,personBusy:false,personMerge:'',personValue:'',personAddOpen:false});
+    set({focusId:id,personOpen:id,person:null,personError:null,personBusy:false,personMerge:'',personValue:'',personAddOpen:false,contactFieldDraft:null});
     try {const person=await api.person(profile,id);if(state.profileId===profile && state.personOpen===id)set({person});}catch(e){if(state.profileId===profile && state.personOpen===id)set({personError:e.message});}
   },
-  closePerson:()=>set({personOpen:null,person:null,personError:null,personMerge:'',personValue:'',personAddOpen:false}),
+  closePerson:()=>set({contactFieldDraft:null,personOpen:null,person:null,personError:null,personMerge:'',personValue:'',personAddOpen:false}),
+  editContactField:({id})=>{const f=id?state.person?.fields?.find(f=>f.id===id):null;set({contactFieldDraft:f?{...f}:{kind:'organization',type:'text',label:'',value:''}});},
+  cancelContactField:()=>set({contactFieldDraft:null}),
+  contactFieldChange:({field},e)=>{const f=state.contactFieldDraft;if(f && ['kind','label','type','value'].includes(field))set({contactFieldDraft:{...f,[field]:e.target.value,...(field==='kind'?{type:e.target.value==='birthday'?'date':e.target.value==='website'?'url':'text',components:[]}:{}),...(f.kind==='address'&&field==='value'?{components:[]}:{})}});},
+  saveContactField:async()=>{const p=state.person,f=state.contactFieldDraft,profile=state.profileId;if(!p || !f || state.personBusy)return;set({personBusy:true,personError:null});try{const person=await api.addContactField(profile,p.id,{revision:p.fieldsRevision,field:f,...(f.id?{fieldId:f.id}:{})});if(state.profileId===profile && state.personOpen===p.id)set({person,contactFieldDraft:null});await reload({refresh:true});}catch(e){if(state.personOpen===p.id)set({personError:e.message});}finally{if(state.personOpen===p.id)set({personBusy:false});}},
+  deleteContactField:async({id})=>{const p=state.person,profile=state.profileId;if(!p || state.personBusy)return;set({personBusy:true,personError:null});try{const person=await api.removeContactField(profile,p.id,{fieldId:id,revision:p.fieldsRevision});if(state.profileId===profile && state.personOpen===p.id)set({person});await reload({refresh:true});}catch(e){if(state.personOpen===p.id)set({personError:e.message});}finally{if(state.personOpen===p.id)set({personBusy:false});}},
+  newContact:()=>set({newContactName:'',contactFileProfile:state.profileId==='all'?null:state.profileId}),
+  newContactName:(_,e)=>set({newContactName:e.target.value}),
+  cancelNewContact:()=>set({newContactName:null}),
+  createContact:async()=>{if(state.personBusy)return;const profile=state.profileId==='all'?state.contactFileProfile:state.profileId;if(!profile)return notify('Choisis un profil.');set({personBusy:true});try{const p=await api.createContact(profile,{name:state.newContactName});set({newContactName:null});await reload({refresh:true});await actions.focusContact({id:p.id});}catch(e){fail(e);}finally{set({personBusy:false});}},
+  contactFileProfile:(_,e)=>{contactImportEpoch++;set({contactFileProfile:e.target.value,contactFilePreview:null,contactFileBusy:false,contactFileError:null});},
+  contactFileChoose:async(_,e)=>{
+    const file=e.target.files?.[0];if(!file)return;
+    const epoch=++contactImportEpoch,profile=state.profileId==='all'?state.contactFileProfile:state.profileId;
+    const current=()=>epoch===contactImportEpoch && state.contactImport && (state.profileId==='all'?state.contactFileProfile:state.profileId)===profile;
+    set({contactFile:null,contactFilePreview:null,contactFileError:null,contactFileBusy:true});
+    try{if(file.size>2*1024*1024)throw new Error('Fichier de 2 Mo maximum.');const bytes=await file.arrayBuffer();if(!current())return;
+      const head=new Uint8Array(bytes),encoding=head[0]===255&&head[1]===254?'utf-16le':head[0]===254&&head[1]===255?'utf-16be':'utf-8';let text;try{text=new TextDecoder(encoding,{fatal:true}).decode(bytes);}catch{text=new TextDecoder('windows-1252').decode(bytes);}
+      if(!current())return;set({contactFile:{text,format:/\.vcf$/i.test(file.name)?'vcf':'csv',name:file.name},contactFileBusy:false});await actions.previewContactFile();
+    }catch(e){if(current())set({contactFileError:e.message,contactFileBusy:false});}
+  },
+  contactFileMapping:({index},e)=>{const f=state.contactFile;if(!f)return;contactImportEpoch++;const mapping=[...(f.mapping || state.contactFilePreview?.mapping || [])];mapping[Number(index)]=e.target.value;set({contactFile:{...f,mapping},contactFilePreview:null,contactFileBusy:false});},
+  previewContactFile:async()=>{
+    const f=state.contactFile,epoch=contactImportEpoch,profile=state.profileId==='all'?state.contactFileProfile:state.profileId;if(!f || state.contactFileBusy)return;if(!profile)return set({contactFileError:'Choisis un profil de destination.'});
+    const current=()=>epoch===contactImportEpoch && state.contactImport && (state.profileId==='all'?state.contactFileProfile:state.profileId)===profile;
+    set({contactFileBusy:true,contactFileError:null});try{const p=await api.previewContactFile(profile,f);if(current())set({contactFilePreview:p.error?null:p,contactFileError:p.error || null,contactFile:{...f,mapping:p.mapping,columns:p.columns}});}catch(e){if(current())set({contactFileError:e.message});}finally{if(current())set({contactFileBusy:false});}
+  },
+  commitContactFile:async()=>{
+    const f=state.contactFile,p=state.contactFilePreview,epoch=contactImportEpoch,profile=state.profileId==='all'?state.contactFileProfile:state.profileId;if(!f || !p || !profile || state.contactFileBusy)return;
+    const current=()=>epoch===contactImportEpoch && state.contactImport && (state.profileId==='all'?state.contactFileProfile:state.profileId)===profile;
+    set({contactFileBusy:true,contactFileError:null});try{const r=await api.importContactFile(profile,{...f,fingerprint:p.fingerprint});await reload({refresh:true});if(current()){set({contactFile:null,contactFilePreview:null});notify(`${r.imported} contacts importés${r.skipped?' · '+r.skipped+' déjà présents':''}`);}}catch(e){if(current())set({contactFileError:e.message});}finally{if(current())set({contactFileBusy:false});}
+  },
   togglePersonAdd:(_,e)=>{e.preventDefault();set({personAddOpen:!state.personAddOpen});},
   togglePersonMerge:(_,e)=>{e.preventDefault();set({personMergeOpen:!state.personMergeOpen});},
   personField:({field},e)=>{if(['personKind','personValue','personMerge'].includes(field))set({[field]:e.target.value});},
@@ -1205,8 +1240,8 @@ const actions = {
   confirmDuplicateMerge:()=>{const c=state.duplicatesReview,keepId=state.duplicatesKeep;if(c)actOnDuplicate(profile=>api.mergeDuplicate(profile,c.id,{version:c.version,keepId,confirm:true}));},
   undoDuplicateMerge:({id})=>actOnDuplicate(profile=>api.undoContactMerge(profile,id)),
   undoSavedMerge:async({id})=>{const profile=state.profileId;if(state.historyBusy || state.offline)return;set({historyBusy:true,contactHistoryError:null});try{await api.undoContactMerge(profile,id);if(state.profileId===profile){await reload({refresh:true});await loadContactHistory();}}catch(e){if(state.profileId===profile)set({contactHistoryError:e.message});}finally{if(state.profileId===profile)set({historyBusy:false});}},
-  openContactImport:()=>set({contactImport:true}),
-  closeContactImport:()=>set({contactImport:false}),
+  openContactImport:()=>{contactImportEpoch++;set({contactImport:true,contactFileBusy:false,contactFile:null,contactFilePreview:null,contactFileError:null,contactFileProfile:state.profileId==='all'?null:state.profileId});},
+  closeContactImport:()=>{contactImportEpoch++;set({contactImport:false,contactFileBusy:false});},
   authorizeContacts:({id})=>{
     const acc=derive(state).profile.accounts.find(a=>a.id===Number(id));if(!acc)return;
     set({contactImport:false});openWizard(acc.svc,acc.name,acc);setC({perms:Object.fromEntries([...new Set([...(acc.perms || ['read']),'contacts'])].map(p=>[p,true]))});

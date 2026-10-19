@@ -38,3 +38,13 @@ Les fusions locales gardent leur annulation dans l’ordre inverse. Les liens un
 ## Historique importé et assistant
 
 Les fiches utilisent désormais une recherche indexée, avec compteurs de messages et activité par canal. Les suggestions peuvent utiliser les échanges pertinents de la personne dans le profil d’envoi, avec sources datées et respect des réglages de mémoire. Voir [le fonctionnement et les limites](historique-personnes-ia.md).
+
+## Fiches standard et portabilité — 20 octobre 2026
+
+Champs usuels : nom complet et composantes, surnom, entreprise/service, poste, anniversaire avec année facultative, adresses structurées, sites et notes. Les champs locaux texte/nombre/date/lien/oui-non sont modifiables, liés à leur fiche source et préservés lors des réimports fournisseur et des fusions/annulations. Une révision protège les modifications concurrentes.
+
+Exporter produit du vCard 4.0 UTF-8 (profil courant ou vue unifiée), lignes repliées à 75 octets, champs personnalisés en X-RELAY-FIELD. Les photos privées WhatsApp sont exclues. Référence : https://www.rfc-editor.org/rfc/rfc6350 . Import : carnets Google/Outlook ou fichiers CSV/vCard3/4, limite 2 Mo / 2 000 contacts, profil de destination explicite, mapping CSV puis aperçu, transaction atomique et réimport exact ignoré. Un UID modifié reste une nouvelle fiche à examiner, sans écrasement ni fusion automatique. CSV supporte UTF-8, UTF-16 avec BOM, Windows-1252 et virgule/point-virgule/tabulation. Les téléphones sans indicatif restent non résolus. vCard2.1 et texte quoted-printable nécessitent une conversion ; les photos binaires3.0 sont ignorées. Aucun import ne contacte une IA ou n’envoie un message.
+
+## Revue des pages avec Claude Desktop
+
+Claude a lu ses instructions frontend-design pour la revue boîte/dossiers, lecture, WhatsApp, rédaction, assistant, contacts liste/réseau, fiche, doublons, liens/fusions, réglages, connexions et QR. Direction retenue : surfaces sauge/teal existantes, fiches compactes, champs avec provenance, moins de prose. Erreurs, destinations, compteurs et couverture d’historique restent visibles ; explications secondaires dans les boutons ⓘ : survol1seconde, focus clavier immédiat, tap, Échap, zone survolable et association accessible préservée pendant les mises à jour. Le dernier choix utilisateur d’envoi direct Enter/Envoyer reste inchangé.

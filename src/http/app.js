@@ -28,13 +28,13 @@ function send(res, status, body, type = 'application/json; charset=utf-8') {
   res.end(type.startsWith('application/json') ? JSON.stringify(body) : body);
 }
 
-async function readJson(req) {
+async function readJson(req,maxBytes=MAX_BODY) {
   if (!String(req.headers['content-type'] || '').startsWith('application/json')) throw new HttpError(415, 'JSON attendu', 'unsupported_media_type');
   let size = 0;
   const chunks = [];
   for await (const chunk of req) {
     size += chunk.length;
-    if (size > MAX_BODY) throw new HttpError(413, 'Requête trop volumineuse', 'too_large');
+    if (size > maxBytes) throw new HttpError(413, 'Requête trop volumineuse', 'too_large');
     chunks.push(chunk);
   }
   try {
@@ -237,6 +237,11 @@ export function createApp({ store, ai, ownerName, gmail = null, providers = {}, 
     ['POST', /^\/api\/profiles\/([^/]+)\/contact-duplicates\/scan$/, async ([p]) => {await store.scanContactDuplicates(p);return store.contactDuplicates(p);}],
     ['POST', /^\/api\/profiles\/([^/]+)\/contact-duplicates\/([^/]+)\/dismiss$/, ([p,id],body) => store.dismissContactDuplicate(p,id,body)],
     ['POST', /^\/api\/profiles\/([^/]+)\/contact-duplicates\/([^/]+)\/merge$/, ([p,id],body) => store.mergeContactDuplicate(p,id,body)],
+    ['POST', /^\/api\/profiles\/([^/]+)\/contacts\/file-preview$/, ([p],body)=>store.contactFiles.preview(p,body)],
+    ['POST', /^\/api\/profiles\/([^/]+)\/contacts\/file-import$/, ([p],body)=>store.contactFiles.commit(p,body)],
+    ['POST', /^\/api\/profiles\/([^/]+)\/contacts$/, ([p],body)=>store.contactFiles.create(p,body)],
+    ['POST', /^\/api\/profiles\/([^/]+)\/contacts\/([^/]+)\/fields$/, ([p,id],body)=>store.addContactField(p,id,body)],
+    ['DELETE', /^\/api\/profiles\/([^/]+)\/contacts\/([^/]+)\/fields$/, ([p,id],body)=>store.removeContactField(p,id,body)],
     ['GET', /^\/api\/profiles\/([^/]+)\/contacts\/([^/]+)$/, ([p,id],body,session,url) => store.person(p,id,{offset:Number(url.searchParams.get('offset') || 0),limit:50})],
     ['POST', /^\/api\/profiles\/([^/]+)\/contacts\/([^/]+)\/identities$/, ([p,id],body) => store.addContactIdentity(p,id,body)],
     ['DELETE', /^\/api\/profiles\/([^/]+)\/contacts\/([^/]+)\/identities$/, ([p,id],body) => store.removeContactIdentity(p,id,body)],
@@ -263,7 +268,7 @@ export function createApp({ store, ai, ownerName, gmail = null, providers = {}, 
       if(push && await push.handle(req,res,url,readJson,send))return;
       if(!auth && pathname==='/auth/session' && req.method==='GET') return send(res,200,{enabled:false,authenticated:false});
       // Ressources publiques fixes : uniquement du code et des images génériques, jamais index.html ni contenu privé.
-      const publicLogin=['/login','/js/login.js','/js/app.js','/js/api.js','/js/views.js','/js/dom.js','/js/constants.js','/js/pwa.js','/js/live.js','/js/network.js','/styles.css','/sw.js','/manifest.webmanifest','/offline.html','/fonts/inter-latin-wght-normal.woff2','/fonts/jetbrains-mono-latin-wght-normal.woff2'].includes(pathname) || /^\/icons\/[a-zA-Z0-9_-]+\.(png|svg)$/.test(pathname);
+      const publicLogin=['/login','/js/login.js','/js/app.js','/js/api.js','/js/views.js','/js/dom.js','/js/constants.js','/js/pwa.js','/js/live.js','/js/network.js','/js/tooltips.js','/styles.css','/sw.js','/manifest.webmanifest','/offline.html','/fonts/inter-latin-wght-normal.woff2','/fonts/jetbrains-mono-latin-wght-normal.woff2'].includes(pathname) || /^\/icons\/[a-zA-Z0-9_-]+\.(png|svg)$/.test(pathname);
       const publicHealth=['/api/health','/api/ready'].includes(pathname) && req.method==='GET';
       if(pathname==='/api/ready' && req.method==='GET') {const value=readiness?readiness():{ok:true};return send(res,value.ok?200:503,{ok:!!value.ok});}
       let session=null;
@@ -280,6 +285,8 @@ export function createApp({ store, ai, ownerName, gmail = null, providers = {}, 
         if(!['GET','HEAD'].includes(req.method)) throw new HttpError(405,'Méthode non autorisée','method_not_allowed');
         return await serveStatic(req,res,pathname==='/login'?'/login.html':pathname);
       }
+      const contactExport=/^\/api\/profiles\/([^/]+)\/contacts\.vcf$/.exec(pathname);
+      if(contactExport && req.method==='GET'){res.setHeader('content-disposition','attachment; filename="relay-contacts.vcf"');return send(res,200,store.contactFiles.export(decodeURIComponent(contactExport[1])),'text/vcard; charset=utf-8');}
       const avatarPath=/^\/api\/(messages|contacts)\/([^/]+)\/whatsapp-avatar$/.exec(pathname);
       if(avatarPath && req.method==='GET') {
         if(!providers.whatsapp?.avatars)throw notFound();
@@ -322,7 +329,7 @@ export function createApp({ store, ai, ownerName, gmail = null, providers = {}, 
       const route = matches.find(([method]) => method === req.method);
       if (!route) throw new HttpError(405, 'Méthode non autorisée', 'method_not_allowed');
       const params = pathname.match(route[1]).slice(1);
-      const body = req.method === 'GET' ? {} : await readJson(req);
+      const body = req.method === 'GET' ? {} : await readJson(req,/^\/api\/profiles\/[^/]+\/contacts\/file-(preview|import)$/.test(pathname)?3*1024*1024:MAX_BODY);
       send(res, 200, await route[2](params,body,session,url));
     } catch (e) {
       const known = e instanceof HttpError;

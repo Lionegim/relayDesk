@@ -95,3 +95,9 @@ test('a failed avatar stays hidden on live rerenders but a new source can load',
  const failed=image('/private-photo?scope=1',true);ctx.morph(failed,image('/private-photo?scope=1'));assert.equal(failed.hidden,true);
  ctx.morph(failed,image('/private-photo?scope=2'));assert.equal(failed.hidden,false);
 });
+
+test('live rerender preserves the accessibility association of an open contextual tooltip',()=>{
+ const ctx=vm.createContext({document:{activeElement:null}});vm.runInContext(readFileSync(new URL('../public/js/dom.js',import.meta.url),'utf8').replace(/^export /gm,'')+'\nglobalThis.morph=morphNode;',ctx);
+ function button(expanded){const a=new Map([['data-tooltip','Merge help'],['aria-expanded',expanded?'true':'false']]);if(expanded)a.set('aria-describedby','relay-context-help');return {nodeType:1,nodeName:'BUTTON',dataset:{},childNodes:[],get attributes(){return [...a].map(([name,value])=>({name,value}));},matches:s=>s==='[data-tooltip]',getAttribute:k=>a.get(k)??null,hasAttribute:k=>a.has(k),setAttribute:(k,v)=>a.set(k,v),removeAttribute:k=>a.delete(k)};}
+ const trigger=button(true);ctx.morph(trigger,button(false));assert.equal(trigger.getAttribute('aria-expanded'),'true');assert.equal(trigger.getAttribute('aria-describedby'),'relay-context-help');
+});
