@@ -2,6 +2,8 @@
 # - Le serveur refuse le mode hébergé sans configuration OIDC complète et propriétaire/MFA explicites.
 # - Les deux services sont dans le profil « hosted » : un simple « docker compose up » ne démarre rien.
 # - Les variables obligatoires (${...:?}) n'ont pas de valeur par défaut : sans configuration explicite, Compose s'arrête.
+# - Toujours passer le fichier d'environnement hors dépôt : --env-file /etc/relay-desk/hosted.env (voir docs/operations.md),
+#   après « node deploy/preflight.mjs --env-file … ». Aucune valeur secrète dans ce fichier d'environnement.
 # Ne pas démarrer ce fichier avant l'autorisation de déploiement (voir docs/architecture-docker-mobile.md).
 name: relay-desk
 
@@ -46,6 +48,8 @@ services:
       MICROSOFT_WEB_CLIENT_SECRET_FILE: /run/secrets/microsoft_web_client_secret
       MICROSOFT_TENANT: ${MICROSOFT_TENANT:-common}
       DEMO_DATA: "0"
+      # État de la dernière sauvegarde, lu (jamais écrit) par le statut d'exploitation.
+      BACKUP_STATUS_FILE: /backup-status/last-backup.json
     secrets:
       - auth_client_id
       - auth_client_secret
@@ -55,14 +59,65 @@ services:
       - google_web_client_secret
       - microsoft_web_client_id
       - microsoft_web_client_secret
+    # Données : répertoire hôte EXISTANT (uid 1000, mode 0700), jamais créé implicitement. Une restauration se fait
+    # dans un nouveau répertoire, puis RELAY_DATA_DIR est basculé explicitement (voir docs/operations.md).
     volumes:
-      - relay-data:/data
+      - type: bind
+        source: ${RELAY_DATA_DIR:?RELAY_DATA_DIR requis (répertoire de données existant)}
+        target: /data
+        bind:
+          create_host_path: false
+      # Seul le sous-répertoire d'état des sauvegardes, en lecture seule : ni archives ni clé de sauvegarde.
+      - type: bind
+        source: ${RELAY_BACKUP_DIR:?RELAY_BACKUP_DIR requis (répertoire des sauvegardes existant)}/status
+        target: /backup-status
+        read_only: true
+        bind:
+          create_host_path: false
     # Aucun port publié : seul le proxy est joignable depuis l'extérieur.
     expose: ["4310"]
     networks: [backend]
     logging:
       driver: json-file
       options: { max-size: "10m", max-file: "3" }
+
+  # Sauvegarde, restauration et reprise (scripts/backup.mjs), lancées à la demande :
+  #   docker compose --env-file /etc/relay-desk/hosted.env --profile backup run --rm backup <create|restore|resume|status> …
+  # Seul service à recevoir la clé de sauvegarde. Aucun réseau : la copie hors VM est faite par l'hôte, sur les archives chiffrées.
+  # Le snapshot SQLite en clair est écrit dans /tmp (tmpfs, effacé en fin de commande et disparu si le conteneur est tué) :
+  # sa taille doit contenir la base entière avec marge, et la mémoire du conteneur doit couvrir ce tmpfs (préflight).
+  backup:
+    profiles: ["backup"]
+    image: relay-desk:${RELAY_IMAGE_TAG:?RELAY_IMAGE_TAG requis}
+    pull_policy: never
+    entrypoint: ["node", "--disable-warning=ExperimentalWarning", "scripts/backup.mjs"]
+    command: ["status", "--data-dir", "/data", "--status-file", "/backups/status/last-backup.json"]
+    init: true
+    user: "1000:1000"
+    read_only: true
+    tmpfs:
+      - /tmp:size=${RELAY_BACKUP_TMPFS_SIZE:-1g},mode=1777,noexec,nosuid,nodev
+    mem_limit: ${RELAY_BACKUP_MEM_LIMIT:-1536m}
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    network_mode: none
+    healthcheck:
+      disable: true
+    secrets:
+      - relay_secret_key
+      - backup_key
+    volumes:
+      - type: bind
+        source: ${RELAY_DATA_DIR:?RELAY_DATA_DIR requis (répertoire de données existant)}
+        target: /data
+        bind:
+          create_host_path: false
+      # archives/ (chiffrées) et status/ ; jamais de snapshot en clair ici.
+      - type: bind
+        source: ${RELAY_BACKUP_DIR:?RELAY_BACKUP_DIR requis (répertoire des sauvegardes existant)}
+        target: /backups
+        bind:
+          create_host_path: false
 
   proxy:
     profiles: ["hosted"]
@@ -80,6 +135,8 @@ services:
     environment:
       RELAY_DOMAIN: ${RELAY_DOMAIN:?RELAY_DOMAIN requis}
       ACME_EMAIL: ${ACME_EMAIL:?ACME_EMAIL requis}
+      # Autorité ACME : production Let's Encrypt par défaut ; l'environnement de test (staging) pour la première recette.
+      ACME_CA: ${ACME_CA:-https://acme-v02.api.letsencrypt.org/directory}
     ports:
       - "80:80"
       - "443:443"
@@ -90,8 +147,11 @@ services:
       - caddy-config:/config
     networks: [backend]
 
-# Fichiers secrets sur la VM, hors dépôt et hors volume de données (propriétaire uid 1000, mode 0400).
+# Fichiers secrets sur la VM, hors dépôt et hors répertoire de données (propriétaire uid 1000, mode 0400).
+# La clé de sauvegarde est un fichier à part (RELAY_BACKUP_KEY_FILE, uid 1000, 0400), monté seulement dans « backup ».
 secrets:
+  backup_key:
+    file: ${RELAY_BACKUP_KEY_FILE:?RELAY_BACKUP_KEY_FILE requis}
   auth_client_id:
     file: ${RELAY_SECRETS_DIR:?RELAY_SECRETS_DIR requis}/auth_client_id
   auth_client_secret:
@@ -113,6 +173,5 @@ networks:
   backend:
 
 volumes:
-  relay-data:
   caddy-data:
   caddy-config:
