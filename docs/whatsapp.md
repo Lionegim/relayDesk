@@ -12,7 +12,7 @@ Le connecteur de Relay Desk utilise [Baileys](https://github.com/WhiskeySockets/
 4. Dans WhatsApp sur le téléphone, **Réglages → Appareils connectés → Connecter un appareil**, puis scanner le QR en direct sur le Mac. Il se renouvelle et expire : ne pas utiliser une ancienne capture.
 5. La liaison vérifie l’identité du téléphone, puis ouvre la boîte du profil choisi. L’historique arrive par lots après l’ouverture. Le compte connecté ne signifie pas que l’import est terminé. Sa disponibilité dépend du téléphone et de WhatsApp ; l’interface affiche les conversations et messages effectivement importés.
 
-Le QR crée un accès en lecture et envoi pour ce Mac. L’application n’envoie qu’après aperçu exact et confirmation à usage unique. Il n’y a ni envoi automatique par l’IA, ni synchronisation du courrier vers Dex ou un agrégateur tiers.
+Le QR crée un accès en lecture et envoi pour ce Mac. Les réponses IA exigent l’aperçu exact et sa confirmation à usage unique ; les réponses manuelles demandent un clic explicite sur Envoyer. Il n’y a ni envoi automatique par l’IA, ni synchronisation du courrier vers Dex ou un agrégateur tiers.
 
 ## Portée de cette version
 
@@ -21,7 +21,7 @@ Le QR crée un accès en lecture et envoi pour ce Mac. L’application n’envoi
 - La fenêtre de sept jours ne comporte plus de plafond silencieux de 500 discussions ou de 200 messages par discussion. Tous les textes importés de cette fenêtre sont consultables ; le texte importé reste limité à 8 000 caractères par message. Le contexte transmis à l’IA est borné à 24 000 caractères, en conservant les échanges les plus récents.
 - Contacts des discussions importées : nom disponible, numéro lorsqu’il est connu et dernière interaction. Les identifiants privés `@lid` ne sont pas affichés comme des numéros de téléphone.
 - Lu/non lu, drapeau, archivage, dossiers et brouillons restent **locaux**. Aucun accusé de lecture n’est envoyé par un clic de lecture dans Relay.
-- Réponse texte dans une discussion existante, au plus 4 096 caractères. Les groupes sont disponibles en lecture et pour l’IA, avec les auteurs fournis par WhatsApp et les noms disponibles dans les contacts du même compte ; leur envoi n’est pas activé. Pas de nouveau destinataire WhatsApp, réponse à tous, transfert ou médias. **Nouveau message** reste réservé aux comptes email.
+- Réponse texte dans une discussion existante, au plus 4 096 caractères. Les groupes proposent aussi les réponses citées, les réactions, les photos et GIF, avec les auteurs fournis par WhatsApp et les noms disponibles dans les contacts du même compte. Pas de nouveau destinataire WhatsApp, réponse à tous ou transfert. **Nouveau message** reste réservé aux comptes email.
 - Résumé, classement et proposition de réponse via l’assistant commun. L’IA n’est appelée qu’à la demande de l’utilisateur ; le panneau indique que le fil sélectionné est transmis à Mistral. Le classement WhatsApp reste local.
 
 ## Envoi
@@ -64,7 +64,7 @@ Dans le profil de destination, choisir Ajouter un canal → WhatsApp. Relay Desk
 
 En hébergé, une session du propriétaire, l’authentification récente et les protections CSRF restent exigées. Le scan sur le téléphone autorise la liaison. L’identité est vérifiée avant import ; une reconnexion ne peut remplacer le numéro enregistré par un autre. Les sessions anciennes sans identité enregistrée ne reprennent pas automatiquement après redémarrage : une nouvelle liaison QR est nécessaire.
 
-Les groupes restent en lecture/analyse, les brouillons WhatsApp restent locaux, et chaque envoi individuel exige l’aperçu exact et sa validation à usage unique. Relier uniquement un compte possédé ou expressément autorisé. Le connecteur est communautaire, non officiel ; l’historique des sept derniers jours disponible depuis le téléphone peut rester partiel. Le site de test conserve ses connecteurs désactivés jusqu’à la bascule réelle autorisée.
+Les réponses et réactions sont disponibles dans les discussions individuelles et de groupe. Les brouillons WhatsApp restent locaux. Les propositions IA exigent l’aperçu exact et sa validation à usage unique ; les messages manuels demandent un clic explicite sur Envoyer. Relier uniquement un compte possédé ou expressément autorisé. Le connecteur est communautaire, non officiel ; l’historique des sept derniers jours disponible depuis le téléphone peut rester partiel. Le site de test conserve ses connecteurs désactivés jusqu’à la bascule réelle autorisée.
 
 ### Cohérence des identités de conversation
 
@@ -76,7 +76,7 @@ Lorsqu’une correspondance devient connue, au redémarrage ou après une mise �
 
 Les photos JPEG/PNG/WebP/GIF et les animations WhatsApp (`videoMessage.gifPlayback`) sont importées avec leurs légendes dans les discussions individuelles et de groupe. Les médias sont chargés à l’ouverture du fil, jamais dans un répertoire public. Descripteurs, clés de média et octets téléchargés sont chiffrés par le coffre, liés au compte et inclus dans la sauvegarde SQLite chiffrée. Leur suppression suit la fenêtre WhatsApp, la déconnexion et les politiques éphémères. Les enveloppes et attributs directs `viewOnce` restent exclus.
 
-Le compositeur individuel propose les emojis et une photo ou un GIF par envoi (10 Mo maximum). Un GIF est converti localement par FFmpeg en vidéo silencieuse native WhatsApp, avec une limite de 30 secondes; l’aperçu porte les octets convertis exacts. Une pièce jointe en cours de rédaction est temporaire (24 h) et doit être réajoutée après une actualisation; Enregistrer conserve le texte. Aucun moteur de recherche GIF tiers n’est utilisé. Les groupes restent en lecture/analyse uniquement.
+Le compositeur propose les emojis et une photo ou un GIF par envoi (10 Mo maximum). Un GIF est converti localement par FFmpeg en vidéo silencieuse native WhatsApp, avec une limite de 30 secondes; l’aperçu porte les octets convertis exacts. Une pièce jointe en cours de rédaction est temporaire (24 h) et doit être réajoutée après une actualisation; Enregistrer conserve le texte. Aucun moteur de recherche GIF tiers n’est utilisé.
 
 Les messages manuels partent seulement au clic explicite sur Envoyer. Un brouillon assisté par IA conserve son aperçu obligatoire, qui montre aussi la pièce jointe; le ticket lie la conversation, le compte, sa génération, le texte et l’empreinte du média. Aucun échec d’envoi incertain n’est retenté automatiquement.
 
@@ -92,6 +92,9 @@ Les nouvelles liaisons utilisent `Browsers.macOS('Chrome')` avec `syncFullHistor
 
 ### Réponses citées et réactions
 
-Dans une discussion individuelle, le bouton « … » de chaque message propose une réponse citée et six réactions rapides. La citation reste enregistrée avec le brouillon ; « × » permet de l’enlever. Les réactions s’ajoutent au message d’origine, se remplacent et se retirent en touchant sa propre réaction. Les mises à jour provenant du téléphone apparaissent sans rechargement, y compris pour les pages d’historique déjà ouvertes.
+Dans une discussion individuelle ou de groupe, le bouton « … » de chaque message propose une réponse citée et six réactions rapides. La citation reste enregistrée avec le brouillon ; « × » permet de l’enlever. Les réactions s’ajoutent au message d’origine, se remplacent et se retirent en touchant sa propre réaction. Les mises à jour provenant du téléphone apparaissent sans rechargement, y compris pour les pages d’historique déjà ouvertes.
 
-La citation est résolue uniquement dans la conversation et le compte conservés ; aucun contenu cité externe n’est importé. L’aperçu des réponses IA comprend le message cité et lie sa référence et son contenu à la validation. Un changement de citation ou de connexion impose une nouvelle vérification. Les réactions sont des actions manuelles explicites et ne sont jamais produites automatiquement par l’IA. Les groupes restent en lecture/analyse seule. Les règles de rétention, de messages éphémères et de vue unique restent appliquées. Les références de citation connues sont enrichies au prochain événement/rejeu reçu ; l’historique ancien ne contenant plus ces métadonnées ne peut pas les reconstituer.
+La citation est résolue uniquement dans la conversation et le compte conservés ; aucun contenu cité externe n’est importé. L’aperçu des réponses IA comprend le message cité et lie sa référence et son contenu à la validation. Un changement de citation ou de connexion impose une nouvelle vérification. Les réactions sont des actions manuelles explicites et ne sont jamais produites automatiquement par l’IA. Les règles de rétention, de messages éphémères et de vue unique restent appliquées. Les références de citation connues sont enrichies au prochain événement/rejeu reçu ; l’historique ancien ne contenant plus ces métadonnées ne peut pas les reconstituer.
+
+
+Dans les groupes, la citation et la réaction incluent l’identité WhatsApp du participant d’origine ; le navigateur ne peut pas la fournir ni remplacer le groupe destinataire. Si l’auteur d’un ancien message n’est pas connu, Relay refuse de le citer ou d’y réagir plutôt que d’inventer une identité. Le groupe est explicitement nommé dans l’aperçu. Les citations de ses propres messages utilisent l’identité de l’appareil lié. Les restrictions du groupe appliquées par WhatsApp restent en vigueur ; un échec ne déclenche aucun nouvel essai automatique.

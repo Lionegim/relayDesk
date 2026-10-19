@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { setupWhatsApp, linkedAccount, msg, tick } from './whatsapp-helpers.js';
 import { parseMessage,chatJid,directJid } from '../src/providers/whatsapp/parse.js';
 
-test('groupes WhatsApp : texte, auteurs distincts, brouillons locaux et aucun envoi groupe',async t=>{
+test('groupes WhatsApp : texte, auteurs distincts, brouillons locaux et réponses de groupe',async t=>{
  const c=await setupWhatsApp();t.after(()=>{c.wa.sync.stop();c.db.close()});
  const group='120363123456@g.us',since=Date.now()-7*86400000;
  assert.equal(chatJid(group),group);assert.equal(directJid(group),null);
@@ -16,7 +16,7 @@ test('groupes WhatsApp : texte, auteurs distincts, brouillons locaux et aucun en
  const full=c.store.getMessage(id);assert.equal(full.group,true);assert.equal(full.from,'Bob');assert.equal(full.trail[0].from,'Alice');assert.equal(full.fromMe,false);
  assert.equal(full.subject,'WhatsApp · Groupe WhatsApp','le nom du participant ne devient pas le titre du groupe');
  await c.wa.outbox.saveDraft(id,{text:'Proposition locale',mode:'reply'});
- await assert.rejects(c.wa.outbox.preview(id,{text:'Ne pas envoyer',mode:'reply'}),e=>e.code==='compose_unavailable');
+ const preview=await c.wa.outbox.preview(id,{text:'Réponse au groupe',mode:'reply'});assert.equal(preview.group,true);assert.deepEqual(preview.to,['Groupe · Groupe WhatsApp']);
  assert.equal(c.sockets.last().sent.length,0);
  c.sockets.last().emit('chats.update',[{id:group,ephemeralExpiration:86400}]);
  assert.equal(c.store.countThreads(accountId).threads,0,'politique éphémère de groupe purgée');

@@ -1,3 +1,4 @@
+import {chatJid} from './parse.js';
 // Private, account-bound encrypted media. No provider URL or media key reaches the browser.
 import {Agent,fetch as fetchMediaDefault} from 'undici';
 import {spawn} from 'node:child_process';
@@ -59,7 +60,7 @@ export function createWhatsAppMedia({store,vault,lib,socket=()=>null,canUpload=(
     async upload(messageId,bytes) {
       const ctx=store.composeContext(messageId),a=store.getAccount(ctx.accountId);
       if(!canUpload(ctx.accountId))throw new HttpError(403,'La permission Envoi n’est pas accordée.','send_forbidden');
-      if(a.svc!=='whatsapp' || !ctx.threadId || ctx.threadId.endsWith('@g.us'))throw badRequest('Choisis une discussion WhatsApp individuelle.');
+      if(a.svc!=='whatsapp' || !chatJid(ctx.threadId))throw badRequest('Choisis une discussion WhatsApp.');
       if(!bytes.length || bytes.length>MAX_MEDIA)throw new HttpError(413,'Image trop volumineuse (10 Mo maximum).','too_large');
       let mime=sniffMedia(bytes);if(mime==='video/mp4')throw badRequest('Ajoute une image ou un fichier GIF.');
       const gif=mime==='image/gif';

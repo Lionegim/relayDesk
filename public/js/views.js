@@ -384,8 +384,8 @@ const isMine = m => m.fromMe === true;
 
 // Chronologie ancien → récent : le fil est stocké du plus récent au plus ancien, le dernier message est `full`.
 function waMessages(sel, full) {
-  const older = [...(full.trail || [])].reverse().map(t => ({ id:t.waId,quote:t.quote,reactions:t.reactions,mine: isMine(t), at: t.at, body: t.body, media:t.media, author: full.group && !isMine(t) ? t.from : null }));
-  return [...older, { id:full.waId,quote:full.quote,reactions:full.reactions,mine: isMine(full), at: full.at ?? sel.sortAt, body: full.failed ? sel.preview : full.body, media:full.media, author: full.group && !isMine(full) ? full.from : null }];
+  const older = [...(full.trail || [])].reverse().map(t => ({ id:t.waId,canInteract:t.canInteract,quote:t.quote,reactions:t.reactions,mine: isMine(t), at: t.at, body: t.body, media:t.media, author: full.group && !isMine(t) ? t.from : null }));
+  return [...older, { id:full.waId,canInteract:full.canInteract,quote:full.quote,reactions:full.reactions,mine: isMine(full), at: full.at ?? sel.sortAt, body: full.failed ? sel.preview : full.body, media:full.media, author: full.group && !isMine(full) ? full.from : null }];
 }
 
 function waMedia(media) {
@@ -418,8 +418,8 @@ function waTimeline(msgs,s={},sel={},canSend=false) {
           ${when(!m.media || !['Photo','GIF'].includes(m.body),()=>html`<span class="wa-text">${m.body}</span>`)}
           ${when(at !== null, () => html`<time class="wa-time" datetime="${new Date(at).toISOString()}" title="${fullDate(at)}">${timeOf(at)}</time>`)}
         </div>
-        ${when(m.id && canSend,()=>html`<button class="wa-message-action" data-on-click="waMessageMenu" data-id="${m.id}" aria-label="Actions du message du ${fullDate(at)}" aria-expanded="${s.waMessageMenu?.conversationId===sel.id && s.waMessageMenu?.messageId===m.id}" ${raw(s.confirm?'disabled':'')}>${icon('more')}</button>`)}
-        ${when(m.reactions?.length,()=>html`<div class="wa-reactions" aria-label="Réactions">${m.reactions.map(r=>canSend?html`<button class="${r.mine?'is-mine':''}" data-on-click="waReact" data-id="${m.id}" data-emoji="${r.mine?'':r.emoji}" aria-label="${r.emoji} · ${r.count} réaction(s)${r.mine?' · Retirer ma réaction':''}" ${raw(s.confirm||s.offline||s.waReacting?'disabled':'')}>${r.emoji}<span>${r.count}</span></button>`:html`<span>${r.emoji} ${r.count}</span>`)}</div>`)}
+        ${when(m.id && canSend && m.canInteract!==false,()=>html`<button class="wa-message-action" data-on-click="waMessageMenu" data-id="${m.id}" aria-label="Actions du message du ${fullDate(at)}" aria-expanded="${s.waMessageMenu?.conversationId===sel.id && s.waMessageMenu?.messageId===m.id}" ${raw(s.confirm?'disabled':'')}>${icon('more')}</button>`)}
+        ${when(m.reactions?.length,()=>html`<div class="wa-reactions" aria-label="Réactions">${m.reactions.map(r=>canSend && m.canInteract!==false?html`<button class="${r.mine?'is-mine':''}" data-on-click="waReact" data-id="${m.id}" data-emoji="${r.mine?'':r.emoji}" aria-label="${r.emoji} · ${r.count} réaction(s)${r.mine?' · Retirer ma réaction':''}" ${raw(s.confirm||s.offline||s.waReacting?'disabled':'')}>${r.emoji}<span>${r.count}</span></button>`:html`<span>${r.emoji} ${r.count}</span>`)}</div>`)}
         ${when(canSend && s.waMessageMenu?.conversationId===sel.id && s.waMessageMenu?.messageId===m.id,()=>html`<div class="wa-message-menu" role="group" aria-label="Répondre ou réagir au message"><button class="wa-reply-action" data-on-click="waReply" data-id="${m.id}">${icon('reply')} Répondre</button><div class="wa-reaction-picker" role="group" aria-label="Choisir une réaction">${['👍','❤️','😂','😮','😢','🙏'].map(emoji=>html`<button data-on-click="waReact" data-id="${m.id}" data-emoji="${m.reactions?.some(r=>r.mine&&r.emoji===emoji)?'':emoji}" aria-label="Réagir ${emoji}" ${raw(s.offline||s.waReacting?'disabled':'')}>${emoji}</button>`)}</div><button class="wa-menu-close" data-on-click="waMessageMenu" data-id="${m.id}" aria-label="Fermer les actions du message">×</button></div>`)}
       </div>`;
   });
@@ -432,7 +432,7 @@ function whatsappView(s, v, sel) {
   const full = s.details[sel.id];
   const name = waName(sel, full);
   const acc = v.profile.accounts.find(a => a.id === sel.accountId);
-  const canSend = !!acc?.perms?.includes('send') && !full?.group;
+  const canSend = !!acc?.perms?.includes('send');
   const draft = s.drafts[sel.id] ?? full?.draft?.text ?? '';
   const replyTo=s.draftMeta?.[sel.id]?.localReplyTo!==undefined?s.draftMeta[sel.id].localReplyTo:full?.draft?.replyTo;
   const selectedQuote=replyTo?waMessages(sel,full || {trail:[]}).find(m=>m.id===replyTo):null;
@@ -442,7 +442,7 @@ function whatsappView(s, v, sel) {
   const st = draftState(s, v, sel.id, draft);
   const status = st && st.label !== 'Brouillon' ? st.label : sel.draft ? `Brouillon enregistré à ${timeOf(sel.draft.savedAt)}` : '';
   const conflict = !!(s.draftMeta || {})[sel.id]?.conflict;
-  const hint = full?.group ? 'Groupe : lecture et IA · envoi non activé' : !canSend ? 'Envoi non autorisé pour ce compte' : '';
+  const hint = !canSend ? 'Envoi non autorisé pour ce compte' : '';
   return html`
     <section class="wa" aria-label="Discussion WhatsApp avec ${name}">
       <header class="wa-head">
@@ -450,7 +450,7 @@ function whatsappView(s, v, sel) {
         <span class="avatar wa-avatar">${sel.initials}</span>
         <div class="wa-who">
           <strong class="ellipsis">${name}${full?.group ? ' · Groupe' : ''}</strong>
-          <span class="ellipsis"><span class="wa-badge">${channelMark('whatsapp')}WhatsApp</span>${sel.account !== 'WhatsApp' ? sel.account : ''}${sel.handle ? ` · ${sel.handle}` : ''}${folderName ? ` · ${folderName}` : ''}</span>
+          <span class="ellipsis"><span class="wa-badge">${channelMark('whatsapp')}WhatsApp${full?.group?' · Groupe':''}</span>${sel.account !== 'WhatsApp' ? sel.account : ''}${sel.handle ? ` · ${sel.handle}` : ''}${folderName ? ` · ${folderName}` : ''}</span>
         </div>
         <div class="wa-head-actions">
           ${assistantButton()}
@@ -667,7 +667,7 @@ function whatsappConnectDialog(s) {
       <div><h3>Scanne pour connecter ton compte</h3><ol class="wa-link-steps"><li>Ouvre WhatsApp sur ton téléphone.</li><li>Va dans <strong>Réglages → Appareils connectés</strong> (sur Android : menu ⋮).</li><li>Choisis <strong>Connecter un appareil</strong> et scanne ce QR code.</li></ol><p class="muted">Le compte est identifié automatiquement après le scan.</p></div>
     </div>
     <p class="muted wa-connect-note">Les textes individuels et de groupe disponibles sur les 7 derniers jours seront synchronisés. L’historique reçu peut rester partiel.</p>
-    <p class="wa-connect-note"><strong>Tu gardes le contrôle.</strong> Les propositions IA exigent ton approbation de l’aperçu exact. Les groupes restent en lecture et analyse.</p>
+    <p class="wa-connect-note"><strong>Tu gardes le contrôle.</strong> Les propositions IA exigent ton approbation de l’aperçu exact. Les réponses et réactions sont disponibles dans les discussions individuelles et les groupes.</p>
     <p class="muted wa-connect-note">Connecteur communautaire non officiel. Relie uniquement un compte que tu possèdes ou es autorisé à connecter.</p>`}
    ${when(c.error,()=>html`<div class="alert" role="alert">${c.error}</div>`)}
   </div><footer class="dialog-foot">${done?html`<button class="btn btn-primary" data-on-click="cNext">Ouvrir la boîte</button>`:html`${when(c.error,()=>html`<button class="btn btn-primary" data-on-click="refreshWhatsAppQR">Réessayer</button>`)}<button class="btn btn-ghost" data-on-click="closeConnect">Fermer</button>`}</footer>
@@ -767,7 +767,7 @@ function connectWizard(s) {
             </div>
             ${when(d.auth === 'qr', () => html`
               ${when(!c.linkId, () => html`<p class="muted" style="margin:0">${d.scopesNote}</p>`)}
-              ${when(!c.linkId, () => html`<p class="muted" style="margin:0">Discussions individuelles et groupes en texte, sur les 7 derniers jours disponibles. Groupes en lecture et analyse ; envoi réservé aux discussions individuelles. Médias, messages éphémères et vue unique exclus. L’historique disponible dépend de WhatsApp.</p>`)}
+              ${when(!c.linkId, () => html`<p class="muted" style="margin:0">Discussions individuelles et groupes en texte, sur les 7 derniers jours disponibles. Réponses et réactions disponibles dans les groupes. Messages éphémères et vue unique exclus. L’historique disponible dépend de WhatsApp.</p>`)}
               ${when(!c.linkId && c.accountId, () => html`<p class="muted" style="margin:0">La liaison de cet appareil Relay Desk sera renouvelée avec historique étendu. Tes messages, dossiers et drapeaux restent conservés. WhatsApp peut transmettre des lots plus anciens ; seuls les 7 derniers jours sont enregistrés dans Relay Desk.</p>`)}
               <p class="muted" style="font-size:12px;margin:0">Connecteur communautaire non officiel : la liaison peut être interrompue ou limitée par WhatsApp.</p>
               <div class="whatsapp-link">

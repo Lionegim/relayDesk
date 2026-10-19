@@ -11,7 +11,7 @@ async function ui() {
  let snapshots=0,failSnapshot=false;
  const api={session:async()=>({enabled:false}),state:async()=>{snapshots++;if(failSnapshot){failSnapshot=false;throw new Error('Réseau temporaire');}return structuredClone(data)},startWhatsAppLink:input=>new Promise((resolve,reject)=>requests.push({resolve,reject,input})),cancelWhatsAppLink:async id=>{cancelled.push(id)},whatsAppLink:async()=>({status:'qr',qrDataUrl:'fake'})};
  const c={api,patch:()=>{if(nextTimeline!==undefined){timeline=nextTimeline;nextTimeline=undefined}},delegate:()=>{},renderApp:()=>'',NAV:[['all','Boîte']],GROUPS:[['all','Tous']],SETTINGS:{},WINDOWS:[7,30,90],
-  localStorage:{getItem:()=>null,setItem:()=>{}},document:{getElementById:()=>root,addEventListener:()=>{}},queueMicrotask,setTimeout:()=>1,clearTimeout:()=>{},setInterval:fn=>{intervals.push(fn);return intervals.length},clearInterval:()=>{},URLSearchParams,location:{search:''},history:{replaceState:()=>{}},console};
+  localStorage:{getItem:()=>null,setItem:()=>{}},document:{querySelector:()=>null,getElementById:()=>root,addEventListener:()=>{}},requestAnimationFrame:fn=>fn(),queueMicrotask,setTimeout:()=>1,clearTimeout:()=>{},setInterval:fn=>{intervals.push(fn);return intervals.length},clearInterval:()=>{},URLSearchParams,location:{search:''},history:{replaceState:()=>{}},console};
  vm.createContext(c);
  vm.runInContext(readFileSync(new URL('../public/js/app.js',import.meta.url),'utf8').replace(/^import .*;\n/gm,'')+'\nglobalThis.inspect=()=>state;globalThis.act=actions;globalThis.redraw=render;globalThis.refreshData=applyData;globalThis.refreshDetails=loadDetails;',c);
  await tick();
@@ -90,4 +90,13 @@ test('older loaded WhatsApp pages refresh reactions without losing history or lo
  u.api.message=async()=>({...m,waId:'latest',body:'new',at:100,trail:[],draft:null});
  let emoji='👍';u.api.whatsAppInteractions=async(id,ids)=>{assert.equal(id,42);assert.deepEqual([...ids],['old']);return [{waId:'old',reactions:emoji?[{emoji,count:1,mine:true}]:[]}];};
  for(const value of ['👍','❤️','']){emoji=value;s.details[42].refreshing=true;await u.c.refreshDetails(42);const old=u.c.inspect().details[42].trail[0];assert.equal(old.body,'old');assert.equal(old.reactions.length,emoji?1:0);if(emoji)assert.equal(old.reactions[0].emoji,emoji);}
+});
+
+test('WhatsApp group UI allows quoted reply and reaction while preserving confirmation lock',async()=>{
+ const u=await ui(),s=u.c.inspect(),m={id:42,p:'anove',accountId:1,channel:'whatsapp',group:true,waId:'g1',sortAt:100,count:1,body:'Bonjour groupe',trail:[]};
+ s.data.messages.push(m);s.selectedId=42;s.details[42]=m;
+ u.c.act.waReply({id:'g1'});assert.equal(u.c.inspect().draftMeta[42].localReplyTo,'g1');
+ let sent=0;u.api.reactWhatsApp=async(id,input)=>{assert.equal(id,42);assert.equal(input.messageId,'g1');assert.equal(input.emoji,'👍');sent++;};u.api.message=async()=>m;
+ await u.c.act.waReact({id:'g1',emoji:'👍'});assert.equal(sent,1);
+ s.confirm={kind:'send'};u.c.act.waReplyCancel();await u.c.act.waReact({id:'g1',emoji:'👍'});assert.equal(sent,1);assert.equal(u.c.inspect().draftMeta[42].localReplyTo,'g1');
 });

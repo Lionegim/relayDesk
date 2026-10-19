@@ -979,14 +979,14 @@ const actions = {
   waMessageMenu:({id})=>{if(!state.confirm)set({waMessageMenu:state.waMessageMenu?.conversationId===state.selectedId && state.waMessageMenu.messageId===id?null:{conversationId:state.selectedId,messageId:id}});},
   waReply:({id})=>{
     if(state.confirm)return;const conversation=state.selectedId,full=state.details[conversation];
-    if(!full || full.group || ![full.waId,...(full.trail||[]).map(x=>x.waId)].includes(id))return;
+    if(!full || ![full.waId,...(full.trail||[]).map(x=>x.waId)].includes(id))return;
     setMeta(conversation,{localReplyTo:id});set({waMessageMenu:null});scheduleAutosave(conversation);
     requestAnimationFrame(()=>document.querySelector(`textarea[data-key="draft-${conversation}"]`)?.focus());
   },
   waReplyCancel:()=>{if(state.confirm)return;setMeta(state.selectedId,{localReplyTo:null});scheduleAutosave(state.selectedId);},
   waReact:async({id,emoji})=>{
     const conversation=state.selectedId,full=state.details[conversation];
-    if(state.confirm || state.waReacting || state.offline || !full || full.group)return;
+    if(state.confirm || state.waReacting || state.offline || !full)return;
     set({waReacting:conversation,waMessageMenu:null});
     try{await api.reactWhatsApp(conversation,{messageId:id,emoji});if(known(conversation)){set(s=>({details:{...s.details,[conversation]:{...s.details[conversation],refreshing:true}}}));await loadDetails(conversation);}}
     catch(e){fail(e);}finally{set({waReacting:null});}

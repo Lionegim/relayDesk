@@ -44,9 +44,9 @@ test('incoming quotes use references only; unknown quotes never import embedded 
  raw.key.id='Q2';raw.message.extendedTextMessage.contextInfo.stanzaId='missing';sock.emit('messages.upsert',{type:'notify',messages:[raw]});await tick();assert.equal(c.store.getMessage(id).quote.unavailable,true);assert.ok(!JSON.stringify(c.store.getMessage(id)).includes('UNTRUSTED'));
  raw.message.extendedTextMessage.contextInfo.expiration=60;assert.equal(parseMessage(raw),null);
 });
-test('reaction failure is never retried and groups remain read-only',async t=>{
+test('reaction failure is never retried and unknown group authors are refused',async t=>{
  const c=await setupWhatsApp();t.after(()=>c.wa.sync.stop());const group='123456789@g.us';const {accountId,sock}=await linkedAccount(c,{messages:[msg('A1','hi'),msg('G1','group',{chat:group})]});const id=thread(c,accountId),gid=c.db.prepare('SELECT id FROM messages WHERE account_id=? AND external_id=?').get(accountId,group).id;
- await assert.rejects(()=>c.wa.outbox.react(gid,{messageId:'G1',emoji:'👍'}),{code:'compose_unavailable'});
+ await assert.rejects(()=>c.wa.outbox.react(gid,{messageId:'G1',emoji:'👍'}),{code:'quote_author_unavailable'});
  sock.failSend=true;await assert.rejects(()=>c.wa.outbox.react(id,{messageId:'A1',emoji:'👍'}),{code:'send_uncertain'});await tick();assert.equal(sock.sent.length,0);assert.deepEqual(c.store.getMessage(id).reactions,[]);
  c.store.waPruneBefore(accountId,Date.now());assert.equal(c.db.prepare('SELECT count(*) n FROM whatsapp_reactions').get().n,0);
 });

@@ -1,10 +1,9 @@
 import {replyId,validReaction} from './interactions.js';
-// Brouillons (locaux) et envoi WhatsApp. V1 : réponse texte seulement, toujours vers le JID enregistré de la
-// discussion ; ni le navigateur ni l'assistant ne choisissent le destinataire.
+// Brouillons locaux, réactions et réponses WhatsApp vers la discussion enregistrée.
 import { createHash, timingSafeEqual } from 'node:crypto';
 import { HttpError, badRequest } from '../../http/errors.js';
 import { readComposeInput } from '../../mail/input.js';
-import { isDirectJid, groupJid, phoneOf } from './parse.js';
+import { isDirectJid, groupJid, phoneOf, directJid } from './parse.js';
 
 const CONFIRM_TTL_MS = 10 * 60000;
 export const MAX_SEND = 4096; // caractères par message envoyé
@@ -25,12 +24,20 @@ export function createWhatsAppOutbox({ store, sync, media=null }) {
     return parsed;
   }
   // Discussion WhatsApp reçue (jamais un nouveau message) et son JID enregistré.
-  function target(messageId, allowGroup = false) {
+  function target(messageId) {
     const ctx = store.composeContext(messageId);
     if (!sync.isWhatsApp(ctx.accountId) || ctx.kind === 'new') throw badRequest('Ce message n’est pas une conversation WhatsApp.');
-    if (groupJid(ctx.threadId) && !allowGroup) throw new HttpError(409, 'Groupes : lecture et analyse disponibles ; envoi non activé.', 'compose_unavailable');
-    if (!isDirectJid(ctx.threadId) && !(allowGroup && groupJid(ctx.threadId))) throw new HttpError(409, 'Discussion WhatsApp invalide.', 'compose_unavailable');
+    if (!isDirectJid(ctx.threadId) && !groupJid(ctx.threadId)) throw new HttpError(409, 'Discussion WhatsApp invalide.', 'compose_unavailable');
     return { accountId: ctx.accountId, chatJid: ctx.threadId };
+  }
+  function messageKey(chatJid,m,sock) {
+    const key={remoteJid:chatJid,id:m.msg_id ?? m.id,fromMe:!!(m.from_me ?? m.fromMe)};
+    if(groupJid(chatJid)) {
+      const participant=directJid(m.author_jid ?? m.participantJid) || (key.fromMe?directJid(sock.user?.lid || sock.user?.id):null);
+      if(!participant)throw new HttpError(409,'L’auteur de ce message n’est pas disponible. Choisis un autre message.','quote_author_unavailable');
+      key.participant=participant;
+    }
+    return key;
   }
   function checkSend(accountId, text, attachment) {
     if (!sync.permissions(accountId).includes('send')) throw new HttpError(403, 'La permission Envoi n’est pas accordée pour ce compte.', 'send_forbidden');
@@ -57,8 +64,8 @@ export function createWhatsAppOutbox({ store, sync, media=null }) {
         const m=store.waInteractionTarget(accountId,chatJid,targetId);
         const sock=sync.liveSocket(accountId);
         if(!sock)throw new HttpError(409,'WhatsApp n’est pas connecté.','whatsapp_offline');
-        const generation=sync.generation(accountId),ts=Date.now();
-        try{await sock.sendMessage(chatJid,{react:{text:emoji,key:{remoteJid:chatJid,id:m.msg_id,fromMe:!!m.from_me}}});}
+        const generation=sync.generation(accountId),ts=Date.now(),key=messageKey(chatJid,m,sock);
+        try{await sock.sendMessage(chatJid,{react:{text:emoji,key}});}
         catch{throw new HttpError(502,'Réaction WhatsApp incertaine : vérifie sur le téléphone avant de réessayer.','send_uncertain');}
         if(store.hasAccount(accountId) && generation===sync.generation(accountId))store.waApplyReaction(accountId,{chatJid,msgId:m.msg_id,actor:'me',emoji,ts});
         return {reacted:true};
@@ -67,7 +74,7 @@ export function createWhatsAppOutbox({ store, sync, media=null }) {
     // Brouillon local uniquement : WhatsApp n'a pas de brouillon partagé entre appareils.
     async saveDraft(messageId, input) {
       const { text } = read(input);
-      const { accountId } = target(messageId, true);
+      const { accountId } = target(messageId);
       return sync.serial(accountId, () => {const replyTo=replyId(input?.replyTo);if(replyTo)store.waQuote(accountId,store.composeContext(messageId).threadId,replyTo,true);return store.saveDraft(messageId, text, { mode: 'reply',replyTo,expectedVersion:input?.baseVersion });});
     },
 
@@ -87,7 +94,8 @@ export function createWhatsAppOutbox({ store, sync, media=null }) {
       return {
         channel: 'whatsapp',
         from: account.address ? `${account.name} (${account.address})` : account.name,
-        to: [name && phone ? `${name} (${phone})` : name || phone || 'Contact WhatsApp'],
+        to: [groupJid(chatJid)?`Groupe · ${name || 'Groupe WhatsApp'}`:name && phone ? `${name} (${phone})` : name || phone || 'Contact WhatsApp'],
+        ...(groupJid(chatJid)?{group:true}:{}),
         cc: [],
         subject: store.composeContext(messageId).subject, // interne : non affiché pour WhatsApp
         body: text,
@@ -108,6 +116,7 @@ export function createWhatsAppOutbox({ store, sync, media=null }) {
       sending.add(messageId);
       try {
         return await sync.serial(accountId, async () => {
+          checkSend(accountId,text,attachment);
           const generation = sync.generation(accountId);
           const quote=store.waQuote(accountId,chatJid,replyId(input?.replyTo),true);
           const actual = digestOf(accountId, generation, chatJid, text, attachment, quote);
@@ -129,8 +138,8 @@ export function createWhatsAppOutbox({ store, sync, media=null }) {
           let sent;
           const memoryTicket=store.getReplyMemory(messageId,{internal:true});
           const sendStartedAt=Date.now();
+          const quoted=quote?{key:messageKey(chatJid,quote,sock),message:{conversation:quote.body}}:null;
           try {
-            const quoted=quote?{key:{remoteJid:chatJid,id:quote.id,fromMe:quote.fromMe},message:{conversation:quote.body}}:null;
             const content=attachment ? (attachment.mime==='video/mp4' ? {video:attachment.bytes,mimetype:attachment.mime,gifPlayback:true,caption:text} : {image:attachment.bytes,mimetype:attachment.mime,caption:text}) : { text };
             sent = quoted?await sock.sendMessage(chatJid,content,{quoted}):await sock.sendMessage(chatJid,content);
           } catch {
@@ -141,7 +150,7 @@ export function createWhatsAppOutbox({ store, sync, media=null }) {
           const msgId = typeof sent?.key?.id === 'string' && sent.key.id ? sent.key.id : `relay-${digest.slice(0, 24)}`;
           if (store.hasAccount(accountId)) {
             store.rememberReply(messageId,text,{ticket:memoryTicket,at:sendStartedAt});
-            store.waAddMessages(accountId, [{ chatJid, msgId, fromMe: true, ts: sendStartedAt, replyTo:quote?.id, text:text || (attachment?.kind==='gif'?'GIF':'Photo') }]);
+            store.waAddMessages(accountId, [{ chatJid, msgId, fromMe: true, ts: sendStartedAt, replyTo:quote?.id, participantJid:groupJid(chatJid)?directJid(sent?.key?.participant || sock.user?.lid || sock.user?.id):null, text:text || (attachment?.kind==='gif'?'GIF':'Photo') }]);
             try {media?.sent(accountId,chatJid,msgId,attachment);}catch { /* Delivery succeeded; never suggest a retry because caching failed. */ }
             store.clearDraft(messageId);
             sync.rebuild(accountId, chatJid);

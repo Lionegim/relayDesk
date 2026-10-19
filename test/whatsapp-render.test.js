@@ -43,9 +43,10 @@ test('suivi WhatsApp : affiche attente ou erreur avec compteurs reçus, sans ann
  markup=c.list(state,view);assert.match(markup,/Historique partiel/);assert.doesNotMatch(markup,/Synchronisation complète/);
 });
 
-test('vue groupe WhatsApp : auteur visible et aperçu d’envoi désactivé',()=>{
+test('vue groupe WhatsApp : auteur visible et réponse activée',()=>{
  const markup=render({group:true});assert.match(markup,/wa-author">Alice/);assert.match(markup,/Claire · Groupe/);
- assert.match(markup,/Groupe : lecture et IA/);assert.match(markup,/data-on-click="sendPreview"[^>]*disabled/);
+ assert.doesNotMatch(markup,/Groupe : lecture et IA/);assert.doesNotMatch(markup,/data-on-click="sendPreview"[^>]*disabled/);
+ assert.match(render({group:true,send:false}),/data-on-click="sendPreview"[^>]*disabled/);
 });
 
 test('connexion WhatsApp : écran QR sans formulaire ni étapes de configuration',()=>{
