@@ -23,3 +23,14 @@ Chaque paire affiche les identités et les comptes sources. **Comparer et fusion
 La version des deux fiches est vérifiée avant fusion ou décision. Si elles ont changé, la requête est refusée et nécessite une nouvelle analyse/revue. Un scan qui voit ses données changer avant l'enregistrement abandonne ses résultats. Les comparaisons sont indexées par identifiant/nom, limitées à 1 000 paires et ignorent les regroupements de plus de 50 personnes ; l'interface indique ces limites et la liaison manuelle reste disponible. Les résultats et décisions sont persistants (migration 015).
 
 Aucune fusion n'est automatique, ne modifie les carnets fournisseurs, ne change les destinataires des conversations ou n'autorise un envoi. Les contrôles d'aperçu exact restent inchangés. Sauvegarder avant la migration 015 ; une ancienne image exige une base compatible.
+
+
+## Vue unifiée et historique durable
+
+La sélection **Tous les profils** réunit les messages, comptes et fiches de tous les profils du propriétaire. Chaque conversation garde son profil, son compte, ses destinataires et son contexte IA d’origine. Cette vue n’est pas une destination de compte ou de dossier. Le choix de la vue est une préférence d’affichage mémorisée dans le navigateur, sans contenu de messages ni identifiants privés.
+
+Dans cette vue, **Doublons à vérifier** inclut les correspondances entre Anove, Personnel et les autres profils. Une fusion explicite crée un lien persistant entre les fiches sources ; elle ne déplace pas les comptes, ne modifie pas les carnets Google/Outlook et ne fusionne pas silencieusement les données des vues d’origine. Un nom ou identifiant commun ne suffit jamais à fusionner automatiquement. Les échanges correspondants sont regroupés dans la fiche unifiée.
+
+**Liens et fusions** affiche les 500 décisions les plus récentes (la base conserve toutes les décisions), avec date, noms au moment de la décision, portée et éventuelle annulation. La migration 016 reprend les fusions locales précédentes. Les entrées d’audit restent présentes si un compte est retiré ; une ancienne source devenue indisponible n’est pas recréée par l’historique. Les liens unifiés sont liés à l’identité de leurs comptes sources pour empêcher leur réactivation sous un autre compte qui réutiliserait un identifiant local.
+
+Les fusions locales gardent leur annulation dans l’ordre inverse. Les liens unifiés sont rejoués comme des relations explicites : annuler un lien recalcule la personne à partir des liens encore actifs. Les alias manuels restent enregistrés sur leur fiche source principale. Rien n’est envoyé par la gestion des contacts et la validation de l’aperçu exact avant chaque envoi reste inchangée.

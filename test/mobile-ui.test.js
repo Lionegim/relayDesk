@@ -425,9 +425,9 @@ test('confidentialité : aucun contenu dans le stockage du navigateur', () => {
     assert.equal(writes, file === 'js/app.js' ? 1 : 0, file);
     if (writes) assert.ok(code.includes('localStorage.setItem(k, String(v))'), file);
   }
-  // Seule clé locale : la largeur de colonne de la liste.
+  // Préférences locales seulement : largeur de liste et identifiant de la vue choisie.
   assert.match(read('js/app.js'), /const LIST_W_KEY = 'relay\.listW';/);
-  assert.equal((read('js/app.js').match(/storage\.set\(/g) || []).length, 2);
+  assert.equal((read('js/app.js').match(/storage\.set\(/g) || []).length, 3);
 });
 
 // ---------- Correctifs de revue : nouveau message, champs du brouillon, aperçu obsolète, hors ligne ----------
@@ -756,4 +756,9 @@ test('duplicate review requires a separate exact pair confirmation and exposes s
  const u=await app();const candidate={id:'pair',version:'version-a',left:{id:'a'},right:{id:'b'},stale:false};u.api.duplicates=async()=>({items:[candidate],merges:[]});let called=0;
  u.api.mergeDuplicate=async(profile,id,input)=>{called++;assert.equal(profile,'perso');assert.equal(id,'pair');assert.deepEqual(plain(input),{version:'version-a',keepId:'b',confirm:true});throw Object.assign(new Error('Ces fiches ont changé'),{code:'duplicate_changed'});};
  u.c.act.selectApp({app:'duplicates'});await tick(6);u.c.act.reviewDuplicate({id:'pair'});assert.equal(called,0);u.c.act.duplicateKeep({}, {target:{value:'b'}});await u.c.act.confirmDuplicateMerge();await tick(6);assert.equal(called,1);assert.match(u.s().duplicatesError,/changé/);assert.equal(u.s().duplicatesBusy,false);assert.equal(u.calls.send.length,0);
+});
+
+test('unified view retains message account selection and makes equal account names unambiguous',async()=>{
+ const data={...page([row(1),row(2,{p:'anove',accountId:2})]),unifiedProfile:{id:'all',name:'Tous les profils',initials:'∞'},unifiedContacts:[],profiles:[profiles[0],{id:'anove',name:'Anove',initials:'A',accounts:[{id:2,name:'Mail',channel:'email',svc:'outlook',perms:['read','drafts','send']}]}],services:{gmail:{real:true},outlook:{real:true}}};
+ const u=await app({state:data});u.c.act.selectProfile({id:'all'});await tick(6);assert.equal(u.c.view().profile.accounts.length,2);assert.equal(u.c.view().list.length,2);u.c.act.openAccount({id:'2',name:'Mail'});assert.equal(u.s().accountMenu,2);u.c.act.newMessage();u.c.act.newMailField({field:'accountId'},{target:{value:'2'}});assert.equal(u.s().newMail.accountId,2);assert.equal(u.calls.send.length,0);
 });

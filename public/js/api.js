@@ -52,6 +52,7 @@ export const api = {
   updateMessage: (id, patch) => call('PATCH', `/api/messages/${id}`, patch),
   saveDraft: (id, draft) => call('PUT', `/api/messages/${id}/draft`, draft),
   createFolder: folder => call('POST', '/api/folders', folder),
+  contactHistory:profile=>call('GET',`/api/profiles/${encodeURIComponent(profile)}/contact-history`),
   duplicates:profile=>call('GET',`/api/profiles/${encodeURIComponent(profile)}/contact-duplicates`),
   scanDuplicates:profile=>call('POST',`/api/profiles/${encodeURIComponent(profile)}/contact-duplicates/scan`,{}),
   dismissDuplicate:(profile,id,input)=>call('POST',`/api/profiles/${encodeURIComponent(profile)}/contact-duplicates/${encodeURIComponent(id)}/dismiss`,input),

@@ -2,11 +2,17 @@
 
 Relay Desk tournera sur un serveur hébergé persistant et restera accessible lorsque le Mac est éteint. Une application web installable sur téléphone donnera accès aux mêmes comptes, messages, brouillons et propositions IA. L’application restera réservée à son propriétaire ; Anove, Personnel et les autres profils sont ses espaces de travail, pas des utilisateurs distincts.
 
-Plan établi avec Claude le 19 octobre 2026. Les deux décisions confirmées sont l’hébergement indépendant du Mac et l’usage durablement personnel. Le choix du prestataire, du domaine et du budget reste à fixer avant le déploiement.
+Plan établi avec Claude le 19 octobre 2026. Les deux décisions confirmées sont l’hébergement indépendant du Mac et l’usage durablement personnel. Le déploiement utilise désormais OVH en France, relay.noegim.com et le budget mensuel de 100 € approuvé. Aucun nouveau serveur n’est nécessaire pour les évolutions décrites ici.
 
 ## État de réalisation
 
-Les lots 1 à 5 sont implémentés et vérifiés avec des données fictives. Le lot 4 ajoute les clients OAuth Web confidentiels, les retours HTTPS fixes et la reconnexion des comptes sans perte de brouillons ni de mémoire. Les clients Google/Entra réels restent à configurer sur le futur domaine ; la recette fournisseur est simulée, sans modifier les comptes du Mac. Keycloak a été choisi pour la future identité du propriétaire ; l’application exige l’émetteur, le sujet stable et le niveau MFA configurés explicitement. Le serveur Keycloak réel, son client et l’identité du propriétaire ne sont pas encore configurés. Les tests OIDC emploient des jetons signés et un émetteur simulé ; aucun déploiement ni transfert de données réelles n’a été effectué. Les configurations et limites actuelles sont détaillées dans `docs/auth.md`, `docs/oauth-web.md`, `docs/docker.md` et `docs/mobile.md`.
+Mise à jour du 19 octobre 2026 : les lots 1 à 6 sont implémentés et le service est déployé sur **https://relay.noegim.com**, avec Docker Compose, HTTPS, Keycloak et MFA pour un propriétaire unique. Gmail, Outlook et WhatsApp sont reliés au serveur ; leurs arrivées déclenchent la mise à jour de l’interface sans rafraîchissement manuel. Les essais réels sont documentés dans les comptes rendus d’exploitation, sans contenu de messages dans Git.
+
+Le lot 7 a été réalisé par de nouvelles connexions hébergées et un import limité, plutôt que par un transfert intégral supposé du Mac. Une migration exhaustive de l’ancien historique, des brouillons et de la mémoire du Mac n’est pas déclarée terminée. Les derniers imports vérifiés portent sur 205 fiches Google et 23 fiches Outlook ; le périmètre de messages reste celui déjà importé et des nouveaux événements reçus.
+
+Les contacts, doublons et rapprochements persistants sont ajoutés après les lots initiaux. La vue **Tous les profils** permet désormais au propriétaire de consulter ensemble comptes, messages et personnes ; les comptes et conversations gardent leur rattachement d’origine. Les fusions entre profils sont des liens explicites enregistrés, annulables, sans réattribution des comptes. Cette décision récente remplace la contrainte initiale d’une consultation uniquement par profil pour le propriétaire. Elle n’étend aucune permission fournisseur ni autorisation MCP.
+
+Les sauvegardes applicatives et d’identité sont chiffrées, avec copies indépendantes sur le Mac vérifiées. La livraison quotidienne automatique hors serveur reste à finaliser. Les étapes de la suite du document retracent le plan initial ; le tableau de suivi courant et les priorités figurent dans **docs/plan-produit-etat.md**.
 
 ## Architecture retenue
 
@@ -27,9 +33,9 @@ SQLite reste adapté à cette instance personnelle, avec un volume sur un systè
 
 La synchronisation s’exécutera sur le serveur, indépendamment de l’état du navigateur et du téléphone. Les connecteurs et les jetons resteront côté serveur. Les copies de messages et la mémoire de style qui étaient sur le Mac seront désormais privées sur ce serveur ; les libellés « Sur ce Mac » seront adaptés.
 
-## Écarts avec le code actuel
+## Écarts identifiés au lancement
 
-| Point | État actuel | Évolution nécessaire |
+| Point | Point de départ | Évolution prévue |
 | --- | --- | --- |
 | Démarrage | `server.js` assemble HTTP, données et connecteurs et les démarre ensemble | Configuration validée, cycle de vie explicite, démarrage et arrêt contrôlés |
 | Accès | Écoute locale et liste de Host limitée à localhost, sans connexion utilisateur | Authentification du propriétaire, HTTPS et contrôle des requêtes |

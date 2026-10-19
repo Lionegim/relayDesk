@@ -89,12 +89,13 @@ export function createContactsRepository(db,changed=()=>{}) {
    const a=contact(profile,root(contact(profile,target).id)),b=contact(profile,root(contact(profile,source).id));if(a.id===b.id)throw badRequest('Ces contacts sont déjà liés');
    const moved=members(b.id),event=randomUUID();
    transaction(db,()=>{for(const id of [...members(a.id),...moved])q('INSERT INTO contact_person_links VALUES (?,?) ON CONFLICT(contact_id) DO UPDATE SET person_id=excluded.person_id').run(id,a.id);
-    q('INSERT INTO contact_merge_events VALUES (?,?,?,?,NULL,?)').run(event,profile,a.id,JSON.stringify({from:b.id,moved}),new Date().toISOString());});changed();return this.detail(profile,a.id);
+    q('INSERT INTO contact_merge_events VALUES (?,?,?,?,NULL,?)').run(event,profile,a.id,JSON.stringify({from:b.id,moved}),new Date().toISOString());
+    q('INSERT INTO contact_link_history VALUES (?,?,?,?,?,?,?,?,?,?,NULL)').run(event,'local',profile,q('SELECT name FROM profiles WHERE id=?').get(profile).name,a.id,b.id,a.name,b.name,JSON.stringify({from:b.id,moved}),new Date().toISOString());});changed();return this.detail(profile,a.id);
   },
   undo(profile,event) {
    const e=q('SELECT * FROM contact_merge_events WHERE id=? AND profile_id=? AND undone_at IS NULL').get(event,profile);if(!e)throw notFound('Fusion introuvable');
    const {from,moved}=JSON.parse(e.members);contact(profile,from);for(const id of moved)if(root(id)!==e.target_id)throw new HttpError(409,'Annule d’abord la fusion suivante de ces contacts.','merge_changed');
-   transaction(db,()=>{for(const id of moved)q('UPDATE contact_person_links SET person_id=? WHERE contact_id=?').run(from,id);q('UPDATE contact_merge_events SET undone_at=? WHERE id=?').run(new Date().toISOString(),event);});changed();return this.detail(profile,from);
+   transaction(db,()=>{for(const id of moved)q('UPDATE contact_person_links SET person_id=? WHERE contact_id=?').run(from,id);q('UPDATE contact_merge_events SET undone_at=? WHERE id=?').run(new Date().toISOString(),event);q('UPDATE contact_link_history SET undone_at=? WHERE id=?').run(new Date().toISOString(),event);});changed();return this.detail(profile,from);
   },
  };
 }

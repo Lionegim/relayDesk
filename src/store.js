@@ -1,3 +1,4 @@
+import {createUnifiedPeople} from './contacts/unified.js';
 import {createDuplicateRepository} from './contacts/duplicates.js';
 // Dépôt SQLite. Les routes ne voient que ces fonctions ; les secrets n'en sortent jamais par snapshot().
 import { createContactsRepository } from './contacts/repository.js';
@@ -48,7 +49,8 @@ export function createStore(db) {
   let seq = 0;
   const memory = createReplyMemoryRepository(db);
   const people = createContactsRepository(db,changed);
-  const duplicates=createDuplicateRepository(db,{people,changed});
+  const unified=createUnifiedPeople(db,people,changed);
+  const duplicates=createDuplicateRepository(db,{people,unified,changed});
 
   const profile = id => q('SELECT * FROM profiles WHERE id = ?').get(id) || (() => { throw notFound('Profil introuvable'); })();
   const row = id => q('SELECT * FROM messages WHERE id = ?').get(id) || (() => { throw notFound('Message introuvable'); })();
@@ -70,18 +72,19 @@ export function createStore(db) {
   return {
     db,
     contactsBackfill:()=>people.backfill(),
-    contactDuplicateProfiles:()=>q('SELECT id FROM profiles').all(),
+    contactDuplicateProfiles:()=>[...q('SELECT id FROM profiles').all(),{id:'all'}],
     scanContactDuplicates:p=>duplicates.scan(p),
     contactDuplicates:p=>duplicates.list(p),
     dismissContactDuplicate:(p,id,input)=>duplicates.dismiss(p,id,input),
     mergeContactDuplicate:(p,id,input)=>duplicates.merge(p,id,input),
     drainContactDuplicates:()=>duplicates.drain(),
     importContacts:(id,records)=>people.import(id,records),
-    person:(profile,id,options)=>people.detail(profile,id,options),
-    addContactIdentity:(profile,id,input)=>people.addIdentity(profile,id,input),
-    removeContactIdentity:(profile,id,input)=>people.removeIdentity(profile,id,input),
-    mergeContacts:(profile,target,source)=>people.merge(profile,target,source),
-    undoContactMerge:(profile,id)=>people.undo(profile,id),
+    contactHistory:profile=>unified.history(profile),
+    person:(profile,id,options)=>profile==='all'?unified.detail(id,options):people.detail(profile,id,options),
+    addContactIdentity:(profile,id,input)=>profile==='all'?unified.addIdentity(id,input):people.addIdentity(profile,id,input),
+    removeContactIdentity:(profile,id,input)=>profile==='all'?unified.removeIdentity(id,input):people.removeIdentity(profile,id,input),
+    mergeContacts:(profile,target,source)=>profile==='all'?unified.merge(target,source):people.merge(profile,target,source),
+    undoContactMerge:(profile,id)=>profile==='all'?unified.undo(id):people.undo(profile,id),
     subscribe(listener) { listeners.add(listener); return () => listeners.delete(listener); },
     pruneReplyMemory: () => memory.prune(),
     markAIReply(id,text) {memory.ignore(memoryScope(id),text);},
@@ -131,6 +134,8 @@ export function createStore(db) {
         messages:(paged?paged.rows:q('SELECT * FROM messages ORDER BY sort_at DESC,id DESC').all()).map(r=>toMessage(r,false)),
         ...(paged?{page:paged.page,counts:paged.counts}:{}),
         contacts: people.list(),
+        unifiedContacts:options?.profile==='all'?unified.list():[],
+        unifiedProfile:{id:'all',name:'Tous les profils',kind:'Vue unifiée',initials:'∞'},
       };
     },
 

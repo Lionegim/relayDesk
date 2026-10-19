@@ -12,15 +12,17 @@ export function pageLimit(value=50) {
 }
 export function listPage(db,{profile,nav='all',channel='all',folder=null,q='',limit=50,cursor=null}) {
  const sql=text=>db.prepare(text);limit=pageLimit(limit);
- if(!sql('SELECT 1 FROM profiles WHERE id=?').get(profile)) throw badRequest('Profil invalide');
+ const unified=profile==='all';
+ if(!unified && !sql('SELECT 1 FROM profiles WHERE id=?').get(profile)) throw badRequest('Profil invalide');
  if(!['all','unread','todo','drafts'].includes(nav) || !['all','email','whatsapp','sms','linkedin','instagram'].includes(channel) || typeof q!=='string' || q.length>500) throw badRequest('Filtres invalides');
- const folders=sql('SELECT id,parent_id FROM folders WHERE profile_id=?').all(profile),subtree=id=>{
+ const folders=sql('SELECT id,parent_id FROM folders'+(unified?'':' WHERE profile_id=?')).all(...(unified?[]:[profile])),subtree=id=>{
   const ids=new Set([id]);let added=true;while(added){added=false;for(const f of folders) if(ids.has(f.parent_id) && !ids.has(f.id)){ids.add(f.id);added=true;}}return [...ids];
  };
  if(folder && !folders.some(f=>f.id===folder)) throw badRequest('Dossier invalide pour ce profil');
- const counts=sql('SELECT COUNT(*) AS all_count, COALESCE(SUM(unread),0) AS unread, COALESCE(SUM(flagged),0) AS todo, COALESCE(SUM(draft_saved_at IS NOT NULL),0) AS drafts FROM messages WHERE profile_id=? AND archived=0').get(profile);
- counts.all=counts.all_count;delete counts.all_count;counts.folders=Object.fromEntries(folders.map(f=>{const ids=subtree(f.id);return[f.id,sql(`SELECT COUNT(*) AS n FROM messages WHERE profile_id=? AND archived=0 AND folder_id IN (${ids.map(()=>'?')})`).get(profile,...ids).n];}));
- let where='profile_id=? AND archived=0',params=[profile];
+ const base=unified?'archived=0':'profile_id=? AND archived=0',baseParams=unified?[]:[profile];
+ const counts=sql('SELECT COUNT(*) AS all_count, COALESCE(SUM(unread),0) AS unread, COALESCE(SUM(flagged),0) AS todo, COALESCE(SUM(draft_saved_at IS NOT NULL),0) AS drafts FROM messages WHERE '+base).get(...baseParams);
+ counts.all=counts.all_count;delete counts.all_count;counts.folders=Object.fromEntries(folders.map(f=>{const ids=subtree(f.id);return[f.id,sql(`SELECT COUNT(*) AS n FROM messages WHERE ${base} AND folder_id IN (${ids.map(()=>'?')})`).get(...baseParams,...ids).n];}));
+ let where=base,params=[...baseParams];
  if(folder){const ids=subtree(folder);where+=` AND folder_id IN (${ids.map(()=>'?')})`;params.push(...ids);}
  else if(nav!=='all') where+=' AND '+({unread:'unread=1',todo:'flagged=1',drafts:'draft_saved_at IS NOT NULL'}[nav]);
  if(channel!=='all'){where+=' AND channel=?';params.push(channel);}

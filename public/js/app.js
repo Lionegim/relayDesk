@@ -12,13 +12,14 @@ const storage = {
 
 const state = {
   data: null, loadError: null, toast: null,
-  app: 'mail', profileId: null, menu: false, accountMenu: null,
+  app: 'mail', profileId: storage.get('relay.profile') || null, menu: false, accountMenu: null,
   nav: 'all', folder: null, channel: 'all', query: '', selectedId: null,
   collapsed: {}, creating: false, folderDraft: '', dragOver: null, moveOpen: false,
   listW: Number(storage.get(LIST_W_KEY)) || 340, resizing: false,
   composing: null, drafts: {}, expandedTrail: {},
   ai: null, aiTone: 'Cordial', aiIntent: '',
   group: 'all', picked: {}, focusId: null, contactQuery: '', contactSearch: false, sort: 'recent',
+  contactHistory:null,contactHistoryError:null,historyBusy:false,
   duplicates:null,duplicatesBusy:false,duplicatesError:null,duplicatesReview:null,duplicatesKeep:null,duplicatesTab:'pending',duplicatesLimit:25,
   personOpen:null, person:null, personError:null, personBusy:false, personKind:'email', personValue:'', personMerge:'', contactImport:false, contactImportBusy:null, fromPerson:false,
   c: null,
@@ -134,6 +135,14 @@ setInterval(async () => {
   try { await reload({ refresh: true }); } catch { /* progression au prochain passage */ }
 }, 3000);
 
+function withUnified(data) {
+ if(!data.unifiedProfile)return data;
+ const accounts=data.profiles.filter(p=>p.id!=='all').flatMap(p=>p.accounts.map(a=>({...a,profileId:p.id,profileName:p.name})));
+ return {...data,profiles:[...data.profiles.filter(p=>p.id!=='all'),{...data.unifiedProfile,accounts}]};
+}
+let historyRequest=0;
+async function loadContactHistory(){const profile=state.profileId,request=++historyRequest;try{const result=await api.contactHistory(profile);if(state.profileId===profile && request===historyRequest)set({contactHistory:result,contactHistoryError:null});}catch(e){if(state.profileId===profile && request===historyRequest)set({contactHistoryError:e.message});}}
+
 let duplicatesRequest=0,duplicateActionVersion=0;
 async function loadDuplicates(scan=false) {
  const profile=state.profileId,request=++duplicatesRequest;
@@ -166,7 +175,7 @@ async function reload({ append = false, refresh = false } = {}) {
   if (state.paged) set({ page: { ...state.page, key, loading: append ? 'more' : true, error: null } });
   let data;
   try {
-    data = await api.state(listParams(state, { limit, cursor }));
+    data = withUnified(await api.state(listParams(state, { limit, cursor })));
   } catch (e) {
     if (request === listRequest && state.paged) set({ page: { ...state.page, loading: false, error: e.message } });
     throw e;
@@ -191,6 +200,7 @@ function filtersChanged(next) {
 }
 
 function applyData(data, extra = {}) {
+  data=withUnified(data);
   // Empreinte d'une ligne : dernier message, nombre et version du brouillon (modifié sur un autre appareil).
   const mark = m => `${m.sortAt}:${m.count}:${m.draftVersion ?? ''}`;
   const before = new Map((state.data?.messages || []).map(m => [m.id, mark(m)]));
@@ -382,7 +392,7 @@ function folderSet(id) {
 
 function flatFolders(s) {
   const rows = [];
-  const walk = (parent, depth) => s.data.folders.filter(f => f.p === s.profileId && f.parent === parent).forEach(f => {
+  const walk = (parent, depth) => s.data.folders.filter(f => (s.profileId==='all' || f.p === s.profileId) && f.parent === parent).forEach(f => {
     rows.push({ f, depth, kids: s.data.folders.some(c => c.parent === f.id) });
     if (!s.collapsed[f.id]) walk(f.id, depth + 1);
     if (s.creating === f.id) rows.push({ input: true, depth: depth + 1 });
@@ -396,20 +406,20 @@ function derive(s) {
   const d = s.data;
   const profile = d.profiles.find(p => p.id === s.profileId) || d.profiles[0];
   // Mode paginé : le serveur a déjà filtré (profil, vue, canal, dossier, recherche) ; les compteurs viennent du serveur.
-  const inProfile = s.paged ? d.messages : d.messages.filter(m => m.p === s.profileId && !m.archived);
+  const inProfile = s.paged ? d.messages : d.messages.filter(m => (s.profileId==='all' || m.p === s.profileId) && !m.archived);
   const byNav = s.paged ? inProfile : s.folder
     ? inProfile.filter(m => folderSet(s.folder).has(m.folderId))
     : inProfile.filter(m => s.nav === 'all' || (s.nav === 'unread' && m.unread) || (s.nav === 'todo' && m.flagged) || (s.nav === 'drafts' && m.draft));
   const q = s.query.trim().toLowerCase();
   const list = s.paged ? byNav : byNav.filter(m => (s.channel === 'all' || m.channel === s.channel) && (!q || (m.from + m.subject + m.preview).toLowerCase().includes(q)));
   const sel = inProfile.find(m => m.id === s.selectedId)
-    || (s.paged && s.selectedRow?.id === s.selectedId && s.selectedRow.p === s.profileId && (s.fromPerson || !s.selectedRow.archived) ? s.selectedRow : null);
+    || (s.paged && s.selectedRow?.id === s.selectedId && (s.profileId==='all' || s.selectedRow.p === s.profileId) && (s.fromPerson || !s.selectedRow.archived) ? s.selectedRow : null);
   const counts = s.paged && s.counts ? s.counts : {
     all: inProfile.length, unread: inProfile.filter(m => m.unread).length, todo: inProfile.filter(m => m.flagged).length,
     drafts: inProfile.filter(m => m.draft).length, folders: null,
   };
 
-  const contactsMine = d.contacts.filter(c => c.p === s.profileId);
+  const contactsMine = s.profileId==='all'?(d.unifiedContacts || []):d.contacts.filter(c => c.p === s.profileId);
   const cq = s.contactQuery.trim().toLowerCase();
   const contacts = contactsMine
     .filter(c => (s.group === 'all' || c.g.includes(s.group)) && (!cq || (c.name + c.title + (c.identities || []).map(i=>i.value).join(' ')).toLowerCase().includes(cq)))
@@ -517,7 +527,7 @@ function svcInit(key, name) {
   return { step: key==='whatsapp'?'auth':'config', svc: key, name: name || (key==='whatsapp'?whatsappAccountName():def.name), fields, perms: def.auth === 'qr' ? { read: true, drafts: true, send: true } : { read: true }, ...(def.auth === 'qr' ? { win: 7 } : {}) };
 }
 function openWizard(svc, name, account = null) {
-  const c = { wizardId: ++wizardVersion, step: 'pick', svc: null, profile: state.profileId, name: '', perms: { read: true }, win: 30, fields: {}, progress: 0, fromAccount: !!name };
+  const c = { wizardId: ++wizardVersion, step: 'pick', svc: null, profile: account?.profileId || (state.profileId==='all'?state.data.profiles.find(p=>p.id!=='all')?.id:state.profileId), name: '', perms: { read: true }, win: 30, fields: {}, progress: 0, fromAccount: !!name };
   if (svc) Object.assign(c, svcInit(svc, name));
   if (account) Object.assign(c, { accountId: account.id, win: svc === 'whatsapp' ? 7 : account.windowDays || 30, perms: Object.fromEntries((svc === 'whatsapp' ? ['read','drafts','send'] : ['read', ...(account.perms || [])]).map(p => [p, true])) });
   set({ c, menu: false, accountMenu: null });
@@ -722,7 +732,7 @@ async function resolveNewMail(keepMine) {
 // ---------- Actions ----------
 
 const num = v => Number(v);
-const firstOf = profileId => state.data.messages.find(m => m.p === profileId && !m.archived)?.id ?? null;
+const firstOf = profileId => state.data.messages.find(m => (profileId==='all' || m.p === profileId) && !m.archived)?.id ?? null;
 
 const actions = {
   authDevices: async()=>{try{set({authPanel:await api.sessions()});}catch(e){fail(e);}},
@@ -785,13 +795,14 @@ const actions = {
   },
   toggleProfileMenu: () => set({ menu: !state.menu, accountMenu: null }),
   selectProfile: ({ id }) => {
+    storage.set('relay.profile',id);
     duplicateActionVersion++;
     selectionVersion++; rememberComposition();
     if (state.drawer) backFrom('drawer');
-    filtersChanged({duplicates:null,duplicatesError:null,duplicatesBusy:false,duplicatesReview:null,duplicatesKeep:null,duplicatesLimit:25, newMailOpen: false, profileId: id, personOpen:null,person:null,personError:null,personMerge:'',personValue:'',personBusy:false,contactImport:false,fromPerson:false, menu: false, accountMenu: null, picked: {}, group: 'all', channel: 'all', query: '', selectedId: state.paged ? null : firstOf(id), selectedRow: null, folder: null, ai: null, moveOpen: false, creating: false, composing: null, pane: 'list' });
-    if(state.app==='duplicates')loadDuplicates();
+    filtersChanged({contactHistory:null,contactHistoryError:null,historyBusy:false,duplicates:null,duplicatesError:null,duplicatesBusy:false,duplicatesReview:null,duplicatesKeep:null,duplicatesLimit:25, newMailOpen: false, profileId: id, personOpen:null,person:null,personError:null,personMerge:'',personValue:'',personBusy:false,contactImport:false,fromPerson:false, menu: false, accountMenu: null, picked: {}, group: 'all', channel: 'all', query: '', selectedId: state.paged ? null : firstOf(id), selectedRow: null, folder: null, ai: null, moveOpen: false, creating: false, composing: null, pane: 'list' });
+    if(state.app==='duplicates')loadDuplicates();if(state.app==='history')loadContactHistory();
   },
-  selectApp: ({ app }) => { if (state.drawer) backFrom('drawer'); set({ app, ai: null, moveOpen: false,duplicatesReview:null });if(app==='duplicates')loadDuplicates(); },
+  selectApp: ({ app }) => { if (state.drawer) backFrom('drawer'); set({ app, ai: null, moveOpen: false,duplicatesReview:null });if(app==='duplicates')loadDuplicates();if(app==='history')loadContactHistory(); },
   selectNav: ({ id }) => { if (state.drawer) backFrom('drawer'); filtersChanged({ nav: id, channel: 'all', folder: null }); },
   openDrawer: () => { set({ drawer: true }); pushLayer('drawer'); },
   closeDrawer: () => backFrom('drawer'),
@@ -831,8 +842,8 @@ const actions = {
   },
 
   // Comptes
-  openAccount: ({ name }) => {
-    const acc = derive(state).profile.accounts.find(a => a.name === name);
+  openAccount: ({ name,id }) => {
+    const acc = derive(state).profile.accounts.find(a => id?a.id===Number(id):a.name === name);
     if (acc && state.data.services[acc.svc]?.real) return set({ accountMenu: state.accountMenu === acc.id ? null : acc.id, menu: false });
     if (!acc || acc.c === 'ok' || !acc.svc) return;
     const def = state.data.services[acc.svc];
@@ -987,7 +998,7 @@ const actions = {
   mailPicked: () => { const first = derive(state).picked[0]; set({ app: 'mail', query: first?.name || '', picked: {}, folder: null, nav: 'all' }); },
   focusContact: async ({ id }) => {
     const profile=state.profileId;
-    if(!state.data.contacts.some(c=>c.id===id && c.p===profile))return;
+    if(!derive(state).contactsMine.some(c=>c.id===id))return;
     set({focusId:id,personOpen:id,person:null,personError:null,personBusy:false,personMerge:'',personValue:''});
     try {const person=await api.person(profile,id);if(state.profileId===profile && state.personOpen===id)set({person});}catch(e){if(state.profileId===profile && state.personOpen===id)set({personError:e.message});}
   },
@@ -1015,8 +1026,8 @@ const actions = {
     try{await api.undoContactMerge(profile,event);const person=await api.person(profile,id);if(state.profileId===profile && state.personOpen===id)set({person,personMerge:''});await reload({refresh:true});}catch(e){fail(e);}finally{if(state.profileId===profile && state.personOpen===id)set({personBusy:false});}
   },
   personConversation:async({id})=>{
-    const profile=state.profileId,personId=state.personOpen;if(!state.person?.timeline.items.some(m=>m.id===Number(id)&&m.p===profile))return;
-    let m;try{m=await api.message(Number(id));}catch(e){fail(e);return;}if(state.profileId!==profile || state.personOpen!==personId || m.p!==profile)return;
+    const profile=state.profileId,personId=state.personOpen;if(!state.person?.timeline.items.some(m=>m.id===Number(id)&&(profile==='all' || m.p===profile)))return;
+    let m;try{m=await api.message(Number(id));}catch(e){fail(e);return;}if(state.profileId!==profile || state.personOpen!==personId || (profile!=='all' && m.p!==profile))return;
     ++selectionVersion;rememberComposition();filtersChanged({personOpen:null,person:null,fromPerson:true,app:'mail',nav:'all',channel:'all',folder:null,query:'',selectedId:m.id,selectedRow:m,details:{...state.details,[m.id]:m},composing:null,ai:null,pane:'reader'});pushLayer('reader');
   },
   duplicateTab:({tab})=>set({duplicatesTab:tab,duplicatesLimit:25,duplicatesReview:null}),
@@ -1028,6 +1039,7 @@ const actions = {
   dismissDuplicate:({id,restore})=>{const c=state.duplicates?.items.find(c=>c.id===id);if(c)actOnDuplicate(profile=>api.dismissDuplicate(profile,id,{version:c.version,restore:restore==='true'}));},
   confirmDuplicateMerge:()=>{const c=state.duplicatesReview,keepId=state.duplicatesKeep;if(c)actOnDuplicate(profile=>api.mergeDuplicate(profile,c.id,{version:c.version,keepId,confirm:true}));},
   undoDuplicateMerge:({id})=>actOnDuplicate(profile=>api.undoContactMerge(profile,id)),
+  undoSavedMerge:async({id})=>{const profile=state.profileId;if(state.historyBusy || state.offline)return;set({historyBusy:true,contactHistoryError:null});try{await api.undoContactMerge(profile,id);if(state.profileId===profile){await reload({refresh:true});await loadContactHistory();}}catch(e){if(state.profileId===profile)set({contactHistoryError:e.message});}finally{if(state.profileId===profile)set({historyBusy:false});}},
   openContactImport:()=>set({contactImport:true}),
   closeContactImport:()=>set({contactImport:false}),
   authorizeContacts:({id})=>{
@@ -1036,7 +1048,7 @@ const actions = {
   },
   importContacts:async({id})=>{
     const profile=state.profileId;if(state.contactImportBusy)return;set({contactImportBusy:Number(id)});
-    try{const result=await api.importContacts(Number(id));await reload({refresh:true});if(state.profileId===profile)notify(`${result.imported} contacts importés dans ${derive(state).profile.name}`);}catch(e){fail(e);}finally{set({contactImportBusy:null});}
+    try{const result=await api.importContacts(Number(id));await reload({refresh:true});if(state.profileId===profile)notify(`${result.imported} contacts importés dans ${state.data.profiles.find(p=>p.id===result.profileId)?.name || derive(state).profile.name}`);}catch(e){fail(e);}finally{set({contactImportBusy:null});}
   },
   cycleFreq: ({ id }) => {
     const c = state.data.contacts.find(x => x.id === id), before = c.freq;
@@ -1225,6 +1237,7 @@ globalThis.addEventListener?.('beforeunload', e => {
 api.session()
   .then(auth => { state.auth = auth; return api.state(listParams(state)); })
   .then(async data => {
+    data=withUnified(data);
     if (data.page) {
       const profileId = data.profiles.some(p => p.id === state.profileId) ? state.profileId : data.profiles[0]?.id;
       if (profileId !== state.profileId) { state.profileId = profileId; await reload(); }
@@ -1241,6 +1254,7 @@ api.session()
         refresh: async () => {
           await reload({ refresh: true });
           if(state.app==='duplicates' && !state.duplicatesBusy)await loadDuplicates();
+          if(state.app==='history' && !state.historyBusy)await loadContactHistory();
           const id = state.selectedId;
           if (id != null && known(id) && !state.confirm) {
             detailRevisions.set(id, (detailRevisions.get(id) || 0) + 1);
