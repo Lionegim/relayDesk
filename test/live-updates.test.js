@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {EventEmitter} from 'node:events';
 import {createApp} from '../src/http/app.js';
 import {createLiveUpdates as serverLive} from '../src/http/live-updates.js';
-import {createLiveUpdates as browserLive} from '../public/js/live.js';
+import {createLiveUpdates as browserLive,ARCHIVE_REFRESH_MS} from '../public/js/live.js';
 import {HttpError} from '../src/http/errors.js';
 import {setupWhatsApp,pairAndOpen,msg,PEER,until} from './whatsapp-helpers.js';
 
@@ -82,4 +82,16 @@ test('browser defers live changes during exact-preview confirmation and retries 
   const live=browserLive({EventSourceImpl:FakeSource,delayMs:0,canRefresh:()=>!blocked,refresh:async()=>{calls++;if(calls===1)throw new Error('temporary network failure');}});
   live.start();const source=FakeSource.instances.at(-1);source.emit('connected');source.emit('invalidate');await tick();assert.equal(calls,0);
   blocked=false;live.invalidate();await until(()=>calls===2,2500);live.stop();
+});
+test('browser adapts refresh pacing during bulk imports and returns to the normal cadence afterward',async()=>{
+ let bulk=true,calls=0;const pacing=[];
+ const live=browserLive({EventSourceImpl:FakeSource,delayMs:()=>{pacing.push(bulk);return bulk?35:0;},canRefresh:()=>true,refresh:async()=>{calls++;}});live.start();const source=FakeSource.instances.at(-1);source.emit('connected');for(let i=0;i<50;i++)source.emit('invalidate');await tick();assert.equal(calls,0,'bulk progress is coalesced instead of flooding reads');await until(()=>calls===1);assert.deepEqual(pacing,[true]);bulk=false;source.emit('invalidate');await until(()=>calls===2);assert.deepEqual(pacing,[true,false]);live.stop();
+});
+
+// Six screens share one owner session; allow user actions within the 240/min API cap.
+test('bulk refresh pacing stays below the shared session budget for six screens',async t=>{
+ t.mock.timers.enable({apis:['setTimeout']});let reads=0;const clients=[],sources=[];
+ for(let i=0;i<6;i++){const live=browserLive({EventSourceImpl:FakeSource,delayMs:()=>ARCHIVE_REFRESH_MS,canRefresh:()=>true,refresh:async()=>{reads+=3;}});live.start();clients.push(live);sources.push(FakeSource.instances.at(-1));}
+ for(let step=0;step<60000/ARCHIVE_REFRESH_MS;step++){for(const source of sources){source.emit('invalidate');source.emit('invalidate');}t.mock.timers.tick(ARCHIVE_REFRESH_MS);for(let n=0;n<5;n++)await Promise.resolve();}
+ assert.equal(reads,216);assert.ok(reads<240,'even three reads per refresh leave room for user actions');for(const live of clients)live.stop();
 });

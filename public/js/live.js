@@ -1,8 +1,9 @@
+export const ARCHIVE_REFRESH_MS=5000;
 // Invalidation notices never contain messages and never trigger a mutation or send.
 export function createLiveUpdates({ refresh, canRefresh, EventSourceImpl = globalThis.EventSource, delayMs = 120 }) {
   let source = null, timer = null, dirty = false, running = false, stopped = true, connected = false, failures = 0;
   const schedule = (delay = delayMs) => {
-    if (!stopped && timer === null) timer = setTimeout(flush, delay);
+    if (!stopped && timer === null) timer = setTimeout(flush, typeof delay==='function'?delay():delay);
   };
   async function flush() {
     timer = null;

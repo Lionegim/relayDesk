@@ -2,7 +2,7 @@ import { api } from './api.js';
 import { patch, delegate } from './dom.js';
 import { renderApp } from './views.js';
 import { NAV, GROUPS, SETTINGS, WINDOWS } from './constants.js';
-import { createLiveUpdates } from './live.js';
+import { createLiveUpdates, ARCHIVE_REFRESH_MS } from './live.js';
 
 const LIST_W_KEY = 'relay.listW';
 const storage = {
@@ -47,7 +47,7 @@ function render() {
     return;
   }
   const v = derive(state);
-  if (v.sel) loadDetails(v.sel.id);
+  if (state.app==='mail' && v.sel) loadDetails(v.sel.id);
   const chatBefore = root.querySelector?.('.wa-timeline');
   const chatPosition = chatBefore && {
     id: chatBefore.dataset.chatId, ready: chatBefore.dataset.ready,
@@ -1254,13 +1254,16 @@ api.session()
     resumeFromRedirect();
     if (typeof globalThis.EventSource === 'function') {
       liveUpdates = createLiveUpdates({
+        // Archive writes can arrive in bursts. Six open screens must stay below
+        // the shared session limit while still following progress automatically.
+        delayMs:()=>state.data?.profiles.some(p=>p.accounts.some(a=>['running','retrying'].includes(a.history?.status)))?ARCHIVE_REFRESH_MS:120,
         canRefresh: () => !!state.data && !state.c && !state.confirm && !state.offline,
         refresh: async () => {
           await reload({ refresh: true });
           if(state.app==='duplicates' && !state.duplicatesBusy)await loadDuplicates();
           if(state.app==='history' && !state.historyBusy)await loadContactHistory();
           const id = state.selectedId;
-          if (id != null && known(id) && !state.confirm) {
+          if (state.app==='mail' && id != null && known(id) && !state.confirm) {
             detailRevisions.set(id, (detailRevisions.get(id) || 0) + 1);
             if (state.details[id]) set(s => ({ details: { ...s.details, [id]: { ...s.details[id], refreshing: true } } }));
             if (await loadDetails(id) === false) throw new Error('Actualisation du fil indisponible.');
