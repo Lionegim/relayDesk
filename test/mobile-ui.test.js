@@ -315,7 +315,7 @@ test('vues : état non enregistré et conflit explicites, envoi bloqué', () => 
 test('vues mobiles : écran unique, retour, tiroir et menu', () => {
   let [s, v] = viewState({ mobile: true, pane: 'reader' });
   let out = ctx.app(s, v);
-  assert.match(out, /class="app is-mobile pane-reader"/);
+  assert.match(out, /class="app mail-workspace is-mobile pane-reader"/);
   assert.doesNotMatch(out, /grid-template-columns/);
   assert.match(out, /data-on-click="mobileBack"/);
   assert.match(out, /data-on-click="openDrawer"/);

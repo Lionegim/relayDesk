@@ -43,7 +43,7 @@ export function renderApp(s, v) {
   // Mobile : un seul écran (liste ou lecture), barre latérale en tiroir ; la grille vient alors de la feuille de style.
   return html`
     ${when(s.offline, () => html`<div class="offline-banner" role="status">Hors ligne : consultation seulement. Rien n’est mis en attente ni envoyé plus tard.</div>`)}
-    <div class="${cls('app', v.compact && 'compact', mobile && 'is-mobile', mobile && `pane-${mail ? s.pane || 'list' : 'list'}`, mobile && s.drawer && 'drawer-open')}" ${raw(mobile ? '' : `style="grid-template-columns:${cols}"`)}>
+    <div class="${cls('app', mail && 'mail-workspace', v.compact && 'compact', mobile && 'is-mobile', mobile && `pane-${mail ? s.pane || 'list' : 'list'}`, mobile && s.drawer && 'drawer-open')}" ${raw(mobile ? '' : `style="grid-template-columns:${cols}"`)}>
       ${sidebar(s, v)}
       ${when(mobile && s.drawer, () => html`<div class="drawer-backdrop" data-on-click="closeDrawer" aria-hidden="true"></div>`)}
       ${mail ? [messageList(s, v), reader(s, v)] : s.app==='duplicates'?duplicatesPage(s,v):s.app==='history'?contactHistoryPage(s,v):s.app==='settings'?mailSettingsPage(s,v):contactsPage(s, v)}
@@ -181,7 +181,7 @@ function messageList(s, v) {
         <div class="list-title">
           ${when(s.mobile, () => html`<button class="icon-btn mobile-only" data-on-click="openDrawer" aria-label="Ouvrir le menu" aria-expanded="${!!s.drawer}">${icon('lines')}</button>`)}
           <div class="grow" style="display:flex;flex-direction:column;min-width:0">
-            <strong class="ellipsis">${s.channel === 'whatsapp' ? 'WhatsApp' : v.viewTitle} — ${v.profile.name}</strong>
+            <span class="inbox-eyebrow">${v.profile.name}</span><strong class="ellipsis inbox-heading">${s.channel === 'whatsapp' ? 'WhatsApp' : v.viewTitle}</strong>
             <small>${s.channel === 'whatsapp' ? plural(page ? page.total ?? v.list.length : v.list.length, 'conversation') : `${counts.all} messages, ${counts.unread} non lus`}</small>
           </div>
           ${s.mobile ? html`<button class="icon-btn mobile-only" data-on-click="newMessage" aria-label="Nouveau message">${icon('compose')}</button>` : html`<button class="icon-btn" title="Filtrer">${icon('lines')}</button>`}
@@ -191,7 +191,7 @@ function messageList(s, v) {
           ${chans.map(c => html`<button class="${cls('chip', s.channel === c && 'is-on')}" data-on-click="selectChannel" data-id="${c}">${c === 'all' ? 'Tous' : CH[c].label}</button>`)}
         </div>
         ${when(['all','email'].includes(s.channel),()=>html`<div class="mail-history-list">${v.profile.accounts.filter(a=>a.history).map(a=>html`
-          <section class="mail-history" aria-label="Import historique ${a.name}" data-key="history-${a.id}">
+          <section class="${cls('mail-history',a.history.status==='complete' && 'is-complete')}" aria-label="Import historique ${a.name}" data-key="history-${a.id}">
             <div><strong>${providerMark(a.svc,a.channel)} ${a.name}</strong><span>${a.history.status==='complete'?'Historique importé':a.history.status==='paused'?'Import en pause':a.history.status==='retrying'?'Reprise automatique prévue':'Import en arrière-plan'}</span></div>
             <p>${plural(a.history.done,'conversation')} traitées${a.history.enumerated?` sur ${a.history.discovered}`:' · recherche de l’historique…'}</p>
             ${when(a.history.enumerated,()=>html`<progress max="${Math.max(1,a.history.discovered)}" value="${a.history.status==='complete' && !a.history.discovered?1:a.history.done}" aria-label="Progression ${a.name}"></progress>`)}
@@ -210,7 +210,7 @@ function messageList(s, v) {
       </header>
       <div class="threads">
         ${v.list.map(m => html`
-          <button class="${cls('thread', m.channel === 'whatsapp' && 'thread-wa', m.id === s.selectedId && 'is-on')}" draggable="true" data-key="m${m.id}" data-id="${m.id}"
+          <button class="${cls('thread', m.channel === 'whatsapp' && 'thread-wa', m.unread && 'is-unread', m.id === s.selectedId && 'is-on')}" draggable="true" data-key="m${m.id}" data-id="${m.id}"
             data-on-click="selectThread" data-on-dragstart="threadDragStart">
             ${when(m.unread, () => html`<span class="dot"></span>`)}
             <span class="avatar">${m.initials}</span>
@@ -306,14 +306,12 @@ function messageView(s, v, sel) {
         <span>${plural(sel.count || 1, 'message')}</span>
         <div style="display:flex;gap:12px"><button class="link-btn" data-on-click="aiClassify">Classer</button><button class="link-btn" data-on-click="aiSummary">${icon('sparkle')}Résumer</button></div>
       </div>
-      <div class="msg-head">
+      <h1 class="mail-subject">${sel.subject || 'Sans objet'}</h1><div class="msg-head">
         <span class="avatar">${sel.initials}</span>
         <div class="msg-meta">
-          <span style="font-size:14px;font-weight:700">${sel.from}</span>
-          <span style="font-size:13px">${sel.subject}</span>
-          <span class="muted" style="font-size:12px">${sel.handle} → ${sel.account}</span>
+          <strong class="mail-sender">${sel.from}</strong><span class="mail-address">${sel.handle}</span>
         </div>
-        <div class="msg-side">${providerBadge(account)}<span>${folderName} · ${sel.account}</span><span>${timeLabel(sel)}</span></div>
+        <div class="msg-side">${providerBadge(account)}<span class="mail-source">${s.data.profiles.find(p=>p.id===sel.p)?.name || v.profile.name} · ${account?.address || sel.account}</span><span class="mail-location">${folderName}</span><time>${timeLabel(sel)}</time></div>
       </div>
       ${when(v.showTriage, () => html`
         <div class="triage">
@@ -326,7 +324,7 @@ function messageView(s, v, sel) {
         </div>`}
       ${olderButton(s, full, sel.id)}
       ${when(trail.length, () => html`
-        <div style="display:flex;flex-direction:column">
+        <div class="mail-trail">
           ${[...trail].reverse().map((t, i) => {
             const key = `${sel.id}:${i}`;
             return html`
