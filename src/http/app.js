@@ -13,7 +13,7 @@ import {createLiveUpdates} from './live-updates.js';
 
 const PUBLIC_DIR = fileURLToPath(new URL('../../public/', import.meta.url));
 const MAX_BODY = 64 * 1024;
-const TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.woff2': 'font/woff2', '.svg': 'image/svg+xml', '.json': 'application/json', '.webmanifest':'application/manifest+json', '.png':'image/png' };
+const TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.woff2': 'font/woff2', '.svg': 'image/svg+xml', '.json': 'application/json', '.webmanifest':'application/manifest+json', '.png':'image/png', '.webp':'image/webp' };
 const SECURITY_HEADERS = {
   'content-security-policy': "default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'",
   'x-content-type-options': 'nosniff',
