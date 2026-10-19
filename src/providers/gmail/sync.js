@@ -1,3 +1,5 @@
+import {HttpError} from '../../http/errors.js';
+import {credentialsMatch,changedClient,prepareMailConnection} from '../mail-credentials.js';
 // Import initial et mise à jour incrémentale (history.list) des comptes Gmail, avec reprise après erreur.
 import { createGmailClient } from './api.js';
 import { threadToRecord } from './parse.js';
@@ -46,15 +48,23 @@ export function createGmailSync({ store, vault, oauth, fetchImpl = globalThis.fe
     if (!clients.has(accountId)) {
       const cred = credentials(accountId);
       if (!cred) throw Object.assign(new Error('Aucun jeton pour ce compte.'), { code: 'invalid_grant' });
+      if(!credentialsMatch(oauth,cred)) throw changedClient();
       const at = epoch(accountId);
-      clients.set(accountId, { gmail: createGmailClient({ refreshToken: cred.refreshToken, oauth, fetchImpl }), email: cred.email, live: () => epoch(accountId) === at });
+      const live=()=>epoch(accountId)===at && store.hasAccount(accountId);
+      const onRotate=refreshToken=>{
+        if(!live()) throw new HttpError(409,'Compte déconnecté.','gone');
+        const current=credentials(accountId);
+        if(!credentialsMatch(oauth,current)) throw changedClient();
+        store.putSecret(accountId,vault.seal(accountId,{...current,refreshToken,...(oauth.binding?{oauthBinding:oauth.binding}:{})}));
+      };
+      clients.set(accountId,{gmail:createGmailClient({refreshToken:cred.refreshToken,oauth,fetchImpl,onRotate}),email:cred.email,live});
     }
     return clients.get(accountId);
   }
 
   function permissions(accountId) {
     const cred = credentials(accountId);
-    return cred ? grantedPermissions(cred.scopes ?? [GMAIL_SCOPES.read]) : [];
+    return credentialsMatch(oauth,cred) ? grantedPermissions(cred.scopes ?? [GMAIL_SCOPES.read]) : [];
   }
   const actions = createGmailActions({ store, client: id => client(id).gmail, permissions });
 
@@ -148,7 +158,7 @@ export function createGmailSync({ store, vault, oauth, fetchImpl = globalThis.fe
       if (e.code === 'gone' || !store.hasAccount(accountId)) return;
       const count = (failures.get(accountId)?.count || 0) + 1;
       failures.set(accountId, { count, retryAt: Date.now() + Math.min(MAX_BACKOFF_MS, BASE_BACKOFF_MS * 2 ** (count - 1)) });
-      if (e.code === 'invalid_grant') {
+      if (e.code === 'invalid_grant' || e.code==='oauth_client_changed') {
         clients.delete(accountId);
         store.setAccountStatus(accountId, 'À reconnecter', 'warn');
         store.setSync(accountId, { status: 'error', error: 'Accès révoqué ou expiré : reconnecte le compte.' });
@@ -176,21 +186,27 @@ export function createGmailSync({ store, vault, oauth, fetchImpl = globalThis.fe
 
   return {
     // Enregistre le compte après l'autorisation et lance l'import en arrière-plan.
-    connect({ profileId, name, windowDays, refreshToken, email, scopes = [GMAIL_SCOPES.read] }) {
-      const account = store.upsertAccount(profileId, { name, channel: 'email', svc: 'gmail', address: email });
-      const pending = { started: false };
-      connecting.set(account.id, pending);
-      const job = run(account.id, async () => {
-        pending.started = true;
-        store.putSecret(account.id, vault.seal(account.id, { refreshToken, email, scopes }));
-        clients.delete(account.id);
-        failures.delete(account.id);
-        store.setAccountStatus(account.id, 'Synchronisation…', 'info');
-        store.setSync(account.id, { status: 'syncing', window_days: windowDays, history_id: null, total: 0, done: 0, error: null });
+    connect({profileId,name,windowDays,refreshToken,email,scopes=[GMAIL_SCOPES.read],expectedAccount=null,expectNew=false,authorize=()=>{}}) {
+      const prepared=prepareMailConnection({store,oauth,service:'gmail',profileId,name,email,expectedAccount,expectNew,authorize,generation:epoch});
+      const {account}=prepared;email=prepared.email;
+      let accept,reject;const ready=new Promise((resolve,no)=>{accept=resolve;reject=no;});ready.catch(()=>{});
+      const pending={started:false};connecting.set(account.id,pending);
+      const job=run(account.id,async()=>{
+        pending.started=true;
+        try {
+          prepared.guard();
+          store.transaction(()=>{
+            store.putSecret(account.id,vault.seal(account.id,{refreshToken,email,scopes,...(oauth.binding?{oauthBinding:oauth.binding}:{})}));
+            store.setAccountStatus(account.id,'Synchronisation…','info');
+            store.setSync(account.id,{status:'syncing',window_days:windowDays,history_id:null,total:0,done:0,error:null});
+          });
+          epochs.set(account.id,epoch(account.id)+1);clients.delete(account.id);failures.delete(account.id);
+          accept();
+        } catch(error) {reject(error);throw gone();}
         await initialSync(account.id);
-      }, { force: true });
-      job.then(() => { if (connecting.get(account.id) === pending) connecting.delete(account.id); });
-      return { account: store.getAccount(account.id), job };
+      },{force:true});
+      job.then(()=>{if(connecting.get(account.id)===pending)connecting.delete(account.id);});
+      return {account:store.getAccount(account.id),job,ready};
     },
     progress(accountId) {
       const s = store.getSync(accountId);

@@ -3,14 +3,19 @@ import { HttpError } from '../../http/errors.js';
 
 const BASE = 'https://gmail.googleapis.com/gmail/v1/users/me/';
 
-export function createGmailClient({ refreshToken, oauth, fetchImpl = globalThis.fetch, initialAccess = null }) {
+export function createGmailClient({ refreshToken, oauth, fetchImpl = globalThis.fetch, initialAccess = null, onRotate=()=>{} }) {
   let access = initialAccess; // { token, expiresAt }
 
-  async function accessToken(force = false) {
-    if (!force && access && access.expiresAt - 60000 > Date.now()) return access.token;
-    const t = await oauth.refresh(refreshToken);
-    access = { token: t.access_token, expiresAt: Date.now() + (t.expires_in || 3600) * 1000 };
-    return access.token;
+  let rt=refreshToken,refreshing=null;
+  async function accessToken(force=false) {
+    if(!force && access && access.expiresAt-60000>Date.now()) return access.token;
+    if(refreshing) return refreshing;
+    refreshing=(async()=>{
+      const t=await oauth.refresh(rt),next=t.refresh_token || rt;
+      if(next!==rt) await onRotate(next,t.scope);
+      rt=next;access={token:t.access_token,expiresAt:Date.now()+(t.expires_in || 3600)*1000};return access.token;
+    })();
+    try{return await refreshing;}finally{refreshing=null;}
   }
 
   async function request(method, path, params = {}, body, retried = false) {
@@ -28,7 +33,7 @@ export function createGmailClient({ refreshToken, oauth, fetchImpl = globalThis.
         signal: AbortSignal.timeout(30000),
       });
     } catch (e) {
-      if (e instanceof HttpError) throw e;
+      if (e instanceof HttpError || e.code==='gone') throw e;
       throw new HttpError(502, 'Gmail est injoignable.', 'retryable');
     }
     if (res.status === 401 && !retried) return request(method, path, params, body, true);
@@ -37,7 +42,7 @@ export function createGmailClient({ refreshToken, oauth, fetchImpl = globalThis.
     if (res.status === 429 || res.status >= 500) throw new HttpError(503, `Gmail indisponible (${res.status}).`, 'retryable');
     if (!res.ok) throw new HttpError(502, `Erreur Gmail (${res.status}).`, 'gmail');
     const text = await res.text();
-    return text ? JSON.parse(text) : {};
+    try{return text?JSON.parse(text):{};}catch{throw new HttpError(502,'Réponse Gmail illisible.','retryable');}
   }
 
   const get = (path, params) => request('GET', path, params);

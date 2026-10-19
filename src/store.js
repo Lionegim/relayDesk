@@ -258,6 +258,9 @@ export function createStore(db) {
       return toAccount(q('SELECT * FROM accounts WHERE profile_id = ? AND name = ?').get(profileId, accountName));
     },
     getAccount: id => ({ ...toAccount(accountOf(id)), profileId: accountOf(id).profile_id }),
+    accountIdentity: id => accountOf(id).identity,
+    mailAccountForAddress: (profileId,svc,address) => {const row=q('SELECT id FROM accounts WHERE profile_id=? AND svc=? AND lower(address)=lower(?)').get(profileId,svc,address);return row?{...toAccount(accountOf(row.id)),profileId}:null;},
+    accountForName: (profileId,accountName) => {const row=q('SELECT id FROM accounts WHERE profile_id=? AND name=?').get(profileId,accountName);return row?{...toAccount(accountOf(row.id)),profileId}:null;},
     hasAccount: id => !!q('SELECT 1 FROM accounts WHERE id = ?').get(id),
     // Supprime le compte ; secret, état de synchronisation, messages importés et liens folder_labels suivent (ON DELETE CASCADE).
     // Les dossiers restent : ceux importés avant la migration 002 sont d'abord détachés de leur compte d'origine.

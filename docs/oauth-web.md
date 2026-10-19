@@ -68,10 +68,23 @@ Sources : [Google OAuth 2.0 pour applications web serveur](https://developers.go
 ## Microsoft : points à vérifier
 
 - L'inscription doit avoir une plateforme **Web**, l'adresse de retour HTTPS exacte et un secret client. Un secret a une date d'expiration : prévoir son renouvellement.
-- Le flux code avec PKCE et secret est conforme à la plateforme d'identité v2. Le jeton de rafraîchissement tourne à chaque utilisation.
+- Le flux code avec PKCE et secret est conforme à la plateforme d'identité v2. Les réponses peuvent contenir un nouveau jeton de rafraîchissement ; Relay Desk le conserve avant d’utiliser le nouveau jeton d’accès.
 
 Source : [Microsoft identity platform, flux du code d'autorisation](https://learn.microsoft.com/entra/identity-platform/v2-oauth2-auth-code-flow).
 
 ## Reconnexion avec un client Web
 
 Les jetons émis pour un client de bureau ne sont pas utilisables par un client Web. Le runtime enregistre `oauthBinding` dans les identifiants chiffrés et refuse un jeton dont l'empreinte diffère, avant tout rafraîchissement. Chaque compte est alors reconnecté via le client Web, avec conservation des données (même compte, même adresse vérifiée).
+
+
+La reconnexion cible le compte existant dans son profil, vérifie l’adresse obtenue auprès du fournisseur et conserve son identifiant stable, ses conversations, brouillons et sa mémoire. Un compte supprimé puis recréé, même avec le même identifiant numérique, ne peut pas récupérer un ancien retour OAuth. Un nom occupé pendant une nouvelle connexion, ou une boîte déjà connectée sous un autre nom dans le même profil, provoque un refus plutôt qu’une fusion silencieuse.
+
+Les retours hébergés exigent la session propriétaire ayant commencé l’opération et une authentification récente. La session, l’identité du compte et sa génération sont contrôlées avant l’échange du code, puis avant l’enregistrement chiffré. Une révocation pendant l’échange empêche la connexion. La redirection de succès attend cet enregistrement ; la synchronisation initiale continue ensuite en arrière-plan. La reconnexion invalide les anciens aperçus d’envoi.
+
+Les renouvellements simultanés partagent un seul échange par client. Tout nouveau jeton de rafraîchissement est enregistré chiffré avant l’utilisation du nouveau jeton d’accès, uniquement si le compte et sa génération sont encore valides. Les erreurs de connexion ne suppriment pas les conversations importées. Une clé de client modifiée nécessite une reconnexion ; renouveler seulement son secret ne modifie pas l’empreinte.
+
+## Recette fictive et limites
+
+`test/oauth-web.test.js`, `test/mail-hosted.test.js` et `test/mail-oauth-hosted.test.js` couvrent les fabriques OAuth, le stockage et le parcours HTTP propriétaire. Les faux fournisseurs vérifient le client, son secret, PKCE et le retour fixe ; ils font tourner et invalident leurs faux jetons de rafraîchissement. Deux appareils simulés vérifient le retour dans la session et le profil d’origine, puis la reprise du runtime avec les mêmes brouillons et identités de mémoire. Les tests refusent également une autre adresse, un compte supprimé/recréé, une session révoquée pendant l’échange et un retour rejoué ou expiré. Aucun message n’est envoyé.
+
+Les codes en attente restent en mémoire et expirent après dix minutes : après redémarrage, recommencer la connexion. Les tests ne valident pas des navigateurs mobiles réels, un DNS/certificat public, la politique du tenant Anove ou l’état du projet Google. Ces essais nécessiteront le futur domaine, les clients Web et une autorisation de recette réelle. Le lot 4 ne déploie rien et n’importe aucune donnée du Mac.

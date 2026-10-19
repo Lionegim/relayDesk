@@ -1,3 +1,5 @@
+import {HttpError} from '../../http/errors.js';
+import {credentialsMatch,changedClient,prepareMailConnection} from '../mail-credentials.js';
 // Import et synchronisation incrémentale (delta Graph par dossier) des comptes Outlook / Microsoft 365.
 // Même contrat que la synchronisation Gmail : file par compte, génération, reprise après erreur.
 import { createGraphClient } from './api.js';
@@ -56,13 +58,15 @@ export function createOutlookSync({ store, vault, oauth, fetchImpl = globalThis.
     if (!clients.has(accountId)) {
       const cred = credentials(accountId);
       if (!cred) throw Object.assign(new Error('Aucun jeton pour ce compte.'), { code: 'invalid_grant' });
+      if(!credentialsMatch(oauth,cred)) throw changedClient();
       const at = epoch(accountId);
       const live = () => epoch(accountId) === at && store.hasAccount(accountId);
       // Microsoft renouvelle le jeton de rafraîchissement : le nouveau est rechiffré, jamais journalisé.
       const onRotate = refreshToken => {
-        if (!live()) return;
-        const cur = credentials(accountId) || cred;
-        store.putSecret(accountId, vault.seal(accountId, { ...cur, refreshToken }));
+        if (!live()) throw new HttpError(409,'Compte déconnecté.','gone');
+        const cur = credentials(accountId);
+        if(!credentialsMatch(oauth,cur)) throw changedClient();
+        store.putSecret(accountId, vault.seal(accountId, { ...cur, refreshToken, ...(oauth.binding?{oauthBinding:oauth.binding}:{}) }));
       };
       clients.set(accountId, { graph: createGraphClient({ refreshToken: cred.refreshToken, oauth, fetchImpl, onRotate }), email: cred.email, live });
     }
@@ -71,7 +75,7 @@ export function createOutlookSync({ store, vault, oauth, fetchImpl = globalThis.
 
   function permissions(accountId) {
     const cred = credentials(accountId);
-    return cred ? grantedPermissions(cred.scopes ?? [OUTLOOK_SCOPES.read]) : [];
+    return credentialsMatch(oauth,cred) ? grantedPermissions(cred.scopes ?? [OUTLOOK_SCOPES.read]) : [];
   }
 
   // Dossiers du compte : identifiants système et dossiers personnels (chemins « Parent/Enfant »).
@@ -189,7 +193,7 @@ export function createOutlookSync({ store, vault, oauth, fetchImpl = globalThis.
       if (e.code === 'gone' || !store.hasAccount(accountId)) return;
       const count = (failures.get(accountId)?.count || 0) + 1;
       failures.set(accountId, { count, retryAt: Date.now() + Math.min(MAX_BACKOFF_MS, BASE_BACKOFF_MS * 2 ** (count - 1)) });
-      if (e.code === 'invalid_grant') {
+      if (e.code === 'invalid_grant' || e.code==='oauth_client_changed') {
         clients.delete(accountId);
         store.setAccountStatus(accountId, 'À reconnecter', 'warn');
         store.setSync(accountId, { status: 'error', error: 'Accès révoqué ou expiré : reconnecte le compte.' });
@@ -218,27 +222,32 @@ export function createOutlookSync({ store, vault, oauth, fetchImpl = globalThis.
   const actions = createOutlookActions({ store, client: id => client(id).graph, permissions });
 
   return {
-    connect({ profileId, name, windowDays, refreshToken, email, scopes = [OUTLOOK_SCOPES.read] }) {
-      const account = store.upsertAccount(profileId, { name, channel: 'email', svc: 'outlook', address: email || null });
-      const pending = { started: false };
-      connecting.set(account.id, pending);
-      const job = run(account.id, async () => {
-        pending.started = true;
-        store.putSecret(account.id, vault.seal(account.id, { refreshToken, email: email || null, scopes }));
-        clients.delete(account.id);
-        failures.delete(account.id);
-        store.setAccountStatus(account.id, 'Synchronisation…', 'info');
-        store.setSync(account.id, { status: 'syncing', window_days: windowDays, history_id: null, total: 0, done: 0, error: null });
+    connect({profileId,name,windowDays,refreshToken,email,scopes=[OUTLOOK_SCOPES.read],expectedAccount=null,expectNew=false,authorize=()=>{}}) {
+      const prepared=prepareMailConnection({store,oauth,service:'outlook',profileId,name,email,expectedAccount,expectNew,authorize,generation:epoch});
+      const {account}=prepared;email=prepared.email;
+      let accept,reject;const ready=new Promise((resolve,no)=>{accept=resolve;reject=no;});ready.catch(()=>{});
+      const pending={started:false};connecting.set(account.id,pending);
+      const job=run(account.id,async()=>{
+        pending.started=true;
+        try {
+          prepared.guard();
+          store.transaction(()=>{
+            store.putSecret(account.id,vault.seal(account.id,{refreshToken,email,scopes,...(oauth.binding?{oauthBinding:oauth.binding}:{})}));
+            store.setAccountStatus(account.id,'Synchronisation…','info');
+            store.setSync(account.id,{status:'syncing',window_days:windowDays,history_id:null,total:0,done:0,error:null});
+          });
+          epochs.set(account.id,epoch(account.id)+1);clients.delete(account.id);failures.delete(account.id);
+          accept();
+        } catch(error) {reject(error);throw gone();}
         await initialSync(account.id);
-        // Adresse lue sur /me si l'autorisation ne l'a pas fournie.
-        const c = clients.get(account.id);
-        if (!email && c?.email && c.live()) {
-          store.upsertAccount(profileId, { name, channel: 'email', svc: 'outlook', address: c.email });
-          store.putSecret(account.id, vault.seal(account.id, { ...credentials(account.id), email: c.email }));
+        const c=clients.get(account.id);
+        if(!email && c?.email && c.live()) {
+          store.upsertAccount(profileId,{name,channel:'email',svc:'outlook',address:c.email});
+          store.putSecret(account.id,vault.seal(account.id,{...credentials(account.id),email:c.email}));
         }
-      }, { force: true });
-      job.then(() => { if (connecting.get(account.id) === pending) connecting.delete(account.id); });
-      return { account: store.getAccount(account.id), job };
+      },{force:true});
+      job.then(()=>{if(connecting.get(account.id)===pending)connecting.delete(account.id);});
+      return {account:store.getAccount(account.id),job,ready};
     },
     progress(accountId) {
       const s = store.getSync(accountId);

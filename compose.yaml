@@ -39,18 +39,22 @@ services:
       DATA_DIR: /data
       RELAY_SECRET_KEY_FILE: /run/secrets/relay_secret_key
       MISTRAL_API_KEY_FILE: /run/secrets/mistral_api_key
-      GOOGLE_CLIENT_ID_FILE: /run/secrets/google_client_id
-      GOOGLE_CLIENT_SECRET_FILE: /run/secrets/google_client_secret
-      MICROSOFT_CLIENT_ID_FILE: /run/secrets/microsoft_client_id
+      MAIL_OAUTH_MODE: web
+      GOOGLE_WEB_CLIENT_ID_FILE: /run/secrets/google_web_client_id
+      GOOGLE_WEB_CLIENT_SECRET_FILE: /run/secrets/google_web_client_secret
+      MICROSOFT_WEB_CLIENT_ID_FILE: /run/secrets/microsoft_web_client_id
+      MICROSOFT_WEB_CLIENT_SECRET_FILE: /run/secrets/microsoft_web_client_secret
+      MICROSOFT_TENANT: ${MICROSOFT_TENANT:-common}
       DEMO_DATA: "0"
     secrets:
       - auth_client_id
       - auth_client_secret
       - relay_secret_key
       - mistral_api_key
-      - google_client_id
-      - google_client_secret
-      - microsoft_client_id
+      - google_web_client_id
+      - google_web_client_secret
+      - microsoft_web_client_id
+      - microsoft_web_client_secret
     volumes:
       - relay-data:/data
     # Aucun port publié : seul le proxy est joignable depuis l'extérieur.
@@ -96,12 +100,14 @@ secrets:
     file: ${RELAY_SECRETS_DIR:?RELAY_SECRETS_DIR requis}/relay_secret_key
   mistral_api_key:
     file: ${RELAY_SECRETS_DIR:?RELAY_SECRETS_DIR requis}/mistral_api_key
-  google_client_id:
-    file: ${RELAY_SECRETS_DIR:?RELAY_SECRETS_DIR requis}/google_client_id
-  google_client_secret:
-    file: ${RELAY_SECRETS_DIR:?RELAY_SECRETS_DIR requis}/google_client_secret
-  microsoft_client_id:
-    file: ${RELAY_SECRETS_DIR:?RELAY_SECRETS_DIR requis}/microsoft_client_id
+  google_web_client_id:
+    file: ${RELAY_SECRETS_DIR:?RELAY_SECRETS_DIR requis}/google_web_client_id
+  google_web_client_secret:
+    file: ${RELAY_SECRETS_DIR:?RELAY_SECRETS_DIR requis}/google_web_client_secret
+  microsoft_web_client_id:
+    file: ${RELAY_SECRETS_DIR:?RELAY_SECRETS_DIR requis}/microsoft_web_client_id
+  microsoft_web_client_secret:
+    file: ${RELAY_SECRETS_DIR:?RELAY_SECRETS_DIR requis}/microsoft_web_client_secret
 
 networks:
   backend:

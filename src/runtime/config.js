@@ -7,7 +7,7 @@ export class ConfigurationError extends Error {
   constructor(message) { super(`Configuration : ${message}`); this.code='configuration_invalid'; }
 }
 const invalid = message => { throw new ConfigurationError(message); };
-const SECRET_NAMES=['RELAY_SECRET_KEY','MISTRAL_API_KEY','GOOGLE_CLIENT_ID','GOOGLE_CLIENT_SECRET','MICROSOFT_CLIENT_ID','AUTH_CLIENT_ID','AUTH_CLIENT_SECRET'];
+const SECRET_NAMES=['RELAY_SECRET_KEY','MISTRAL_API_KEY','GOOGLE_CLIENT_ID','GOOGLE_CLIENT_SECRET','MICROSOFT_CLIENT_ID','AUTH_CLIENT_ID','AUTH_CLIENT_SECRET','GOOGLE_WEB_CLIENT_ID','GOOGLE_WEB_CLIENT_SECRET','MICROSOFT_WEB_CLIENT_ID','MICROSOFT_WEB_CLIENT_SECRET'];
 function secret(env,name,cwd) {
   const value=env[name], file=env[`${name}_FILE`];
   if(value && file) invalid(`${name} et ${name}_FILE ne peuvent pas être utilisés ensemble.`);
@@ -49,8 +49,15 @@ export function readConfig(env=process.env,{cwd=process.cwd()}={}) {
   try {auth=readAuthConfig({env,mode,publicBaseUrl:base.origin,secret:name=>secrets[name] || ''});}
   catch(error) {invalid(error.message);}
   if(auth.enabled && (!env.PUBLIC_BASE_URL || port===0)) invalid('OIDC exige PUBLIC_BASE_URL explicite et un port fixe.');
+  const mailOAuthMode=env.MAIL_OAUTH_MODE || (mode==='hosted'?'web':'desktop');
+  if(!['desktop','web'].includes(mailOAuthMode) || (mode==='hosted' && mailOAuthMode!=='web')) invalid('MAIL_OAUTH_MODE doit valoir web en hébergé, desktop ou web en local.');
+  if(mailOAuthMode==='web' && (!env.PUBLIC_BASE_URL || base.protocol!=='https:')) invalid('Le mode OAuth Web exige PUBLIC_BASE_URL HTTPS explicite.');
+  for(const prefix of ['GOOGLE','MICROSOFT']) {
+    const id=secrets[`${prefix}_WEB_CLIENT_ID`],value=secrets[`${prefix}_WEB_CLIENT_SECRET`];
+    if(mailOAuthMode==='web' && !!id!==!!value) invalid(`${prefix}_WEB_CLIENT_ID et ${prefix}_WEB_CLIENT_SECRET sont requis ensemble.`);
+  }
   return Object.freeze({
-    auth,mode,host,port,publicBaseUrl:base.origin,dataDir:resolve(cwd,env.DATA_DIR || 'data'),
+    mailOAuthMode,auth,mode,host,port,publicBaseUrl:base.origin,dataDir:resolve(cwd,env.DATA_DIR || 'data'),
     keyFile:resolve(cwd,env.DATA_DIR || 'data','secret.key'),secrets:Object.freeze(secrets),
     allowedHosts:[...new Set([base.host,...(mode==='local'?[port,base.port || (base.protocol==='https:'?443:80)].flatMap(p=>[`127.0.0.1:${p}`,`localhost:${p}`,`[::1]:${p}`]):[])])],
     googleRedirectUri:`${base.origin}/oauth/google/callback`,

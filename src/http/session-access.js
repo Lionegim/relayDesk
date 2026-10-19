@@ -27,15 +27,15 @@ export function createSessionAccess({clock=Date.now}={}) {
    if(!ticket || ticket.sessionId!==session.id || ticket.id!==id || ticket.digest!==input.digest || ticket.fingerprint!==fingerprint(input)) throw new HttpError(409,'Vérifie à nouveau l’aperçu exact dans cette session avant d’envoyer.','session_approval_invalid');
    approvals.delete(input.approvalToken);
   },
-  rememberOAuth(session,provider,location) {
+  rememberOAuth(session,provider,location,context=null) {
    const state=new URL(location).searchParams.get('state');
    if(!state) throw new HttpError(500,'Connexion indisponible.','oauth_state_missing');
-   bounded(oauth,`${provider}:${state}`,{sessionId:session.id,expires:clock()+600000});
+   bounded(oauth,`${provider}:${state}`,{sessionId:session.id,context,expires:clock()+600000});
   },
   consumeOAuth(session,provider,state) {
    prune(oauth);const key=`${provider}:${state}`,ticket=oauth.get(key);
    if(!ticket || ticket.sessionId!==session.id) throw new HttpError(403,'Cette connexion ne correspond pas à la session active.','oauth_session_invalid');
-   oauth.delete(key);
+   oauth.delete(key);return ticket.context;
   },
  };
 }

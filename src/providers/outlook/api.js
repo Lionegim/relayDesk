@@ -9,17 +9,18 @@ const TEXT_BODY = 'outlook.body-content-type="text"';
 
 export function createGraphClient({ refreshToken, oauth, fetchImpl = globalThis.fetch, onRotate = () => {} }) {
   let rt = refreshToken;
+  let refreshing=null;
   let access = null; // { token, expiresAt }
 
-  async function accessToken(force = false) {
-    if (!force && access && access.expiresAt - 60000 > Date.now()) return access.token;
-    const t = await oauth.refresh(rt);
-    access = { token: t.access_token, expiresAt: Date.now() + (t.expires_in || 3600) * 1000 };
-    if (t.refresh_token && t.refresh_token !== rt) {
-      rt = t.refresh_token;
-      await onRotate(rt, t.scope);
-    }
-    return access.token;
+  async function accessToken(force=false) {
+    if(!force && access && access.expiresAt-60000>Date.now()) return access.token;
+    if(refreshing) return refreshing;
+    refreshing=(async()=>{
+      const t=await oauth.refresh(rt),next=t.refresh_token || rt;
+      if(next!==rt) await onRotate(next,t.scope);
+      rt=next;access={token:t.access_token,expiresAt:Date.now()+(t.expires_in || 3600)*1000};return access.token;
+    })();
+    try{return await refreshing;}finally{refreshing=null;}
   }
 
   async function request(method, pathOrUrl, { params = {}, body, mime, prefer, retried = false } = {}) {

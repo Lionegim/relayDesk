@@ -6,7 +6,7 @@ Plan établi avec Claude le 19 octobre 2026. Les deux décisions confirmées son
 
 ## État de réalisation
 
-Les lots 1, 2 et 3 sont implémentés et vérifiés avec des données fictives. Keycloak a été choisi pour la future identité du propriétaire ; l’application exige l’émetteur, le sujet stable et le niveau MFA configurés explicitement. Le serveur Keycloak réel, son client et l’identité du propriétaire ne sont pas encore configurés. Les tests OIDC emploient des jetons signés et un émetteur simulé ; aucun déploiement ni transfert de données réelles n’a été effectué. Les configurations et limites actuelles sont détaillées dans `docs/auth.md` et `docs/docker.md`.
+Les lots 1 à 4 sont implémentés et vérifiés avec des données fictives. Le lot 4 ajoute les clients OAuth Web confidentiels, les retours HTTPS fixes et la reconnexion des comptes sans perte de brouillons ni de mémoire. Les clients Google/Entra réels restent à configurer sur le futur domaine ; la recette fournisseur est simulée, sans modifier les comptes du Mac. Keycloak a été choisi pour la future identité du propriétaire ; l’application exige l’émetteur, le sujet stable et le niveau MFA configurés explicitement. Le serveur Keycloak réel, son client et l’identité du propriétaire ne sont pas encore configurés. Les tests OIDC emploient des jetons signés et un émetteur simulé ; aucun déploiement ni transfert de données réelles n’a été effectué. Les configurations et limites actuelles sont détaillées dans `docs/auth.md`, `docs/oauth-web.md` et `docs/docker.md`.
 
 ## Architecture retenue
 

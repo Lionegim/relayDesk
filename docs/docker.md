@@ -62,7 +62,7 @@ docker build --secret id=build_ca,src=/chemin/vers/ca.pem --target test .
 
 Sur la VM, plus tard et sur autorisation :
 
-- secrets dans `RELAY_SECRETS_DIR` (hors dépôt, hors volume de données), un fichier par valeur : `relay_secret_key` (32 octets en base64 ou 64 caractères hexadécimaux), `mistral_api_key`, `google_client_id`, `google_client_secret`, `microsoft_client_id` ;
+- secrets dans `RELAY_SECRETS_DIR` (hors dépôt, hors volume de données), un fichier par valeur : `relay_secret_key` (32 octets en base64 ou 64 caractères hexadécimaux), `mistral_api_key`, `google_web_client_id`, `google_web_client_secret`, `microsoft_web_client_id`, `microsoft_web_client_secret` (clients Web confidentiels distincts des clients bureau) ;
 - hors Swarm, Compose monte ces fichiers avec leurs droits d'origine : propriétaire uid 1000, mode `0400` ;
 - variables : `RELAY_IMAGE_TAG`, `PUBLIC_BASE_URL` (https), `RELAY_DOMAIN`, `ACME_EMAIL`, `RELAY_SECRETS_DIR`, `AUTH_ISSUER`, `AUTH_OWNER_SUB`, `AUTH_MFA_ACR` ; secrets OIDC `auth_client_id` et `auth_client_secret` séparés ;
 - Caddy obtient le certificat, ajoute HSTS et quelques en-têtes, sans journal d'accès (les retours OAuth portent `code` et `state`). Son cœur ne fournit pas de limite de débit : elle relève de l'application (lot 3) ou d'un module choisi explicitement.
@@ -93,7 +93,7 @@ Elle vérifie les droits non-root, la lecture seule, l’absence de capacités, 
 
 Validation initiale des lots 1 et 2 du 19 octobre 2026 : **191 tests réussis sur Mac et dans le stage Linux Node 24**, puis recette Docker réussie. Un audit du contexte de construction (97 fichiers autorisés) a aussi confirmé l’exclusion de faux fichiers `.env`, clés, archives, bases, sauvegardes et exports placés sous un répertoire source de test. Le contexte réel n’inclut que les sources et ressources autorisées.
 
-La conservation d’identifiants WhatsApp est vérifiée avec de fausses valeurs chiffrées et de faux sockets. Aucune session WhatsApp réelle n’a été reprise dans Docker. Le lot 3 ajoute l’accès propriétaire via OIDC (voir `docs/auth.md`). La configuration Keycloak réelle, les lots 4 à 7, le déploiement et la migration restent à réaliser.
+La conservation d’identifiants WhatsApp est vérifiée avec de fausses valeurs chiffrées et de faux sockets. Aucune session WhatsApp réelle n’a été reprise dans Docker. Le lot 3 ajoute l’accès propriétaire via OIDC (voir `docs/auth.md`). Le lot 4 prépare les connexions Web avec des fournisseurs simulés (voir `docs/oauth-web.md`). La configuration Keycloak et des clients Web réels, les lots 5 à 7, le déploiement et la migration restent à réaliser.
 
 
 ## Configuration locale
@@ -109,7 +109,7 @@ La conservation d’identifiants WhatsApp est vérifiée avec de fausses valeurs
 | `DEMO_DATA` | Données fictives si `1` sur une base vide ; aucun ajout de démonstration à une base existante. |
 | `SHUTDOWN_TIMEOUT_MS` | 30 000 par défaut ; délai Docker 45 s pour laisser l’arrêt applicatif terminer ou signaler une issue incertaine. |
 
-Les secrets pris en charge sous forme directe ou `*_FILE` sont `RELAY_SECRET_KEY`, `MISTRAL_API_KEY`, `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` et `MICROSOFT_CLIENT_ID`. Ne pas fournir les deux formes simultanément. Les commandes Docker n’utilisent pas `npm start` et ne chargent jamais le `.env` local. Le démarrage local historique reste disponible avec `npm start`.
+Les secrets pris en charge sous forme directe ou `*_FILE` sont `RELAY_SECRET_KEY`, `MISTRAL_API_KEY`, `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `MICROSOFT_CLIENT_ID`, `GOOGLE_WEB_CLIENT_ID`, `GOOGLE_WEB_CLIENT_SECRET`, `MICROSOFT_WEB_CLIENT_ID`, `MICROSOFT_WEB_CLIENT_SECRET`, `AUTH_CLIENT_ID` et `AUTH_CLIENT_SECRET`. Ne pas fournir les deux formes simultanément. Les commandes Docker n’utilisent pas `npm start` et ne chargent jamais le `.env` local. Le démarrage local historique reste disponible avec `npm start`.
 
 
 ## Accès propriétaire (lot 3)
@@ -120,3 +120,12 @@ Le Compose local de démonstration garde volontairement `AUTH_MODE=disabled` et 
 
 
 Validation après lot 3 : **214 tests réussis sur Mac et Linux**, puis recette `npm run test:docker` réussie, y compris le refus d’un hébergement sans OIDC et le refus d’accès aux API/QR/contenus sans session dans un runtime protégé isolé. La configuration du Compose hébergé a été analysée avec des valeurs fictives uniquement ; le proxy n’a pas été démarré.
+
+
+## Connexions de messagerie (lot 4)
+
+Le Compose hébergé impose `MAIL_OAUTH_MODE=web` et monte les quatre fichiers Google/Entra Web séparément des identifiants bureau du Mac. `MICROSOFT_TENANT` vaut `common` par défaut et peut être fixé explicitement. Le runtime accepte un fournisseur non configuré si ses deux valeurs Web sont absentes ; avec le Compose fourni, préparer tous les fichiers référencés (valeurs Web réelles lors de la future configuration, jamais des identifiants bureau).
+
+La recette automatisée simule Google, Graph, le serveur de jetons et l’identité du propriétaire. Elle vérifie les retours HTTPS fixes dans la bonne session et le bon profil, la reconnexion sans perte de brouillon ou mémoire, le refus des anciens jetons bureau, la rotation persistée et la reprise après redémarrage. Les connexions en attente avant un redémarrage doivent être recommencées. Aucun serveur public, certificat réel ni consentement Google/Entra n’est configuré par cette recette. Voir `docs/oauth-web.md` pour la configuration future.
+
+Validation après lot 4 : **233 tests réussis sur Mac et Linux**, puis recette Docker hors réseau réussie (arrêt, reprise et restauration fictive). Le Compose hébergé a été analysé avec des valeurs fictives et sans démarrer ses services.

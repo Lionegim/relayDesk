@@ -8,6 +8,7 @@ import { createAssistantService } from '../mail/assistant-service.js';
 import { emailFromIdToken } from '../providers/gmail/oauth.js';
 import { createMailService } from '../mail/service.js';
 import { createSessionAccess } from './session-access.js';
+import {mailboxAddress} from '../providers/mail-credentials.js';
 
 const PUBLIC_DIR = fileURLToPath(new URL('../../public/', import.meta.url));
 const MAX_BODY = 64 * 1024;
@@ -77,12 +78,24 @@ export function createApp({ store, ai, ownerName, gmail = null, providers = {}, 
   const mail = createMailService({ store, providers });
   const assistant = createAssistantService({ store, ai, mail, ownerName });
   // Autorisation Google : navigation pleine page, puis retour vers l'interface avec le résultat dans l'URL.
-  async function oauthRoute(pathname, url, res, session=null, json=false) {
+  async function oauthRoute(pathname, url, res, session=null, json=false,req=null) {
     if (!['/oauth/google/start', '/oauth/google/callback', '/oauth/microsoft/start', '/oauth/microsoft/callback'].includes(pathname)) throw notFound();
     const service = pathname.startsWith('/oauth/microsoft/') ? 'outlook' : 'gmail';
     const provider = providers[service];
     const def = SERVICES[service];
-    const back = params => redirect(res, '/?' + new URLSearchParams({ provider: service, ...params }));
+    const back = params => {
+      if(json && params.connect_error) throw new HttpError(400,params.connect_error,'oauth_start_invalid');
+      return redirect(res, '/?' + new URLSearchParams({ provider: service, ...params }));
+    };
+    const authorize=context=>{
+      if(auth) {const latest=auth.requireSession(req);if(latest.id!==session.id) throw new HttpError(401,'Session remplacée : recommence la connexion.','auth_required');auth.assertRecent(latest);}
+      if(!store.hasProfile(context.profileId)) throw badRequest('Profil de connexion introuvable.');
+      const target=context.target;
+      if(!target) return;
+      if(!store.hasAccount(target.id) || store.accountIdentity(target.id)!==target.identity) throw new HttpError(409,'Le compte a changé : recommence la connexion.','account_changed');
+      const current=store.getAccount(target.id);
+      if(current.profileId!==context.profileId || current.svc!==service || current.name!==context.name || (current.address || '').toLowerCase()!==(target.address || '').toLowerCase() || (provider.sync.generation?.(target.id) || 0)!==target.generation) throw new HttpError(409,'Le compte a changé : recommence la connexion.','account_changed');
+    };
     if (pathname.endsWith('/start')) {
       if (!provider?.oauth.configured) return back({ connect_error: `Connexion ${def.name} non configurée : consulte la documentation de connexion.` });
       const profileId = url.searchParams.get('profile'), name = (url.searchParams.get('name') || '').trim(), win = Number(url.searchParams.get('win'));
@@ -92,23 +105,27 @@ export function createApp({ store, ai, ownerName, gmail = null, providers = {}, 
       const perms = url.searchParams.has('perms') ? url.searchParams.get('perms').split(',') : ['read'];
       if (perms.some(p => !def.available.includes(p))) return back({ connect_error: 'Permission de messagerie invalide ou indisponible.' });
       const existingId = url.searchParams.get('account');
-      let account = null;
+      let account = store.accountForName(profileId,name);
       if (existingId !== null) {
         account = store.getAccount(accountId(existingId));
         if (account.svc !== service || account.profileId !== profileId || account.name !== name) throw badRequest('Compte de messagerie invalide');
       }
-      const location=provider.oauth.start({ redirectUri: provider.redirectUri, perms, context: { profileId, name, win, address: account?.address } });
-      if(auth) access.rememberOAuth(session,service,location);
+      if(account && (account.svc!==service || account.profileId!==profileId || account.name!==name)) throw badRequest('Compte de messagerie invalide');
+      const context={profileId,name,win,expectNew:!account,address:account?.address,target:account?{id:account.id,identity:store.accountIdentity(account.id),generation:provider.sync.generation?.(account.id) || 0,address:account.address}:null};
+      const location=provider.oauth.start({redirectUri:provider.redirectUri,perms,context});
+      if(auth) access.rememberOAuth(session,service,location,context);
       return json?send(res,200,{url:location}):redirect(res,location);
     }
     if (pathname.endsWith('/callback')) {
-      if(auth) access.consumeOAuth(session,service,url.searchParams.get('state'));
+      if(auth) {const original=access.consumeOAuth(session,service,url.searchParams.get('state'));if(original)authorize(original);}
       if (url.searchParams.get('error')) return back({ connect_error: `Autorisation refusée dans ${def.provider}.` });
       try {
         const r = await provider.oauth.finish({ state: url.searchParams.get('state'), code: url.searchParams.get('code') });
-        const email = r.email || emailFromIdToken(r.idToken);
-        if (r.context.address && r.context.address !== email) throw badRequest('Choisis le compte déjà connecté pour modifier ses permissions.');
-        const { account } = provider.sync.connect({ profileId: r.context.profileId, name: r.context.name, windowDays: r.context.win, refreshToken: r.refreshToken, email, scopes: r.scopes, ...(r.homeAccountId ? { homeAccountId: r.homeAccountId } : {}) });
+        authorize(r.context);
+        const email = mailboxAddress(r.email || (provider.oauth.mode!=='web'?emailFromIdToken(r.idToken):null));
+        if (r.context.address && mailboxAddress(r.context.address) !== email) throw badRequest('Choisis le compte déjà connecté pour modifier ses permissions.');
+        const {account,ready}=provider.sync.connect({profileId:r.context.profileId,name:r.context.name,windowDays:r.context.win,refreshToken:r.refreshToken,email,scopes:r.scopes,expectedAccount:r.context.target,expectNew:r.context.expectNew,authorize:()=>authorize(r.context)});
+        if(ready) await ready;
         return back({ connect: service, account: account.id, profile: r.context.profileId, win: r.context.win });
       } catch (e) {
         // Les erreurs fournisseur peuvent inclure code OAuth, URL ou corps : ne jamais les journaliser.
@@ -217,12 +234,12 @@ export function createApp({ store, ai, ownerName, gmail = null, providers = {}, 
       if(req.method==='POST' && /^\/api\/oauth\/(google|microsoft)\/start$/.test(pathname)) {
         const body=await readJson(req),start=new URL('/oauth/'+pathname.split('/')[3]+'/start','http://localhost');
         for(const [key,value] of Object.entries(body)) if(['profile','name','win','perms','account'].includes(key)) start.searchParams.set(key,String(value));
-        return await oauthRoute(start.pathname,start,res,session,true);
+        return await oauthRoute(start.pathname,start,res,session,true,req);
       }
       if (pathname.startsWith('/oauth/')) {
         if(auth && pathname.endsWith('/start')) throw new HttpError(405,'Utilise le parcours de connexion protégé.','method_not_allowed');
         if (req.method !== 'GET') throw new HttpError(405, 'Méthode non autorisée', 'method_not_allowed');
-        return await oauthRoute(pathname, url, res,session);
+        return await oauthRoute(pathname,url,res,session,false,req);
       }
       if (!pathname.startsWith('/api/')) {
         if (req.method !== 'GET' && req.method !== 'HEAD') throw new HttpError(405, 'Méthode non autorisée', 'method_not_allowed');
