@@ -18,6 +18,15 @@ const icon = name => raw(ICON[name]);
 const channelMark = channel => channel === 'whatsapp'
   ? html`<img class="wa-brand-glyph" src="/icons/whatsapp-glyph-green.svg" width="24" height="24" alt="" aria-hidden="true">`
   : CH[channel].mark;
+// Marques officielles : le fournisseur identifie le compte, le canal reste générique.
+const PROVIDER_BRANDS = {
+  gmail: { icon: '/icons/gmail.webp', label: 'Gmail' },
+  outlook: { icon: '/icons/outlook.svg', label: 'Microsoft Outlook / Microsoft 365' },
+};
+const providerMark = (svc, channel) => PROVIDER_BRANDS[svc]
+  ? html`<img class="provider-brand-icon" src="${PROVIDER_BRANDS[svc].icon}" width="24" height="24" alt="" aria-hidden="true">`
+  : channelMark(channel);
+const providerBadge = account => when(PROVIDER_BRANDS[account?.svc], () => html`<span class="provider-badge">${providerMark(account.svc, account.channel)}<span>${PROVIDER_BRANDS[account.svc].label}</span></span>`);
 
 export function renderApp(s, v) {
   const mail = s.app === 'mail', mobile = !!s.mobile;
@@ -106,7 +115,7 @@ function sidebar(s, v) {
         ${v.profile.accounts.map(a => html`
           <div style="position:relative">
           <button class="side-item hov" data-on-click="openAccount" data-name="${a.name}" title="${a.status}">
-            <span class="acct-mark" style="background:${CH[a.channel].tint};color:${CH[a.channel].ink}">${channelMark(a.channel)}</span>
+            <span class="acct-mark" style="background:${CH[a.channel].tint};color:${CH[a.channel].ink}">${providerMark(a.svc, a.channel)}</span>
             <span class="grow ellipsis">${a.name}</span>
             <span class="acct-dot" style="background:${ACCOUNT_COLORS[a.c] || ACCOUNT_COLORS.muted}"></span>
           </button>
@@ -263,6 +272,7 @@ function olderButton(s, full, id) {
 
 function messageView(s, v, sel) {
   const full = s.details[sel.id];
+  const account = v.profile.accounts.find(a => a.id === sel.accountId);
   const trail = full?.trail || [];
   const folderName = s.data.folders.find(f => f.id === sel.folderId)?.name || 'Boîte de réception';
   const composeLabel = { reply: `Répondre à ${sel.from}`, replyAll: 'Répondre à tous', forward: `Transférer : ${sel.subject}` }[s.composing];
@@ -280,7 +290,7 @@ function messageView(s, v, sel) {
           <span style="font-size:13px">${sel.subject}</span>
           <span class="muted" style="font-size:12px">${sel.handle} → ${sel.account}</span>
         </div>
-        <div class="msg-side"><span>${folderName} · ${sel.account}</span><span>${timeLabel(sel)}</span></div>
+        <div class="msg-side">${providerBadge(account)}<span>${folderName} · ${sel.account}</span><span>${timeLabel(sel)}</span></div>
       </div>
       ${when(v.showTriage, () => html`
         <div class="triage">
@@ -644,7 +654,7 @@ function connectWizard(s) {
             <div style="display:flex;flex-direction:column;gap:8px">
               ${Object.entries(s.data.services).map(([k, sv]) => html`
                 <button class="service" data-on-click="pickService" data-svc="${k}" ${raw(sv.disabled ? 'disabled' : '')}>
-                  <span class="service-mark" style="background:${CH[sv.ch].tint};color:${CH[sv.ch].ink}">${channelMark(sv.ch)}</span>
+                  <span class="service-mark" style="background:${CH[sv.ch].tint};color:${CH[sv.ch].ink}">${providerMark(k, sv.ch)}</span>
                   <span style="display:flex;flex-direction:column;gap:2px;flex:1">
                     <span style="font-size:14px;font-weight:600">${sv.name}</span>
                     <span class="muted" style="font-size:12px">${sv.note}</span>
@@ -656,7 +666,7 @@ function connectWizard(s) {
 
           ${when(d && c.step !== 'pick', () => html`
             <div class="svc-head">
-              ${when(d.ch !== 'whatsapp', () => html`<span class="service-mark" style="background:${CH[d.ch].tint};color:${CH[d.ch].ink}">${channelMark(d.ch)}</span>`)}
+              ${when(d.ch !== 'whatsapp', () => html`<span class="service-mark" style="background:${CH[d.ch].tint};color:${CH[d.ch].ink}">${providerMark(c.svc, d.ch)}</span>`)}
               <div style="display:flex;flex-direction:column;gap:2px">
                 <h3>${d.ch === 'whatsapp' ? html`<img class="wa-brand-wordmark" src="/icons/whatsapp-wordmark-black.svg" width="156" height="36" alt="WhatsApp">` : d.name}</h3>
                 <span class="muted" style="font-size:13px">${c.step === 'done' ? `Connecté au profil ${profileName(c.profile)}` : d.note}</span>
@@ -759,7 +769,11 @@ function connectWizard(s) {
         <div class="dialog-foot">
           ${when(!c.busy && !c.linkId && ((c.step === 'config' && !c.fromAccount) || c.step === 'auth'), () => html`<button class="btn btn-ghost" data-on-click="cBack">Retour</button>`)}
           <div class="grow"></div>
-          ${when(next, () => html`<button class="btn btn-brand" data-on-click="cNext" ${raw(nextDisabled ? 'disabled' : '')}>${next}</button>`)}
+          ${when(next, () => {
+            const branded = c.step === 'auth' && d?.auth === 'oauth' && ['gmail', 'outlook'].includes(c.svc);
+            return branded ? html`<button class="provider-auth-button" data-on-click="cNext" aria-label="${next}" title="${next}" ${raw(nextDisabled ? 'disabled' : '')}><img src="${c.svc === 'gmail' ? '/icons/google-sign-in.svg' : '/icons/microsoft-sign-in.svg'}" alt="${c.svc === 'gmail' ? 'Sign in with Google' : 'Sign in with Microsoft'}" height="40"></button>`
+              : html`<button class="btn btn-brand" data-on-click="cNext" ${raw(nextDisabled ? 'disabled' : '')}>${next}</button>`;
+          })}
         </div>
       </div>
     </div>`;
@@ -838,6 +852,7 @@ function newMailDialog(s, v) {
       <label>De<select data-on-change="newMailField" data-field="accountId" ${raw(c.busy || c.saving || c.messageId ? 'disabled' : '')}>
         ${accounts.map(a => html`<option value="${a.id}" ${raw(a.id === c.accountId ? 'selected' : '')}>${a.name} — ${a.address || ''}</option>`)}
       </select></label>
+      ${providerBadge(account)}
       <label>À<input data-key="new-to" data-on-input="newMailField" data-field="to" value="${c.to}" maxlength="2000" placeholder="adresse@exemple.fr" ${disabled}></label>
       <label>Cc<input data-key="new-cc" data-on-input="newMailField" data-field="cc" value="${c.cc}" maxlength="2000" ${disabled}></label>
       <label>Objet<input data-key="new-subject" data-on-input="newMailField" data-field="subject" value="${c.subject}" maxlength="998" ${disabled}></label>

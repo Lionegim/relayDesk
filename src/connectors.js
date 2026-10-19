@@ -15,7 +15,7 @@ export const SERVICES = {
   gmail: { name: 'Gmail', provider: 'Google', ch: 'email', note: 'Gmail ou Google Workspace', auth: 'oauth', btn: 'Continuer avec Google', perms: ['read', 'labels', 'drafts', 'send', 'mcp'],
     real: true, available: ['read', 'labels', 'drafts', 'send'],
     scopes: { read: ['Lire les messages', 'gmail.readonly'], labels: ['Classer, lu/non lu, archiver', 'gmail.modify'], drafts: ['Créer des brouillons', 'gmail.compose'], send: ['Envoyer des messages', 'gmail.send'] } },
-  outlook: { name: 'Outlook / Microsoft 365', provider: 'Microsoft', ch: 'email', note: 'Compte personnel ou professionnel', auth: 'oauth', btn: 'Continuer avec Microsoft', perms: ['read', 'labels', 'drafts', 'send', 'mcp'],
+  outlook: { name: 'Microsoft Outlook / Microsoft 365', provider: 'Microsoft', ch: 'email', note: 'Compte personnel ou professionnel', auth: 'oauth', btn: 'Continuer avec Microsoft', perms: ['read', 'labels', 'drafts', 'send', 'mcp'],
     real: true, available: ['read', 'labels', 'drafts', 'send'],
     scopes: { read: ['Lire les messages', 'Mail.Read'], labels: ['Classer les messages', 'Mail.ReadWrite'], drafts: ['Créer des brouillons', 'Mail.ReadWrite'], send: ['Envoyer des messages', 'Mail.Send'] } },
   proton: { name: 'Proton Mail', disabled: true, state: 'À venir', provider: 'Proton Bridge', ch: 'email', note: 'Via Proton Mail Bridge sur cette machine', auth: 'fields', btn: 'Tester la connexion', perms: ['read', 'labels', 'send', 'mcp'],

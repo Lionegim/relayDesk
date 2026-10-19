@@ -554,3 +554,17 @@ svg { display: block; }
 .wa-connect-note { font-size:13px; line-height:1.6; margin:0; }
 .wa-connect-success { padding:20px; border-radius:12px; background:#edf7f1; color:#174b35; }
 @media(max-width:640px) { .wa-qr-layout { grid-template-columns:minmax(0,1fr); gap:12px; } .wa-qr-layout .whatsapp-link { min-height:220px; } .wa-qr-layout .whatsapp-qr { width:220px; height:220px; } .wa-connect-heading { padding:18px 20px 0; } }
+
+/* Marques de fournisseurs : proportions et couleurs officielles conservées. */
+.provider-brand-icon { display:inline-block; width:24px; height:24px; object-fit:contain; flex:none; vertical-align:middle; }
+.acct-mark:has(.provider-brand-icon) { width:28px; height:28px; flex-shrink:0; background:transparent !important; }
+.acct-mark .provider-brand-icon { width:20px; height:20px; }
+.service-mark:has(.provider-brand-icon) { background:transparent !important; border-radius:0; }
+.service-mark .provider-brand-icon { width:28px; height:28px; }
+.svc-head .provider-brand-icon { width:32px; height:32px; }
+.provider-badge { display:inline-flex; align-items:center; gap:7px; font-size:11px; color:var(--muted-foreground); }
+.provider-badge .provider-brand-icon { width:18px; height:18px; }
+.provider-auth-button { display:inline-flex; align-items:center; padding:0; border:0; background:transparent; border-radius:4px; cursor:pointer; min-height:44px; }
+.provider-auth-button img { display:block; height:40px; width:auto; max-width:100%; }
+.provider-auth-button:focus-visible { outline:2px solid var(--ring); outline-offset:3px; }
+.provider-auth-button:disabled { cursor:default; opacity:.55; }
