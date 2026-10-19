@@ -1,0 +1,4 @@
+#!/bin/sh
+set -eu
+cd /opt/relay-desk
+exec docker compose --env-file /etc/relay-desk-personal/hosted.env -f compose.yaml -f deploy/personal/relay.compose.yaml -f deploy/hosted-test/identity.compose.yaml "$@"

@@ -7,6 +7,7 @@
 !public/**
 !test/**
 !deploy/hosted-test/**
+!deploy/personal/identity-archive.mjs
 !deploy/healthcheck.mjs
 !scripts/backup.mjs
 !compose.yaml
