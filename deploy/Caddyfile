@@ -2,10 +2,27 @@
 # Certificat automatique, HSTS, en-têtes de base. La politique de sécurité du contenu (CSP) reste fixée par l'application.
 # Pas de limite de débit ici : le cœur de Caddy n'en fournit pas ; elle sera implémentée dans l'application (lot 3)
 # ou par un module choisi explicitement.
-# Pas de journal d'accès : les adresses de retour OAuth portent code et state dans la requête.
+# Pas de journal d'accès : les adresses de retour OAuth portent code et state dans la requête. L'absence de journal
+# d'accès ne suffit pas : les erreurs du proxy journalisent aussi la requête, d'où le filtre « log default » ci-dessous.
+# Seul le domaine configuré est servi : aucun site par défaut, aucune API d'administration Caddy.
 {
 	email {$ACME_EMAIL}
+	acme_ca {$ACME_CA}
 	admin off
+	# Journaux d'erreurs (proxy inverse, TLS…) : l'objet « request » est retiré. Son URI peut porter code et state
+	# OAuth, ses en-têtes des cookies de session. Le message, le niveau, l'horodatage et la durée restent visibles.
+	log default {
+		output stderr
+		format filter {
+			wrap json
+			fields {
+				request delete
+				uri delete
+				headers delete
+				resp_headers delete
+			}
+		}
+	}
 }
 
 {$RELAY_DOMAIN} {
@@ -15,6 +32,7 @@
 		Strict-Transport-Security "max-age=31536000; includeSubDomains"
 		X-Content-Type-Options "nosniff"
 		Referrer-Policy "no-referrer"
+		Permissions-Policy "camera=(), microphone=(), geolocation=(), payment=()"
 		-Server
 	}
 

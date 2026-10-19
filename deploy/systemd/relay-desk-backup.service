@@ -1,0 +1,29 @@
+# Modèle : sauvegarde chiffrée locale de Relay Desk (lot 6). PRÉPARATOIRE, non installé.
+# Snapshot SQLite en ligne et chiffrement AES-256-GCM par scripts/backup.mjs, dans le service Compose « backup »
+# (sans réseau, seul détenteur de la clé de sauvegarde). L'application continue de tourner pendant la sauvegarde.
+# La copie hors de la VM est un service distinct (relay-desk-offsite.service). Voir docs/operations.md.
+# Installation (plus tard) : /etc/systemd/system/, puis « systemctl enable --now relay-desk-backup.timer ».
+[Unit]
+Description=Relay Desk : sauvegarde chiffrée locale
+Documentation=file:///opt/relay-desk/docs/operations.md
+After=docker.service network-online.target
+Requires=docker.service
+Wants=network-online.target
+ConditionPathExists=/etc/relay-desk/hosted.env
+
+[Service]
+Type=oneshot
+# Exécuté par root (socket Docker). Compose lit /etc/relay-desk/hosted.env ; aucun shell interactif.
+WorkingDirectory=/opt/relay-desk
+UMask=0077
+Nice=10
+IOSchedulingClass=idle
+TimeoutStartSec=2h
+# Archive datée dans archives/, état dans status/. Snapshot en clair dans le tmpfs /tmp du conteneur, jamais sur disque.
+# Dans un fichier d'unité, « %% » et « $$ » sont les caractères % et $ transmis au shell.
+ExecStart=/bin/sh -c 'ts=$$(date -u +%%Y%%m%%dT%%H%%M%%SZ); exec /usr/bin/docker compose --env-file /etc/relay-desk/hosted.env -f /opt/relay-desk/compose.yaml --profile backup run --rm --no-deps backup create --data-dir /data --archive "/backups/archives/relay-$${ts}.rlybak" --backup-key-file /run/secrets/backup_key --vault-key-file /run/secrets/relay_secret_key --status-file /backups/status/last-backup.json'
+# Copie hors VM ensuite, si elle est configurée (sinon l'unité est ignorée, voir sa condition).
+ExecStartPost=-/usr/bin/systemctl start --no-block relay-desk-offsite.service
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=full

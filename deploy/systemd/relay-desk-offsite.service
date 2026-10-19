@@ -1,0 +1,29 @@
+# Modèle : copie hors de la VM des archives CHIFFRÉES de Relay Desk (lot 6). PRÉPARATOIRE, non installé, rien copié.
+# Transport à choisir (rclone vers un stockage objet, ou rsync sur SSH vers un hôte de sauvegarde). Tant que
+# /etc/relay-desk/offsite.env n'existe pas, cette unité est ignorée : la copie hors VM reste alors « non vérifiée ».
+# Ne copie que archives/*.rlybak (jamais la clé de sauvegarde, la clé du coffre, les données ni l'état local).
+[Unit]
+Description=Relay Desk : copie hors serveur des archives chiffrées
+Documentation=file:///opt/relay-desk/docs/operations.md
+After=network-online.target
+Wants=network-online.target
+ConditionPathExists=/etc/relay-desk/offsite.env
+
+[Service]
+Type=oneshot
+# hosted.env fournit RELAY_BACKUP_DIR. offsite.env (root, 0600) fournit :
+#   OFFSITE_RCLONE_REMOTE=nom-du-remote:conteneur/relay-desk
+#   RCLONE_CONFIG=/etc/relay-desk/rclone.conf   (root, 0600 ; jeton limité à l'écriture sur ce conteneur)
+EnvironmentFile=/etc/relay-desk/hosted.env
+EnvironmentFile=/etc/relay-desk/offsite.env
+UMask=0077
+Nice=10
+TimeoutStartSec=2h
+# --checksum : comparaison par empreinte ; « check --one-way » relit ensuite les empreintes côté stockage.
+# Pas de « sync » ni de suppression distante : la rétention se règle côté stockage (versions, verrouillage).
+ExecStart=/usr/bin/rclone copy --checksum --include "*.rlybak" ${RELAY_BACKUP_DIR}/archives ${OFFSITE_RCLONE_REMOTE}
+ExecStart=/usr/bin/rclone check --one-way --checksum --include "*.rlybak" ${RELAY_BACKUP_DIR}/archives ${OFFSITE_RCLONE_REMOTE}
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectHome=yes
+ProtectSystem=full
