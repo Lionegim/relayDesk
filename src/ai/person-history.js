@@ -30,11 +30,12 @@ export function createPersonHistory(db,{people}) {
   const direct=person.members.map(m=>q('SELECT account_id,external_id FROM contacts WHERE id=?').get(m.id));
   const query=timelineQuery(db,{keys:identities,direct,profile:current.profile_id});
   const now=Date.now(),validDate=at=>Number.isFinite(at) && at>0 && at<=now+60000,stamp=at=>validDate(at)?new Date(at).toISOString().slice(0,10):'date inconnue';
-  const eligible=`AND m.id!=? AND COALESCE(r.enabled,1)=1 AND m.sort_at>MAX(COALESCE(r.learn_after,0),?) AND m.sort_at<=?`;
+  const eligible=`AND m.id!=? AND COALESCE(r.enabled,1)=1 AND m.sort_at>MAX(COALESCE(r.learn_after,0),?) AND m.sort_at<=? AND m.external_id NOT LIKE '%@g.us' AND NOT EXISTS (SELECT 1 FROM message_identities mi WHERE mi.message_id=m.id AND (mi.kind||':'||mi.normalized) NOT IN (SELECT value FROM json_each(?)))`;
   const from=query.from.replace('WHERE m.compose_kind', 'LEFT JOIN reply_memory r ON r.account_id=m.account_id AND r.conversation_id=m.external_id AND r.profile_id=m.profile_id WHERE m.compose_kind');
   const words=terms(current.subject),score=words.length?words.map(()=>"(instr(lower(m.subject||' '||m.preview),?)>0)").join('+'):'0';
   const metadata="m.id,m.account_id,m.external_id,m.channel,m.profile_id,m.account,m.subject,m.sort_at,COALESCE(r.learn_after,0) learn_after,json_extract(m.reply_meta,'$.at') body_at";
-  const read=(order,extra=[])=>q(`${query.cte} SELECT ${metadata} ${from} ${eligible} ORDER BY ${order},m.sort_at DESC,m.id DESC LIMIT 24`).all(...query.args,messageId,memory.learnAfter || 0,now+60000,...extra);
+  const allowed=JSON.stringify([...own,...keys]);
+  const read=(order,extra=[])=>q(`${query.cte} SELECT ${metadata} ${from} ${eligible} ORDER BY ${order},m.sort_at DESC,m.id DESC LIMIT 24`).all(...query.args,messageId,memory.learnAfter || 0,now+60000,allowed,...extra);
   const recent=read('m.sort_at DESC'),relevant=words.length?read(score+' DESC',words):[];
   const candidates=[...new Map([...relevant.slice(0,3),...recent,...relevant].map(m=>[m.id,m])).values()];
   const sources=[],styleExamples=[],styleLimit=Math.max(0,5-(memory.promptExamples || []).length);let remaining=12000;

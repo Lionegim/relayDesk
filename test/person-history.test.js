@@ -48,3 +48,6 @@ test('established current-conversation style is not diluted by other conversatio
 test('historical source subjects are bounded and each excerpt component retains its own date',t=>{
  const f=setup(t),past=msg(f,'dated-source',{subject:'Orchid '.repeat(5000),at:Date.parse('2025-01-01')}),current=msg(f,'current',{subject:'Orchid'});f.db.prepare('UPDATE messages SET reply_meta=?,trail=? WHERE id=?').run(JSON.stringify({at:Date.parse('2025-01-01')}),JSON.stringify([{id:'earlier',from:'Alex',at:Date.parse('2011-01-01'),body:'Old dated fact'}]),past);const h=ctx(f,current);assert.ok(h.sources[0].subject.length<=200);assert.match(h.sources[0].excerpt,/\[2011-01-01\]/);assert.match(h.sources[0].excerpt,/\[2025-01-01\]/);
 });
+test('recent group threads cannot crowd older eligible one-to-one history out of retrieval',t=>{
+ const f=setup(t);msg(f,'older-direct',{at:Date.parse('2020-01-01'),body:'Eligible earlier exchange'});for(let i=0;i<60;i++)msg(f,'group'+i,{parties:['alex@example.test','owner@example.test','unknown'+i+'@example.test']});const current=msg(f,'current');assert.ok(ctx(f,current).sources.some(x=>x.excerpt.includes('Eligible earlier exchange')));assert.ok(!ctx(f,current).sources.some(x=>x.subject.startsWith('group')));
+});
